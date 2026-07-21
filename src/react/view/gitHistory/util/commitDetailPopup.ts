@@ -19,7 +19,8 @@ export type AnchoredDialogPositionVariant = 'default' | 'merge';
 export const COMMIT_DETAIL_POPUP_WIDTH = 400;
 export const POPUP_MARGIN = 10;
 const MAX_COMMIT_DETAIL_HEIGHT = 600;
-const ANCHOR_TOP_OFFSET = 80;
+const ANCHOR_TOP_OFFSET = 40;
+const ANCHOR_LEFT_OFFSET = 32;
 
 export function getViewportBounds(container?: HTMLElement | null): ViewportBounds {
     if (container) {
@@ -109,8 +110,7 @@ export function computeCommitDetailPopupPosition(
 
     const top = computePopupTop(anchor.y, effectiveHeight, bodyTop, bodyBottom);
 
-    const preferredRight = anchor.x + 100 + COMMIT_DETAIL_POPUP_WIDTH;
-    const preferredLeft = preferredRight - popupWidth;
+    const preferredLeft = anchor.x + ANCHOR_LEFT_OFFSET;
     const minLeft = viewport.left + POPUP_MARGIN;
     const maxLeft = Math.max(minLeft, bodyRight - popupWidth - POPUP_MARGIN);
     const left = Math.min(Math.max(preferredLeft, minLeft), maxLeft);
