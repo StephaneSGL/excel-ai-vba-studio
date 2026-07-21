@@ -161,6 +161,17 @@ function ExcelViewer() {
         spreadSheetRef.current?.reRender()
     }, [adaptiveColorMode, themedDark])
 
+    const handleAutoFitColumns = useCallback(() => {
+        const spreadSheet = spreadSheetRef.current;
+        if (!spreadSheet) return;
+        spreadSheet.autoFitColumns();
+        if (!readOnlyRef.current) {
+            spreadSheet.setSaveEnabled(true);
+            handler.emit('change');
+        }
+        message.success({ duration: 1.5, content: t('viewer.autoFitDone'), className: 'excel-save-success-message' });
+    }, [message]);
+
     const handleSaveAs = useCallback(() => {
         setSaveAsVisible(true);
     }, []);
@@ -291,11 +302,16 @@ function ExcelViewer() {
             if ((e.ctrlKey || e.metaKey) && e.code === 'KeyH') {
                 e.preventDefault();
                 setFindPanel(readOnlyRef.current ? 'find' : 'replace');
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.altKey && e.code === 'Digit0') {
+                e.preventDefault();
+                handleAutoFitColumns();
             }
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [handleSave, handleSaveAs]);
+    }, [handleAutoFitColumns, handleSave, handleSaveAs]);
 
     useEffect(() => {
         const container = document.getElementById('container');
@@ -315,6 +331,22 @@ function ExcelViewer() {
             const spreadSheet = new Spreadsheet(container, {
                 mode: fileReadOnly ? 'read' : 'edit',
                 showToolbar: true,
+                extendToolbar: {
+                    right: [
+                        {
+                            tip: `${t('viewer.autoFitColumns')} (${navigator.platform.includes('Mac') ? 'Cmd+Alt+0' : 'Ctrl+Alt+0'})`,
+                            el: (() => {
+                                const button = document.createElement('span');
+                                button.textContent = 'AF';
+                                button.className = 'excel-autofit-badge';
+                                return button;
+                            })(),
+                            onClick: () => {
+                                handleAutoFitColumns();
+                            },
+                        },
+                    ],
+                },
                 showEditInVSCode: isCsvLikeExt(payload.ext ?? ''),
                 row: { len: viewRowLen, height: 30 },
                 col: { len: viewColLen },

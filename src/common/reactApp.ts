@@ -40,7 +40,8 @@ export class ReactApp {
     private static async readContent(): Promise<string> {
         if (this.IS_DEV) {
             const data: string = (await axios.get(`http://127.0.0.1:5739/index.html`, { transformResponse: [] })).data;
-            return data.replace('/@vite/client', 'http://127.0.0.1:5739/@vite/client');
+            const devServerUrl = 'http://127.0.0.1:5739';
+            return data.replace(/(["'])\/(?=(?:@|src\/|index\.html\?))/g, `$1${devServerUrl}/`);
         }
         return readExtensionText(this.context, 'out', 'webview', 'index.html');
     }

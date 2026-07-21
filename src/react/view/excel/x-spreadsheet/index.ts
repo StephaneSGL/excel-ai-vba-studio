@@ -18,6 +18,7 @@ import {
 } from '../excel_find';
 import { parseSpreadsheetLink } from '../excel_hyperlink';
 import { expr2xy } from './core/alphabet';
+import { getFontSizePxByPt } from './core/font';
 
 export interface ExtendToolbarOption {
     tip?: string;
@@ -448,6 +449,56 @@ export class Spreadsheet {
     getSelection(): { ri: number; ci: number; sheetIndex: number } {
         const { ri = 0, ci = 0 } = this.data.selector ?? {};
         return { ri, ci, sheetIndex: this.getActiveSheetIndex() };
+    }
+
+    autoFitColumns(sheetIndex = this.getActiveSheetIndex()): this {
+        const data = this.datas[sheetIndex];
+        if (!data || typeof document === 'undefined') return this;
+
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) return this;
+
+        const defaultStyle = data.defaultStyle();
+        const rowLen = data.rows?.len ?? 0;
+        const colLen = data.cols?.len ?? 0;
+        const minWidth = data.cols?.minWidth ?? 60;
+        const maxWidth = 720;
+        const textPadding = 22;
+
+        data.changeData(() => {
+            for (let ci = 0; ci < colLen; ci += 1) {
+                let width = minWidth;
+
+                for (let ri = 0; ri < rowLen; ri += 1) {
+                    const cell = data.getCell(ri, ci);
+                    if (!cell || !cell.text || cell.merge) continue;
+
+                    const style = data.getCellStyleOrDefault(ri, ci) ?? defaultStyle;
+                    const fontName = style.font?.name || defaultStyle.font.name || 'Arial';
+                    const fontSize = getFontSizePxByPt(style.font?.size || defaultStyle.font.size || 11);
+                    const fontWeight = style.font?.bold ? '700' : '400';
+                    const fontStyle = style.font?.italic ? 'italic' : 'normal';
+                    context.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontName}`;
+
+                    const lines = String(cell.text).split(/\r\n|\r|\n/);
+                    for (const line of lines) {
+                        const measured = Math.ceil(context.measureText(line).width) + textPadding;
+                        if (measured > width) {
+                            width = measured;
+                        }
+                    }
+                }
+
+                data.cols.setWidth(ci, Math.max(minWidth, Math.min(maxWidth, width)));
+            }
+        });
+
+        if (sheetIndex === this.getActiveSheetIndex()) {
+            this.sheet.resetData(data);
+        }
+
+        return this;
     }
 
     onSheetChange(cb: (index: number) => void): this {

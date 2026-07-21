@@ -147,6 +147,8 @@ export default {
     exportXlsDesc: 'Legacy Excel format',
     exportOdsLabel: 'OpenDocument (.ods)',
     exportOdsDesc: 'Compatible with LibreOffice / WPS',
+    autoFitColumns: 'Auto fit columns',
+    autoFitDone: 'Columns auto-fitted',
     switchToLightMode: 'Switch to light mode',
     switchToDarkMode: 'Switch to adaptive mode (follow VS Code theme)',
   },

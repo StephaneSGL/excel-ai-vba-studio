@@ -102,9 +102,9 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     } else {
       cellText = cell.text || '';
     }
-    if (style.format) {
-      // console.log(data.formatm, '>>', cell.format);
-      cellText = formatm[style.format].render(cellText);
+    const formatter = style.format ? formatm[style.format] : undefined;
+    if (formatter) {
+      cellText = formatter.render(cellText);
     }
     const font = Object.assign({}, style.font);
     if (!font.name) {

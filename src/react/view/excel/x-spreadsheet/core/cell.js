@@ -188,7 +188,8 @@ const evalSuffixExpr = (srcStack, formulaMap, cellRender, cellList) => {
       for (let j = 0; j < len; j += 1) {
         params.push(stack.pop());
       }
-      stack.push(formulaMap[formula].render(params.reverse()));
+      const formulaRenderer = formulaMap[formula];
+      stack.push(formulaRenderer ? formulaRenderer.render(params.reverse()) : `#NAME?`);
     } else {
       if (cellList.includes(expr)) {
         return 0;
