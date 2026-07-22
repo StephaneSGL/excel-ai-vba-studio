@@ -418,12 +418,28 @@ const loadCsv = (buffer: ArrayBuffer): ExcelData => {
     if (!csvStr) return emptySheet;
 
     try {
-        if (!csvStr.includes('\n')) csvStr += '\n';
-        const schema = inferSchema(csvStr, { header: () => [] });
-        const rows = initParser(schema).stringArrs(csvStr);
-        const colCount = rows[0]?.length || 0;
+        const leadingEmptyRows = csvStr.match(/^(?:\r\n|\n|\r)+/)?.[0].match(/\r\n|\n|\r/g)?.length ?? 0;
+        const csvToParse = leadingEmptyRows > 0 ? csvStr.replace(/^(?:\r\n|\n|\r)+/, '') : csvStr;
+        if (!csvToParse) {
+            return {
+                maxCols,
+                maxLength: leadingEmptyRows,
+                sheets: [{
+                    name: 'Sheet1',
+                    rows: { len: leadingEmptyRows },
+                }],
+            };
+        }
+        let parseInput = csvToParse;
+        if (!parseInput.includes('\n')) parseInput += '\n';
+        const schema = inferSchema(parseInput, { header: () => [] });
+        const rows = initParser(schema).stringArrs(parseInput);
+        const colCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
 
         const processedRows: RowMap = {};
+        for (let i = 0; i < leadingEmptyRows; i += 1) {
+            processedRows[i] = { cells: {} };
+        }
         for (let i = 0; i < rows.length; i += 1) {
             const row = rows[i];
             const cells: Record<number, CellData> = {};
@@ -431,17 +447,21 @@ const loadCsv = (buffer: ArrayBuffer): ExcelData => {
                 cells[j] = { text: row[j] == null ? '' : String(row[j]) };
                 if (j + 1 > maxCols) maxCols = j + 1;
             }
-            processedRows[i] = { cells };
+            processedRows[i + leadingEmptyRows] = { cells };
         }
+        const csvRows = [
+            ...Array.from({ length: leadingEmptyRows }, () => [] as string[]),
+            ...rows,
+        ];
 
         return {
             maxCols,
-            maxLength: rows.length,
+            maxLength: csvRows.length,
             csvDelimiter: schema.col,
             sheets: [{
                 name: 'Sheet1',
-                rows: { len: rows.length, ...processedRows },
-                cols: { len: colCount, ...buildCsvCols(rows, colCount) },
+                rows: { len: csvRows.length, ...processedRows },
+                cols: { len: colCount, ...buildCsvCols(csvRows, colCount) },
             }],
         };
     } catch (error) {
