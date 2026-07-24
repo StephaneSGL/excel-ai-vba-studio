@@ -12,7 +12,6 @@ export default class Save extends Item {
       .child(new Icon('save'))
       .on('click', () => {
         if (!this.el.el.classList.contains('disabled')) {
-          this.trackTelemetry();
           this.change('save');
         }
       });

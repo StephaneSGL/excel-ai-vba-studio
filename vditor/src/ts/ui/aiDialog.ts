@@ -13,7 +13,6 @@ import {
 } from "../ai/aiOutputLanguage";
 import { AI_FORMAT_OPTIONS, nameFromUrl, getProviderIcon } from "./settingsPanel";
 import { accessLocalStorage } from "../util/compatibility";
-import { telemetry } from "../util/telemetry";
 
 const ls = {
     get: (key: string) => accessLocalStorage() ? (localStorage.getItem(key) ?? "") : "",
@@ -673,7 +672,6 @@ export class AIDialog {
         const newId = Date.now().toString();
         prompts.push({ id: newId, name, content } as AIPrompt);
         setAIPrompts(prompts);
-        telemetry(this.vditor, "markdown.ai.addPrompt", { source: "dialog" });
         nameEl.value = "";
         contentEl.value = "";
         this.promptValue = newId;
@@ -693,7 +691,6 @@ export class AIDialog {
         const models = getAIModels();
         models.push({ id, name, url, key: keyEl.value.trim(), model: modelEl.value.trim(), format: this.formatValue } as AIModel);
         setAIModels(models);
-        telemetry(this.vditor, "markdown.ai.addModel", { source: "dialog" });
         nameEl.value = ""; urlEl.value = ""; keyEl.value = ""; modelEl.value = "";
         // Reset format picker
         this.formatValue = "auto";

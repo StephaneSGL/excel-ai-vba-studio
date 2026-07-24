@@ -5,6 +5,7 @@ import zhCn from './x-spreadsheet/locale/zh-cn';
 import zhTw from './x-spreadsheet/locale/zh-tw';
 import de from './x-spreadsheet/locale/de';
 import nl from './x-spreadsheet/locale/nl';
+import fr from './x-spreadsheet/locale/fr';
 import { t as localeT } from './x-spreadsheet/locale/locale';
 
 const localeMessages: Record<string, object> = {
@@ -13,6 +14,7 @@ const localeMessages: Record<string, object> = {
     'zh-tw': zhTw,
     de,
     nl,
+    fr,
 };
 
 const TRADITIONAL_ZH = new Set(['zh-tw', 'zh-hk', 'zh-mo', 'zh-hant']);
@@ -25,6 +27,7 @@ function resolveSpreadsheetLang(vscodeLang: string): string {
     if (lower === 'zh') return 'zh-cn';
     if (lower.startsWith('de')) return 'de';
     if (lower.startsWith('nl')) return 'nl';
+    if (lower.startsWith('fr')) return 'fr';
     return 'en';
 }
 

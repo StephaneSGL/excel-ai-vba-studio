@@ -15,7 +15,6 @@ import {
 } from '../util/resolveGitHistoryCommandContext';
 import { normalizeRepoPath } from '../util/repoPath';
 import { i18n } from '@/common/global';
-import { TelemetryService } from '@/service/telemetryService';
 
 let commitService: CommitService | undefined;
 let repoDiscovery: RepoDiscovery | undefined;
@@ -104,7 +103,6 @@ async function openGitHistory(
         gitActionHandler,
         panelContext,
     );
-    TelemetryService.get()?.trackViewOpen('gitHistory');
 }
 
 async function runQuickSyncCommand(): Promise<void> {
@@ -183,10 +181,10 @@ export async function activateGitHistory(context: vscode.ExtensionContext): Prom
         await repoDiscovery.discover();
     } catch {
         context.subscriptions.push(
-            vscode.commands.registerCommand('office.gitHistory.view', () => {
+            vscode.commands.registerCommand('excelAiVbaStudio.gitHistory.view', () => {
                 vscode.window.showErrorMessage(i18n('ext.git.unableToFindGit'));
             }),
-            vscode.commands.registerCommand('office.gitHistory.viewFileHistory', () => {
+            vscode.commands.registerCommand('excelAiVbaStudio.gitHistory.viewFileHistory', () => {
                 vscode.window.showErrorMessage(i18n('ext.git.unableToFindGit'));
             })
         );
@@ -194,18 +192,18 @@ export async function activateGitHistory(context: vscode.ExtensionContext): Prom
     }
 
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-    statusBarItem.command = 'office.gitHistory.view';
+    statusBarItem.command = 'excelAiVbaStudio.gitHistory.view';
     statusBarItem.text = '$(git-commit) Git';
     statusBarItem.tooltip = i18n('ext.git.statusBarTooltip');
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('office.gitHistory.view', async (arg?: unknown) => {
+        vscode.commands.registerCommand('excelAiVbaStudio.gitHistory.view', async (arg?: unknown) => {
             const panelContext = buildPanelContextFromCommandArg(arg);
             await openGitHistory(context, panelContext);
         }),
-        vscode.commands.registerCommand('office.gitHistory.viewFileHistory', async (arg?: unknown) => {
+        vscode.commands.registerCommand('excelAiVbaStudio.gitHistory.viewFileHistory', async (arg?: unknown) => {
             const fromArg = buildPanelContextFromCommandArg(arg);
             const fileUri = resolveFileUri(arg) ?? fromArg.fileUri;
             if (!fileUri) {
@@ -214,7 +212,7 @@ export async function activateGitHistory(context: vscode.ExtensionContext): Prom
             }
             await openGitHistory(context, mergePanelContext({ fileUri }, fromArg));
         }),
-        vscode.commands.registerCommand('office.gitHistory.quickSync', async () => {
+        vscode.commands.registerCommand('excelAiVbaStudio.gitHistory.quickSync', async () => {
             await runQuickSyncCommand();
         }),
         vscode.window.registerWebviewPanelSerializer(

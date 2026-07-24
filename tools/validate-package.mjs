@@ -1,0 +1,81 @@
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import process from 'node:process';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+const vsceEntrypoint = resolve(root, 'node_modules', '@vscode', 'vsce', 'vsce');
+const result = spawnSync(process.execPath, [vsceEntrypoint, 'ls', '--no-dependencies'], {
+  cwd: root,
+  encoding: 'utf8',
+  shell: false,
+});
+
+if (result.status !== 0) {
+  if (result.error) {
+    process.stderr.write(`${result.error.message}\n`);
+  }
+  process.stderr.write(result.stdout ?? '');
+  process.stderr.write(result.stderr ?? '');
+  process.exit(result.status ?? 1);
+}
+
+const files = (result.stdout ?? '')
+  .split(/\r?\n/)
+  .map((line) => line.trim().replaceAll('\\', '/'))
+  .filter(Boolean);
+
+const errors = [];
+const required = [
+  'package.json',
+  'README.md',
+  'CHANGELOG.md',
+  'LICENSE',
+  'PRIVACY.md',
+  'NOTICE.md',
+  'THIRD_PARTY_NOTICES.md',
+  'THIRD_PARTY_LICENSES.txt',
+  'image/marketplace-icon.png',
+  'out/extension.js',
+  'out/webview/index.html',
+  'scripts/office-ai-export.ps1',
+  'scripts/open-excel-developer.ps1',
+];
+for (const file of required) {
+  if (!files.includes(file)) {
+    errors.push(`required packaged file is missing: ${file}`);
+  }
+}
+
+const forbiddenPrefixes = [
+  '.git/',
+  '.github/',
+  '.vscode/',
+  'docs/',
+  'icons/',
+  'node_modules/',
+  'src/',
+  'syntaxes/',
+  'test/',
+  'theme/',
+  'tools/',
+  'vditor/',
+];
+for (const file of files) {
+  if (forbiddenPrefixes.some((prefix) => file.startsWith(prefix))) {
+    errors.push(`development or unrelated file would be packaged: ${file}`);
+  }
+  if (file === 'telemetry.json' || file.startsWith('package.nls.')) {
+    errors.push(`upstream/telemetry file would be packaged: ${file}`);
+  }
+}
+
+if (errors.length > 0) {
+  console.error(`Package validation failed (${errors.length}):`);
+  for (const error of errors) {
+    console.error(`- ${error}`);
+  }
+  process.exit(1);
+}
+
+console.log(`Package contents valid: ${files.length} files`);

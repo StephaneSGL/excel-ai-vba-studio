@@ -1,17 +1,15 @@
-import { getExtensionResourceRoots } from '@/common/extensionResource';
 import { handleClass } from '@/provider/handlers/classHandler';
-import { TelemetryService } from '@/service/telemetryService';
 import * as vscode from 'vscode';
 
 /**
- * Desktop-only Java decompiler custom editor (`cweijan.classViewer`).
+ * Desktop-only Java decompiler custom editor (`excelAiVbaStudio.classViewer`).
  */
 export class ClassViewerProvider implements vscode.CustomReadonlyEditorProvider {
 
 	constructor(private context: vscode.ExtensionContext) { }
 
 	bindCustomEditor(viewOption: { webviewOptions: vscode.WebviewPanelOptions }) {
-		return vscode.window.registerCustomEditorProvider('cweijan.classViewer', this, viewOption);
+		return vscode.window.registerCustomEditorProvider('excelAiVbaStudio.classViewer', this, viewOption);
 	}
 
 	openCustomDocument(uri: vscode.Uri): vscode.CustomDocument {
@@ -19,12 +17,10 @@ export class ClassViewerProvider implements vscode.CustomReadonlyEditorProvider 
 	}
 
 	resolveCustomEditor(document: vscode.CustomDocument, webviewPanel: vscode.WebviewPanel): void {
-		const folderPath = vscode.Uri.joinPath(document.uri, '..');
 		webviewPanel.webview.options = {
-			enableScripts: true,
-			localResourceRoots: [...getExtensionResourceRoots(this.context), folderPath],
+			enableScripts: false,
+			localResourceRoots: [],
 		};
 		handleClass(document.uri, webviewPanel);
-		TelemetryService.get()?.trackViewOpen('class');
 	}
 }

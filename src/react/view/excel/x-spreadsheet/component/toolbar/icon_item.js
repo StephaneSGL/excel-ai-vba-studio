@@ -6,7 +6,6 @@ export default class IconItem extends Item {
     return super.element()
       .child(new Icon(this.tag))
       .on('click', () => {
-        this.trackTelemetry();
         this.change(this.tag);
       });
   }

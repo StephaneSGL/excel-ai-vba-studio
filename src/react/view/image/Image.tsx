@@ -4,7 +4,6 @@ import "react-image-gallery/styles/css/image-gallery.css";
 import { handler } from '../../util/vscode';
 import { type ImageSource, needsConversion, resolveImageSrc, revokeObjectUrl } from './convertImage';
 import './Image.less';
-import SponsorBar from '../components/SponsorBar';
 
 type WheelMode = 'navigate' | 'zoom';
 
@@ -162,7 +161,6 @@ export default function Image() {
                     if (title) handler.emit('slideTitle', title);
                 }}
             />
-            <SponsorBar placement="center" />
         </div>
     );
 };

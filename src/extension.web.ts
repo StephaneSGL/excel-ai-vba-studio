@@ -13,7 +13,6 @@ import { WebUnsupportedViewerProvider } from './provider/webUnsupportedViewerPro
 import { HtmlService } from './service/htmlService';
 import { MarkdownService } from './service/markdownService';
 import { switchCsvEditor } from './service/csvService';
-import { TelemetryService } from './service/telemetryService';
 import { activateXml } from './provider/xml';
 import { activateYaml } from './provider/yaml';
 import { IconService } from './service/icon/iconService';
@@ -21,7 +20,6 @@ import { IconService } from './service/icon/iconService';
 export async function activate(context: vscode.ExtensionContext) {
 	setExtensionHostContext();
 	await Global.init(context);
-	TelemetryService.init(context);
 	await IconService.getInstance().init(context);
 	FileUtil.init(context);
 	ReactApp.init(context);
@@ -35,11 +33,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	const webUnsupportedViewer = new WebUnsupportedViewerProvider(context);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('office.markdown.switch', (uri) => { markdownService.switchEditor(uri); }),
-		vscode.commands.registerCommand('office.csv.switch', (uri) => { switchCsvEditor(uri); }),
-		vscode.commands.registerCommand('office.html.preview', (uri) => HtmlService.previewHtml(uri, context)),
-		vscode.window.registerCustomEditorProvider('cweijan.markdownViewer', markdownEditorProvider, viewOption),
-		vscode.window.registerCustomEditorProvider('cweijan.markdownPreview', markdownEditorProvider, viewOption),
+		vscode.commands.registerCommand('excelAiVbaStudio.markdown.switch', (uri) => { markdownService.switchEditor(uri); }),
+		vscode.commands.registerCommand('excelAiVbaStudio.csv.switch', (uri) => { switchCsvEditor(uri); }),
+		vscode.commands.registerCommand('excelAiVbaStudio.html.preview', (uri) => HtmlService.previewHtml(uri, context)),
+		vscode.window.registerCustomEditorProvider('excelAiVbaStudio.markdownViewer', markdownEditorProvider, viewOption),
+		vscode.window.registerCustomEditorProvider('excelAiVbaStudio.markdownPreview', markdownEditorProvider, viewOption),
 		...webUnsupportedViewer.bindCustomEditors(viewOption),
 		...viewerInstance.bindCustomEditors(viewOption),
 	);

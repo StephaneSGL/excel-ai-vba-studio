@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 const WEBVIEW_ROOT_AUTHORITY = 'vscode-resource.vscode-cdn.net';
 const SCHEME_PREFIX_REG = /^[a-z][a-z0-9+.-]*:/i;
+const ALLOWED_EXTERNAL_SCHEMES = new Set(['http', 'https', 'mailto']);
 
 function decodeAuthority(authority: string): string {
     return authority.replace(/-([0-9a-f]{4})/gi, (_, code) =>
@@ -116,4 +117,16 @@ export function parseWebviewResourceUri(linkUri: string, baseUri?: vscode.Uri): 
     }
 
     return resolveRelativeUri(linkUri, baseUri);
+}
+
+export function parseSafeExternalUri(value: unknown): vscode.Uri | undefined {
+    if (typeof value !== 'string' || value.length === 0 || value.length > 8192) {
+        return undefined;
+    }
+    try {
+        const uri = vscode.Uri.parse(value, true);
+        return ALLOWED_EXTERNAL_SCHEMES.has(uri.scheme.toLowerCase()) ? uri : undefined;
+    } catch {
+        return undefined;
+    }
 }

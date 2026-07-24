@@ -4,8 +4,8 @@
   const SIDEBAR_WIDTH_VAR = '--sidebar-width';
   const SIDEBAR_MIN_WIDTH = 200;
   const SIDEBAR_DEFAULT_WIDTH = 270;
-  const SIDEBAR_STORAGE_KEY = 'vscode-office.pdf.sidebarWidth';
-  const SIDEBAR_OPEN_STORAGE_KEY = 'vscode-office.pdf.sidebarOpen';
+  const SIDEBAR_STORAGE_KEY = 'excelAiVbaStudio.pdf.sidebarWidth';
+  const SIDEBAR_OPEN_STORAGE_KEY = 'excelAiVbaStudio.pdf.sidebarOpen';
   let sidebarOpenStateReady = false;
 
   function loadSidebarWidth() {

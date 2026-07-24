@@ -4,7 +4,6 @@ import { PPTXViewer } from "pptxviewjs";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handler, loadDarkMode, applyDarkMode } from "../../util/vscode";
 import { loadOfficeBuffer } from "../../util/loadOfficeContent";
-import Sponsor from '../components/Sponsor';
 import './PowerPoint.css';
 
 const { Sider, Content } = Layout;
@@ -542,7 +541,6 @@ export default function PowerPoint() {
                                     </div>
                                 ))}
                             </div>
-                            <Sponsor variant="sidebar" dark={dark} />
                         </div>
                     </Sider>
                     <Content className="ppt-main" ref={mainPanelRef}>

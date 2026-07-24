@@ -17,8 +17,10 @@ import {
     type FileHistorySplitLayout,
 } from '../util/gitHistoryPreferences';
 import { Global } from '@/common/global';
+import { parseSafeExternalUri } from '@/common/webviewUri';
 
 const DEFAULT_MAX_COMMITS = 300;
+const ALLOWED_CONFIG_KEYS = new Set(['gitHistory.quickSyncButton']);
 
 export class MessageRouter {
     private loadCommitsId = 0;
@@ -100,16 +102,11 @@ export class MessageRouter {
                 this.onSaveFileHistorySplitLayout(content as { layout: FileHistorySplitLayout })))
             .on('updateConfig', this.wrapHandler((content) =>
                 this.onUpdateConfig(content as { key: string; value: unknown })))
-            .on('openSponsor', this.wrapHandler(() => {
-                void vscode.commands.executeCommand(
-                    'workbench.extensions.action.showExtensionsWithIds',
-                    ['cweijan.vscode-database-client2'],
-                );
-            }))
             .on('openExternal', this.wrapHandler((content) => {
                 const url = typeof content === 'string' ? content : '';
-                if (url) {
-                    void vscode.env.openExternal(vscode.Uri.parse(url));
+                const externalUri = parseSafeExternalUri(url);
+                if (externalUri) {
+                    void vscode.env.openExternal(externalUri);
                 }
             }))
             .on('editorLayoutSingle', this.wrapHandler(() => {
@@ -258,7 +255,7 @@ export class MessageRouter {
 
     private async onUpdateConfig(payload: { key: string; value: unknown }): Promise<void> {
         const key = payload.key?.trim();
-        if (!key) {
+        if (!key || !ALLOWED_CONFIG_KEYS.has(key)) {
             return;
         }
         await Global.updateConfig(key, payload.value);

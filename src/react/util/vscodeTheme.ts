@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 
 function parseRgb(value: string): [number, number, number] | null {
     const color = value.trim();
@@ -71,10 +70,4 @@ export function observeVscodeThemeChange(onChange: () => void): () => void {
         bodyObserver.disconnect();
         rootObserver.disconnect();
     };
-}
-
-export function useVscodeSponsorDark(): boolean {
-    const [dark, setDark] = useState(isVscodeDarkTheme);
-    useEffect(() => observeVscodeThemeChange(() => setDark(isVscodeDarkTheme())), []);
-    return dark;
 }

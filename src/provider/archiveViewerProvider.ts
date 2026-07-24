@@ -1,13 +1,12 @@
 import { ReactApp } from '@/common/reactApp';
 import { getFileSuffix } from '@/common/fileSuffix';
 import { Handler } from '@/common/handler';
-import { getExtensionResourceRoots } from '@/common/extensionResource';
+import { getReactWebviewResourceRoots } from '@/common/extensionResource';
 import { handleCommonEvent } from '@/provider/compress/commonHandler';
 import { handleZip } from '@/provider/compress/zipHandler';
 import { handleRar } from '@/provider/compress/rarHandler';
 import { handleTarGz } from '@/provider/compress/tarHandler';
 import { handleSevenZip } from '@/provider/compress/sevenZipHandler';
-import { TelemetryService } from '@/service/telemetryService';
 import * as vscode from 'vscode';
 
 /**
@@ -19,7 +18,7 @@ export class ArchiveViewerProvider implements vscode.CustomReadonlyEditorProvide
 	constructor(private context: vscode.ExtensionContext) { }
 
 	bindCustomEditor(viewOption: { webviewOptions: vscode.WebviewPanelOptions }) {
-		return vscode.window.registerCustomEditorProvider('cweijan.archiveViewer', this, viewOption);
+		return vscode.window.registerCustomEditorProvider('excelAiVbaStudio.archiveViewer', this, viewOption);
 	}
 
 	public openCustomDocument(uri: vscode.Uri, _openContext: vscode.CustomDocumentOpenContext, _token: vscode.CancellationToken): vscode.CustomDocument {
@@ -32,7 +31,7 @@ export class ArchiveViewerProvider implements vscode.CustomReadonlyEditorProvide
 		const folderPath = vscode.Uri.joinPath(uri, '..');
 		webview.options = {
 			enableScripts: true,
-			localResourceRoots: [...getExtensionResourceRoots(this.context), folderPath],
+			localResourceRoots: [...getReactWebviewResourceRoots(this.context), folderPath],
 		};
 
 		const handler = Handler.bind(webviewPanel, uri);
@@ -64,8 +63,6 @@ export class ArchiveViewerProvider implements vscode.CustomReadonlyEditorProvide
 				return;
 		}
 
-		const fileType = suffix.startsWith('.') ? suffix.slice(1) : suffix;
-		TelemetryService.get()?.trackOfficeViewOpen(uri.fsPath, 'zip', fileType);
 		void ReactApp.view(webview, { route: 'zip' });
 	}
 }

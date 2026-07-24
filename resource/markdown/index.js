@@ -32,9 +32,6 @@ handler.on("open", async (md) => {
       handler.emit('doSave', editor?.getValue());
       editor?.markSaved();
     }),
-    onAboutOpen: () => handler.emit('openAbout'),
-    onSponsorLogoClick: () => handler.emit('openSponsor'),
-    onSponsorSiteClick: () => handler.emit('openExternal', 'https://database-client.com/'),
     onLinkClick(payload, event) {
       const isCompose = event.metaKey || event.ctrlKey;
       if (payload.action !== "dblclick" && !(payload.action === "click" && isCompose)) {
@@ -96,9 +93,6 @@ handler.on("open", async (md) => {
           handler.emit("img", { data: reader.result, ext })
         };
       }
-    },
-    onTelemetry(event, properties) {
-      handler.emit('telemetry', { event, properties });
     },
     ai: {
       onPolish(markdown, apply, options) {

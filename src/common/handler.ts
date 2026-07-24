@@ -3,6 +3,19 @@ import { SimpleEventEmitter } from "./simpleEventEmitter";
 import { WebviewPanel } from "vscode";
 import { Output } from "./Output";
 
+interface WebviewMessage {
+    type: string;
+    content?: unknown;
+}
+
+function isWebviewMessage(value: unknown): value is WebviewMessage {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+    const type = (value as { type?: unknown }).type;
+    return typeof type === 'string' && /^[A-Za-z][A-Za-z0-9._-]{0,79}$/.test(type);
+}
+
 export class Handler {
 
     private isEnd: boolean;
@@ -54,7 +67,10 @@ export class Handler {
         });
 
         // bind from webview
-        panel.webview.onDidReceiveMessage((message) => {
+        panel.webview.onDidReceiveMessage((message: unknown) => {
+            if (!isWebviewMessage(message) || eventEmitter.listeners(message.type).length === 0) {
+                return;
+            }
             eventEmitter.emit(message.type, message.content)
         })
         return handle;

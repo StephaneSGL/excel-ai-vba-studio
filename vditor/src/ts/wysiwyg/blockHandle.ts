@@ -2,7 +2,6 @@ import { isInsideCodeBlockChrome } from "../codeBlock/codeMirrorManager";
 import { syncBlockMarkerTop } from "../util/blockMarker";
 import { execAfterRender } from "../util/fixBrowserBehavior";
 import { scrollElementIntoEditorView, setSelectionFocus } from "../util/selection";
-import { telemetry } from "../util/telemetry";
 import { renderTocNow } from "../util/toc";
 
 const ROOT_CLASS = "vditor-block-handle";
@@ -558,10 +557,6 @@ const insertEmptyBlockAfterActiveBlock = (vditor: IVditor, state: IBlockHandleSt
         return;
     }
 
-    telemetry(vditor, "markdown.block.insertAfter", {
-        block: block.tagName.toLowerCase(),
-        source: "block-handle",
-    });
     block.insertAdjacentHTML("afterend", createEmptySiblingHTML(block));
     const insertedBlock = block.nextElementSibling as HTMLElement | null;
     if (!insertedBlock) {
@@ -609,11 +604,6 @@ const finishDrag = (vditor: IVditor, state: IBlockHandleState) => {
             && wouldMoveBlock(block, dropTarget);
         if (moved) {
             applyDropTarget(block, dropTarget, editor);
-            telemetry(vditor, "markdown.block.move", {
-                block: block.tagName.toLowerCase(),
-                from: state.originalDropTarget?.container.tagName.toLowerCase() || "",
-                to: dropTarget.container.tagName.toLowerCase(),
-            });
             renderTocNow(vditor);
             vditor.undo.addToUndoStack(vditor);
             execAfterRender(vditor, {

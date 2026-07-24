@@ -1,14 +1,18 @@
 import { adjustImgPath, getWorkspacePath } from '@/common/fileUtil';
 import { isAbsolute, parse, resolve } from 'path';
 import * as vscode from 'vscode';
-import { extensionResource, getExtensionResourceRoots, readExtensionText } from '@/common/extensionResource';
+import {
+    extensionResource,
+    getMarkdownWebviewResourceRoots,
+    readExtensionText,
+    withWebviewCsp,
+} from '@/common/extensionResource';
 import { ensureParentDirectory } from '@/common/workspaceFs';
 import { Handler } from '../common/handler';
 import { Util } from '../common/util';
 import { Holder } from '../service/markdown/holder';
 import { MarkdownService } from '../service/markdownService';
 import { Global, i18n } from '@/common/global';
-import { TelemetryService } from '@/service/telemetryService';
 import { openWikiLink } from '@/service/markdown/wikilink';
 import { streamCustomAI } from '@/service/ai/customAIClient';
 import { buildAIOutputLanguageInstruction } from '@/service/ai/aiOutputLanguage';
@@ -19,8 +23,7 @@ import {
     unregisterMarkdownWebview,
 } from '@/service/markdown/blockScroll';
 import { ViewerSettingsService } from '@/service/viewerSettingsService';
-import { fileTypeFromPath } from '@/service/officeViewType';
-import { parseWebviewResourceUri } from '@/common/webviewUri';
+import { parseSafeExternalUri, parseWebviewResourceUri } from '@/common/webviewUri';
 
 function getRuntimePlatform(): string {
     if (typeof process !== 'undefined' && process.platform) {
@@ -53,13 +56,6 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     private aiAbortController: AbortController | null = null;
     private aiCancellationSource: vscode.CancellationTokenSource | null = null;
 
-    private getMarkdownTelemetryProps(configuration = vscode.workspace.getConfiguration("vscode-office")) {
-        return {
-            editorTheme: String(configuration.get<string>("editorTheme", "Auto")),
-            codeTheme: String(configuration.get<string>("codeMirrorTheme", "Auto")),
-        };
-    }
-
     constructor(
         private context: vscode.ExtensionContext, private options: MarkdownEditorProviderOptions = {}
     ) {
@@ -75,11 +71,11 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         MarkdownEditorProvider.configSyncRegistered = true;
         context.subscriptions.push(
             vscode.workspace.onDidChangeConfiguration((event) => {
-                const config = vscode.workspace.getConfiguration('vscode-office');
+                const config = vscode.workspace.getConfiguration('excelAiVbaStudio');
                 const patch: Partial<Record<MarkdownSyncConfigKey, unknown>> = {};
                 let changed = false;
                 for (const key of MARKDOWN_SYNC_CONFIG_KEYS) {
-                    if (event.affectsConfiguration(`vscode-office.${key}`)) {
+                    if (event.affectsConfiguration(`excelAiVbaStudio.${key}`)) {
                         patch[key] = config.get(key);
                         changed = true;
                     }
@@ -106,17 +102,6 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         }
     }
 
-    private getFolders(): vscode.Uri[] {
-        if (vscode.env.uiKind === vscode.UIKind.Web) {
-            return [];
-        }
-        const data = [];
-        for (let i = 65; i <= 90; i++) {
-            data.push(vscode.Uri.file(`${String.fromCharCode(i)}:/`))
-        }
-        return data;
-    }
-
     resolveCustomTextEditor(document: vscode.TextDocument, webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): void | Thenable<void> {
         // console.log('schema', document.uri.scheme, document.uri.path, document.uri.query);
         const uri = document.uri;
@@ -125,19 +110,12 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         webview.options = {
             enableScripts: true,
             localResourceRoots: [
-                ...getExtensionResourceRoots(this.context),
+                ...getMarkdownWebviewResourceRoots(this.context),
                 folderPath,
                 ...(vscode.workspace.workspaceFolders?.map(folder => folder.uri) ?? []),
-                vscode.Uri.file("/"),
-                ...this.getFolders(),
             ],
         }
         const handler = Handler.bind(webviewPanel, uri);
-        TelemetryService.get()?.trackViewOpen(
-            'markdown',
-            fileTypeFromPath(uri.fsPath),
-            this.getMarkdownTelemetryProps(),
-        );
         void this.handleMarkdown(document, handler, folderPath);
         handler.on('developerTool', () => vscode.commands.executeCommand('workbench.action.toggleDevTools'))
     }
@@ -189,7 +167,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             // re-parsing on every keystroke (ANTLR token recognition errors in console).
             documentSyncTimer = setTimeout(() => void flushDocumentSync(), 400);
         };
-        const config = vscode.workspace.getConfiguration("vscode-office");
+        const config = vscode.workspace.getConfiguration("excelAiVbaStudio");
         registerMarkdownWebview(uri, handler);
         handler.panel.onDidDispose(() => {
             void flushDocumentSync();
@@ -214,7 +192,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             this.updateCount(content)
             handler.emit("update", updatedText)
         }).on("command", (command) => {
-            vscode.commands.executeCommand(command)
+            if (command === 'excelAiVbaStudio.markdown.paste') {
+                void vscode.commands.executeCommand(command);
+            }
         }).on("openLink", async (linkUri: string) => {
             if (linkUri.startsWith('wiki:')) {
                 await openWikiLink(uri, linkUri);
@@ -222,9 +202,12 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             }
             const localUri = parseWebviewResourceUri(linkUri, uri);
             if (localUri) {
-                vscode.commands.executeCommand('vscode.open', localUri, { preview: false });
+                void vscode.commands.executeCommand('vscode.open', localUri, { preview: false });
             } else {
-                vscode.env.openExternal(vscode.Uri.parse(linkUri));
+                const externalUri = parseSafeExternalUri(linkUri);
+                if (externalUri) {
+                    void vscode.env.openExternal(externalUri);
+                }
             }
         }).on("codeMirrorTheme", (theme: string) => {
             const validThemes = [
@@ -299,14 +282,10 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         }).on('developerTool', () => {
             vscode.commands.executeCommand('workbench.action.toggleDevTools')
         }).on('openAbout', () => {
-        }).on('openSponsor', () => {
-            vscode.commands.executeCommand(
-                'workbench.extensions.action.showExtensionsWithIds',
-                ['cweijan.vscode-database-client2'],
-            );
         }).on('openExternal', (url: string) => {
-            if (url) {
-                vscode.env.openExternal(vscode.Uri.parse(url));
+            const externalUri = parseSafeExternalUri(url);
+            if (externalUri) {
+                void vscode.env.openExternal(externalUri);
             }
         }).on('queryAIAvailable', () => {
             void this.notifyAIAvailable(handler);
@@ -331,14 +310,6 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             await this.handleAIPolish(handler, payload.markdown, payload.options);
         }).on('aiPolishCancel', () => {
             this.cancelAIPolish();
-        }).on('telemetry', (payload: { event: string; properties?: Record<string, string | number | boolean> }) => {
-            const properties = {
-                ...this.getMarkdownTelemetryProps(),
-                ...Object.fromEntries(
-                    Object.entries(payload.properties ?? {}).map(([key, value]) => [key, String(value)]),
-                ),
-            };
-            TelemetryService.get()?.trackEvent(payload.event, properties);
         }).on('syncViewerSettings', async (settings) => {
             if (await ViewerSettingsService.exists()) {
                 await ViewerSettingsService.writeFromVditor(settings);
@@ -351,8 +322,10 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             vscode.Uri.file(getWorkspacePath(folderPath)) : folderPath;
         const baseUrl = webview.asWebviewUri(basePath).toString().replace(/\?.+$/, '').replace('https://git', 'https://file');
         const indexHtml = await readExtensionText(this.context, 'resource', 'markdown', 'index.html');
-        webview.html = Util.buildPath(
-            indexHtml.replace("{{baseUrl}}", baseUrl), webview, contextUri
+        webview.html = withWebviewCsp(
+            Util.buildPath(indexHtml.replace("{{baseUrl}}", baseUrl), webview, contextUri),
+            webview,
+            { allowRemoteImages: true, allowDataFrames: true },
         );
     }
 

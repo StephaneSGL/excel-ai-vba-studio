@@ -13,14 +13,14 @@ export class HttpCodeLensProvider implements CodeLensProvider {
             const sendCmd: Command = {
                 arguments: [document, range],
                 title: '$(run) Send',
-                command: 'vscode-office.request'
+                command: 'excelAiVbaStudio.http.request'
             };
             blocks.push(new CodeLens(range, sendCmd));
 
             const curlCmd: Command = {
                 arguments: [document, range],
                 title: 'Copy as cURL',
-                command: 'vscode-office.copy-request-as-curl'
+                command: 'excelAiVbaStudio.http.copyRequestAsCurl'
             };
             blocks.push(new CodeLens(range, curlCmd));
         }

@@ -34,6 +34,8 @@ export interface Options {
     showContextmenu?: boolean;
     showBottomBar?: boolean;
     showEditInVSCode?: boolean;
+    /** Hide and suppress Save As for source formats that must stay untouched. */
+    allowSaveAs?: boolean;
     extendToolbar?: {
         left?: ExtendToolbarOption[];
         right?: ExtendToolbarOption[];

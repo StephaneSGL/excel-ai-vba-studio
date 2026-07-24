@@ -1,0 +1,40 @@
+name: Publish to Visual Studio Marketplace
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: marketplace-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        run: npm run release:check -- "${GITHUB_REF_NAME}"
+
+      - name: Validate manifest, build, and package contents
+        run: npm run validate
+
+      - name: Publish trusted win32-x64 package
+        run: npx --no-install vsce publish --oidc --target win32-x64 --no-dependencies

@@ -57,7 +57,6 @@ import type {
 } from './types';
 import './gitHistory.css';
 import '@vscode/codicons/dist/codicon.css';
-import SponsorBar from '../components/SponsorBar';
 
 const ROW_HEIGHT = 28;
 const TABLE_HEADER_HEIGHT = 28;
@@ -84,9 +83,6 @@ function GitHistoryBottomBar({ commitCount = 0 }: { commitCount?: number }) {
                     Showing {commitCount} commits
                 </span>
             )}
-            <div className="git-graph-bottom-bar-sponsor">
-                <SponsorBar placement="center" />
-            </div>
         </footer>
     );
 }

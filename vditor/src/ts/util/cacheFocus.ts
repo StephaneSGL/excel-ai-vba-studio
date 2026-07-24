@@ -329,9 +329,6 @@ const hasOpenEditorOverlay = (vditor: IVditor) => {
     if (root.querySelector(".vditor-cm-chrome__lang--open, .vditor-cm-chrome__theme--open, .vditor-mermaid-chrome__theme--open")) {
         return true;
     }
-    if (document.querySelector(".vditor-sponsor-popup")) {
-        return true;
-    }
     return false;
 };
 

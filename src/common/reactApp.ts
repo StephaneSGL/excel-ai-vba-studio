@@ -1,12 +1,14 @@
-import axios from 'axios';
 import * as vscode from 'vscode';
-import { extensionResource, getExtensionUri, readExtensionText } from './extensionResource';
-import { IconService } from '../service/icon/iconService';
+import {
+    encodeHtmlAttributeJson,
+    extensionResource,
+    getExtensionUri,
+    readExtensionText,
+    withWebviewCsp,
+} from './extensionResource';
 
 interface ViewOption {
     route: string;
-    fileName?: string;
-    gitHistoryInit?: import('../gitHistory/util/gitHistoryInitPayload').GitHistoryEmbeddedInit;
 }
 
 export class ReactApp {
@@ -23,24 +25,25 @@ export class ReactApp {
 
     public static async view(webview: vscode.Webview, option: ViewOption) {
         const html = await this.readContent();
-        const iconConfig = IconService.getInstance().getWebviewConfig(this.context, webview);
-        const sponsorBaseUrl = webview.asWebviewUri(
-            extensionResource(this.context, 'resource', 'sponsor')
-        ).toString();
-        webview.html = this.buildPath(html, webview)
-            .replace(`{{configs}}`, JSON.stringify({
+        const devServerUrl = this.IS_DEV ? 'http://127.0.0.1:5739' : undefined;
+        webview.html = withWebviewCsp(this.buildPath(html, webview), webview, {
+            developmentServer: devServerUrl,
+        })
+            .replace(`{{configs}}`, encodeHtmlAttributeJson({
                 ...option,
-                ...iconConfig,
-                sponsorBaseUrl,
                 language: vscode.env.language,
-                config: vscode.workspace.getConfiguration('vscode-office')
+                config: vscode.workspace.getConfiguration('excelAiVbaStudio')
             }));
     }
 
     private static async readContent(): Promise<string> {
         if (this.IS_DEV) {
             const devServerUrl = 'http://127.0.0.1:5739';
-            const data: string = (await axios.get(`${devServerUrl}/index.html`, { transformResponse: [] })).data;
+            const response = await fetch(`${devServerUrl}/index.html`);
+            if (!response.ok) {
+                throw new Error(`Vite dev server returned HTTP ${response.status}.`);
+            }
+            const data = await response.text();
             return data.replace(/(["'])\/(?=(?:@|src\/|index\.html\?))/g, `$1${devServerUrl}/`);
         }
         return readExtensionText(this.context, 'out', 'webview', 'index.html');

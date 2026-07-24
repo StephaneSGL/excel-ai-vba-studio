@@ -1,908 +1,334 @@
 {
-	"name": "vscode-office",
-	"displayName": "Office Viewer",
-	"description": "View word, excel, powerpoint files and using WYSIWYG editor for markdown.",
-	"version": "4.1.7",
-	"publisher": "cweijan",
-	"icon": "image/logo.png",
-	"engines": {
-		"vscode": "^1.64.0"
-	},
-	"keywords": [
-		"pdf",
-		"word",
-		"docx",
-		"excel",
-		"xlsx",
-		"csv",
-		"tsv",
-		"powerpoint",
-		"pptx",
-		"markdown",
-		"epub",
-		"svg",
-		"psd",
-		"xmind",
-		"parquet",
-		"zip",
-		"archive",
-		"font",
-		"toml",
-		"yaml",
-		"xml",
-		"git",
-		"git-history"
-	],
-	"categories": [
-		"Visualization",
-		"Other"
-	],
-	"bugs": {
-		"url": "https://github.com/cweijan/vscode-office/issues",
-		"email": "cweijan@163.com"
-	},
-	"homepage": "https://github.com/cweijan/vscode-office/blob/master/README.md",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/cweijan/vscode-office.git"
-	},
-	"activationEvents": [
-		"onStartupFinished"
-	],
-	"main": "./out/extension.js",
-	"browser": "./out/extension.web.js",
-	"contributes": {
-		"themes": [
-			{
-				"label": "One Dark Modern",
-				"uiTheme": "vs-dark",
-				"path": "./theme/onedark-modern.json"
-			},
-			{
-				"label": "One Dark Modern Classic",
-				"uiTheme": "vs-dark",
-				"path": "./theme/onedark-modern-classic.json"
-			}
-		],
-		"iconThemes": [
-			{
-				"id": "office-material-icon-theme",
-				"label": "Material Icon Theme (Office Viewer)",
-				"path": "./theme/material-icons.json",
-				"_watch": true
-			}
-		],
-		"languages": [
-			{
-				"id": "nginx",
-				"aliases": [
-					"NGINX Conf",
-					"NGINX",
-					"nginx"
-				],
-				"extensions": [
-					".conf",
-					".conf.default",
-					".conf.template",
-					"mime.types",
-					"fastcgi_params",
-					"scgi_params",
-					"uwsgi_params",
-					"nginx.conf",
-					".nginx"
-				],
-				"configuration": "./syntaxes/nginx.configuration.json"
-			},
-			{
-				"id": "kotlin",
-				"aliases": [
-					"Kotlin"
-				],
-				"extensions": [
-					".kt",
-					".kts"
-				],
-				"configuration": "./syntaxes/kotlin-language-configuration.json"
-			},
-			{
-				"id": "reg",
-				"aliases": [
-					"REG",
-					"reg"
-				],
-				"extensions": [
-					".reg",
-					".REG"
-				],
-				"configuration": "./syntaxes/reg-language-configuration.json"
-			},
-			{
-				"id": "http",
-				"aliases": [
-					"HTTP",
-					"Http",
-					"http"
-				],
-				"extensions": [
-					".http",
-					".rest"
-				],
-				"firstLine": "^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CONNECT|TRACE)\\s+(.*?)HTTP/[0-9\\.]+$",
-				"configuration": "./syntaxes/http-language-configuration.json"
-			},
-			{
-				"id": "toml",
-				"aliases": [
-					"TOML",
-					"Toml",
-					"toml"
-				],
-				"extensions": [
-					".toml"
-				],
-				"configuration": "./syntaxes/toml-language-configuration.json"
-			},
-			{
-				"id": "kusto",
-				"aliases": [
-					"Kusto",
-					"kusto",
-					"KQL",
-					"kql"
-				],
-				"extensions": [
-					".csl",
-					".kusto",
-					".kql"
-				],
-				"configuration": "./syntaxes/kusto-language-configuration.json"
-			}
-		],
-		"grammars": [
-			{
-				"language": "nginx",
-				"scopeName": "source.nginx",
-				"path": "./syntaxes/nginx.tmLanguage",
-				"embeddedLanguages": {
-					"meta.embedded.block.lua": "lua"
-				}
-			},
-			{
-				"language": "kotlin",
-				"scopeName": "source.kotlin",
-				"path": "./syntaxes/kotlin.tmLanguage.json"
-			},
-			{
-				"language": "reg",
-				"scopeName": "source.reg",
-				"path": "./syntaxes/reg.tmLanguage"
-			},
-			{
-				"language": "http",
-				"scopeName": "source.http",
-				"path": "./syntaxes/http.tmLanguage.json"
-			},
-			{
-				"language": "toml",
-				"scopeName": "source.toml",
-				"path": "./syntaxes/toml.tmLanguage.json"
-			},
-			{
-				"language": "kusto",
-				"scopeName": "source.kusto",
-				"path": "./syntaxes/kusto.tmLanguage.json"
-			}
-		],
-		"snippets": [
-			{
-				"language": "http",
-				"path": "./snippets/http.json"
-			}
-		],
-		"commands": [
-			{
-				"command": "vscode-office.save-response-body",
-				"title": "Save Response",
-				"icon": "$(save)",
-				"enablement": "!office.extensionHost.web"
-			},
-			{
-				"command": "vscode-office.copy-response-body",
-				"title": "Copy Response",
-				"icon": "$(copy)",
-				"enablement": "!office.extensionHost.web"
-			},
-			{
-				"command": "office.markdown.switch",
-				"title": "Switch markdown editor",
-				"icon": "$(edit)"
-			},
-			{
-				"command": "office.csv.switch",
-				"title": "Switch CSV editor",
-				"icon": "$(edit)"
-			},
-			{
-				"command": "office.markdown.paste",
-				"title": "Enhance paste in markdown",
-				"enablement": "!office.extensionHost.web"
-			},
-			{
-				"command": "office.html.preview",
-				"title": "Preview HTML"
-			},
-			{
-				"command": "office.gitHistory.view",
-				"title": "View Git History",
-				"icon": "$(history)",
-				"enablement": "!office.extensionHost.web"
-			},
-			{
-				"command": "office.gitHistory.viewFileHistory",
-				"title": "Git: View File History",
-				"icon": "$(git-commit)",
-				"enablement": "!office.extensionHost.web"
-			},
-			{
-				"command": "office.gitHistory.quickSync",
-				"title": "Git: Quick Sync",
-				"icon": "$(sync)",
-				"enablement": "!office.extensionHost.web"
-			}
-		],
-		"keybindings": [
-			{
-				"command": "office.markdown.paste",
-				"key": "ctrl+v",
-				"mac": "cmd+v",
-				"when": "editorTextFocus && resourceLangId == markdown && !office.extensionHost.web"
-			},
-			{
-				"command": "office.html.preview",
-				"key": "ctrl+shift+v",
-				"when": "editorTextFocus && editorLangId == html"
-			},
-			{
-				"command": "office.markdown.switch",
-				"key": "ctrl+alt+e",
-				"mac": "ctrl+cmd+e",
-				"when": "editorTextFocus && editorLangId == markdown"
-			},
-			{
-				"command": "vscode-office.request",
-				"key": "ctrl+enter",
-				"mac": "cmd+enter",
-				"when": "editorTextFocus && editorLangId == 'http' && !office.extensionHost.web"
-			}
-		],
-		"menus": {
-			"scm/title": [
-				{
-					"command": "office.gitHistory.view",
-					"group": "navigation",
-					"when": "scmProvider == git && !office.extensionHost.web"
-				},
-				{
-					"command": "office.gitHistory.quickSync",
-					"group": "navigation",
-					"when": "scmProvider == git && config.vscode-office.gitHistory.quickSyncButton && !office.extensionHost.web"
-				}
-			],
-			"scm/repository": [
-				{
-					"command": "office.gitHistory.view",
-					"group": "navigation",
-					"when": "scmProvider == git && !office.extensionHost.web"
-				}
-			],
-			"scm/resourceState/context": [
-				{
-					"command": "office.gitHistory.viewFileHistory",
-					"when": "config.git.enabled && gitOpenRepositoryCount != 0 && !office.extensionHost.web"
-				}
-			],
-			"editor/title": [
-				{
-					"command": "office.gitHistory.viewFileHistory",
-					"group": "navigation@4",
-					"when": "config.git.enabled && gitOpenRepositoryCount != 0 && resourceScheme == file && !office.extensionHost.web"
-				},
-				{
-					"command": "office.markdown.switch",
-					"when": "resourceExtname == '.md'",
-					"group": "navigation@-2"
-				},
-				{
-					"command": "office.csv.switch",
-					"when": "resourceExtname == '.csv' || resourceExtname == '.tsv'",
-					"group": "navigation@-2"
-				},
-				{
-					"when": "editorTextFocus && resourceScheme == rest-client-response",
-					"command": "vscode-office.copy-response-body",
-					"group": "navigation@0"
-				},
-				{
-					"when": "editorTextFocus && resourceScheme == rest-client-response",
-					"command": "vscode-office.save-response-body",
-					"group": "navigation@2"
-				}
-			],
-			"editor/context": [
-				{
-					"command": "office.gitHistory.viewFileHistory",
-					"group": "git",
-					"when": "config.git.enabled && gitOpenRepositoryCount != 0 && resourceScheme == file && !office.extensionHost.web"
-				},
-				{
-					"command": "office.html.preview",
-					"group": "navigation@1",
-					"when": "editorTextFocus && editorLangId == html"
-				},
-				{
-					"command": "vscode-office.save-response-body",
-					"group": "http@2",
-					"when": "editorTextFocus && resourceScheme == rest-client-response && !office.extensionHost.web"
-				},
-				{
-					"command": "vscode-office.copy-response-body",
-					"group": "http@4",
-					"when": "editorTextFocus && resourceScheme == rest-client-response && !office.extensionHost.web"
-				}
-			],
-			"explorer/context": [
-				{
-					"command": "office.gitHistory.viewFileHistory",
-					"group": "git",
-					"when": "config.git.enabled && gitOpenRepositoryCount != 0 && resourceScheme == file && !office.extensionHost.web"
-				}
-			]
-		},
-		"customEditors": [
-			{
-				"viewType": "cweijan.officeViewer",
-				"displayName": "Office Viewer",
-				"selector": [
-					{
-						"filenamePattern": "*.xls"
-					},
-					{
-						"filenamePattern": "*.xlsx"
-					},
-					{
-						"filenamePattern": "*.xlsm"
-					},
-					{
-						"filenamePattern": "file:/**/*.csv"
-					},
-					{
-						"filenamePattern": "vscode-vfs:/**/*.csv"
-					},
-					{
-						"filenamePattern": "vscode-remote:/**/*.csv"
-					},
-					{
-						"filenamePattern": "*.tsv"
-					},
-					{
-						"filenamePattern": "*.ods"
-					},
-					{
-						"filenamePattern": "file:/**/*.docx"
-					},
-					{
-						"filenamePattern": "vscode-vfs:/**/*.docx"
-					},
-					{
-						"filenamePattern": "vscode-remote:/**/*.docx"
-					},
-					{
-						"filenamePattern": "*.dotx"
-					},
-					{
-						"filenamePattern": "*.pptx"
-					},
-					{
-						"filenamePattern": "*.pptm"
-					},
-					{
-						"filenamePattern": "*.pdf"
-					},
-					{
-						"filenamePattern": "*.epub"
-					},
-					{
-						"filenamePattern": "*.ttf"
-					},
-					{
-						"filenamePattern": "*.woff"
-					},
-					{
-						"filenamePattern": "*.woff2"
-					},
-					{
-						"filenamePattern": "*.otf"
-					},
-					{
-						"filenamePattern": "*.svg"
-					},
-					{
-						"filenamePattern": "*.icns"
-					},
-					{
-						"filenamePattern": "*.psd"
-					},
-					{
-						"filenamePattern": "*.xmind"
-					},
-					{
-						"filenamePattern": "*.tiff"
-					},
-					{
-						"filenamePattern": "*.tif"
-					},
-					{
-						"filenamePattern": "*.heif"
-					},
-					{
-						"filenamePattern": "*.heic"
-					}
-				]
-			},
-			{
-				"viewType": "cweijan.archiveViewer",
-				"displayName": "Archive Viewer",
-				"selector": [
-					{
-						"filenamePattern": "*.jar"
-					},
-					{
-						"filenamePattern": "*.zip"
-					},
-					{
-						"filenamePattern": "*.7z"
-					},
-					{
-						"filenamePattern": "*.rar"
-					},
-					{
-						"filenamePattern": "*.tar.gz"
-					},
-					{
-						"filenamePattern": "*.tgz"
-					},
-					{
-						"filenamePattern": "*.tar"
-					},
-					{
-						"filenamePattern": "*.apk"
-					},
-					{
-						"filenamePattern": "*.vsix"
-					},
-					{
-						"filenamePattern": "*.crx"
-					}
-				]
-			},
-			{
-				"viewType": "cweijan.imageViewer",
-				"displayName": "Image Preview (Office Viewer)",
-				"priority": "option",
-				"selector": [
-					{
-						"filenamePattern": "*.jpg"
-					},
-					{
-						"filenamePattern": "*.png"
-					},
-					{
-						"filenamePattern": "*.gif"
-					},
-					{
-						"filenamePattern": "*.apng"
-					},
-					{
-						"filenamePattern": "*.apng"
-					},
-					{
-						"filenamePattern": "*.bmp"
-					},
-					{
-						"filenamePattern": "*.ico"
-					},
-					{
-						"filenamePattern": "*.cur"
-					},
-					{
-						"filenamePattern": "*.jpeg"
-					},
-					{
-						"filenamePattern": "*.pjpeg"
-					},
-					{
-						"filenamePattern": "*.pjp"
-					},
-					{
-						"filenamePattern": "*.webp"
-					}
-				]
-			},
-			{
-				"viewType": "cweijan.markdownViewer",
-				"displayName": "Markdown Editor",
-				"selector": [
-					{
-						"filenamePattern": "file:/**/*.md"
-					},
-					{
-						"filenamePattern": "file:/**/*.markdown"
-					},
-					{
-						"filenamePattern": "vscode-vfs:/**/*.md"
-					},
-					{
-						"filenamePattern": "vscode-vfs:/**/*.markdown"
-					},
-					{
-						"filenamePattern": "vscode-remote:/**/*.md"
-					},
-					{
-						"filenamePattern": "vscode-remote:/**/*.markdown"
-					}
-				]
-			},
-			{
-				"viewType": "cweijan.htmlViewer",
-				"displayName": "Html Viewer",
-				"priority": "option",
-				"selector": [
-					{
-						"filenamePattern": "*.htm"
-					},
-					{
-						"filenamePattern": "*.html"
-					},
-					{
-						"filenamePattern": "*.xhtml"
-					}
-				]
-			},
-			{
-				"viewType": "cweijan.parquetViewer",
-				"displayName": "Parquet Viewer",
-				"priority": "option",
-				"selector": [
-					{
-						"filenamePattern": "*.parquet"
-					}
-				]
-			},
-			{
-				"viewType": "cweijan.classViewer",
-				"displayName": "Java Decompiler",
-				"selector": [
-					{
-						"filenamePattern": "file:/**/*.class"
-					}
-				]
-			}
-		],
-		"configuration": [
-			{
-				"title": "Git History",
-				"order": 98,
-				"properties": {
-					"vscode-office.gitHistory.quickSyncButton": {
-						"type": "boolean",
-						"default": false,
-						"description": "Show Quick Sync button in Source Control (Git) title toolbar."
-					}
-				}
-			},
-			{
-				"title": "Markdown",
-				"order": 1,
-				"properties": {
-					"vscode-office.editorTheme": {
-						"type": "string",
-						"enum": [
-							"Auto",
-							"Light",
-							"Solarized",
-							"Warm Light",
-							"Dim Light",
-							"One Dark",
-							"Github Dark",
-							"Nord",
-							"Monokai",
-							"Dracula"
-						],
-						"default": "Auto",
-						"markdownDescription": "The theme for the Markdown editor."
-					},
-					"vscode-office.codeMirrorTheme": {
-						"type": "string",
-						"enum": [
-							"Auto",
-							"Github",
-							"Solarized Light",
-							"Material Light",
-							"Quiet Light",
-							"One Light",
-							"Dracula",
-							"Monokai",
-							"One Dark",
-							"Solarized Dark",
-							"Material Dark"
-						],
-						"default": "Auto",
-						"markdownDescription": "CodeMirror syntax theme for code blocks in the Markdown editor."
-					},
-					"vscode-office.mermaidTheme": {
-						"type": "string",
-						"enum": [
-							"Auto",
-							"Light",
-							"Forest",
-							"Ocean",
-							"Sunset",
-							"Dark",
-							"Dracula",
-							"Monokai",
-							"Nord"
-						],
-						"default": "Auto",
-						"markdownDescription": "Mermaid diagram theme in the Markdown editor. Auto follows the editor theme."
-					},
-					"vscode-office.editMode": {
-						"type": "string",
-						"enum": [
-							"wysiwyg",
-							"ir"
-						],
-						"default": "wysiwyg",
-						"markdownDescription": "Default edit mode for the Markdown editor."
-					},
-					"vscode-office.workspacePathAsImageBasePath": {
-						"type": "boolean",
-						"default": false,
-						"description": "Using workspace path as markdown image base path."
-					},
-					"vscode-office.pasterImgPath": {
-						"type": "string",
-						"default": "image/${fileName}/${now}.${ext}",
-						"description": "Markdown paste image path, variables: workspaceDir, fileName, now, date (YYYYMMDD), uuid, ext (file extension)."
-					}
-				}
-			},
-			{
-				"title": "Markdown PDF",
-				"order": 2,
-				"properties": {
-					"vscode-office.chromiumPath": {
-						"type": "string",
-						"description": "Set the chromium browser location for exporting markdown pdf."
-					},
-					"vscode-office.puppeteerArgs": {
-						"type": "array",
-						"items": {
-							"type": "string"
-						},
-						"default": [],
-						"description": "Additional arguments to pass to Puppeteer/Chromium when exporting PDF. Example: [\"--no-sandbox\", \"--disable-setuid-sandbox\"] for Linux servers running as root."
-					},
-					"vscode-office.pdfMarginTop": {
-						"type": "integer",
-						"default": 25,
-						"description": "Printed pdf default top margin."
-					}
-				}
-			},
-			{
-				"title": "HTTP Client",
-				"order": 3,
-				"properties": {
-					"vscode-office.followredirect": {
-						"type": "boolean",
-						"default": true,
-						"scope": "resource",
-						"description": "Follow HTTP 3xx responses as redirects."
-					},
-					"vscode-office.environmentVariables": {
-						"type": "object",
-						"default": {
-							"$shared": {}
-						},
-						"scope": "resource",
-						"markdownDescription": "Sets the environments and custom variables belongs to it."
-					},
-					"vscode-office.previewOption": {
-						"type": "string",
-						"enum": [
-							"full",
-							"headers",
-							"body",
-							"exchange"
-						],
-						"default": "body",
-						"scope": "resource",
-						"description": "Response preview output option"
-					},
-					"vscode-office.previewColumn": {
-						"type": "string",
-						"enum": [
-							"current",
-							"beside"
-						],
-						"default": "beside",
-						"scope": "resource",
-						"description": "Response preview column option"
-					},
-					"vscode-office.formParamEncodingStrategy": {
-						"type": "string",
-						"enum": [
-							"automatic",
-							"never",
-							"always"
-						],
-						"default": "automatic",
-						"scope": "resource",
-						"description": "Form param encoding strategy for x-www-form-urlencoded body"
-					},
-					"vscode-office.addRequestBodyLineIndentationAroundBrackets": {
-						"type": "boolean",
-						"default": true,
-						"scope": "resource",
-						"description": "Add line indentation around brackets in request body"
-					},
-					"vscode-office.decodeEscapedUnicodeCharacters": {
-						"type": "boolean",
-						"default": false,
-						"scope": "resource",
-						"description": "Decode escaped unicode characters in response body."
-					},
-					"vscode-office.logLevel": {
-						"type": "string",
-						"enum": [
-							"error",
-							"warn",
-							"info",
-							"verbose"
-						],
-						"default": "error",
-						"scope": "resource",
-						"description": "The verbosity of logging in the REST output panel"
-					},
-					"vscode-office.enableCustomVariableReferencesCodeLens": {
-						"type": "boolean",
-						"default": true,
-						"scope": "resource",
-						"description": "Enable custom variable references CodeLens in request file"
-					}
-				}
-			},
-			{
-				"title": "Telemetry",
-				"order": 99,
-				"properties": {
-					"vscode-office.enableTelemetry": {
-						"type": "boolean",
-						"default": true,
-						"tags": [
-							"telemetry",
-							"usesOnlineServices"
-						],
-						"markdownDescription": "Enable anonymous usage data collection to help improve Office Viewer. This respects VS Code global telemetry settings (`#telemetry.telemetryLevel#`)."
-					}
-				}
-			}
-		]
-	},
-	"scripts": {
-		"dev": "vite --mode=development",
-		"dev:web": "OFFICE_EXTENSION_TARGET=web vite --mode=development",
-		"lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
-		"build": "vite build --mode=production",
-		"package": "vsce package --no-dependencies",
-		"publish": "vsce publish --no-dependencies && ovsx publish --no-dependencies",
-		"vscode:prepublish": "npm run build"
-	},
-	"devDependencies": {
-		"@types/diff-match-patch": "1.0.32",
-		"@types/node": "^26.1.0",
-		"@types/react": "^19.2.17",
-		"@types/react-dom": "^19.2.3",
-		"@types/vscode": "^1.64.0",
-		"@typescript-eslint/eslint-plugin": "^8.62.1",
-		"@typescript-eslint/parser": "^8.62.1",
-		"@vitejs/plugin-react": "^6.0.2",
-		"chokidar": "^5.0.0",
-		"esbuild": "^0.28.1",
-		"esbuild-plugin-copy": "2.1.1",
-		"eslint": "^9.39.4",
-		"eslint-plugin-import-x": "^4.16.2",
-		"eslint-plugin-react": "^7.37.5",
-		"eslint-plugin-react-hooks": "^7.1.1",
-		"eslint-plugin-react-refresh": "^0.5.3",
-		"eslint-plugin-unused-imports": "^4.4.1",
-		"globals": "^17.7.0",
-		"less": "^4.2.0",
-		"node-unrar-js": "^2.0.2",
-		"vite": "^8.0.16",
-		"vite-plugin-static-copy": "^4.1.1"
-	},
-	"dependencies": {
-		"7z-wasm": "^1.2.0",
-		"@ant-design/icons": "^5.3.5",
-		"@codemirror/autocomplete": "^6.20.3",
-		"@codemirror/commands": "^6.10.3",
-		"@codemirror/lang-xml": "^6.1.0",
-		"@codemirror/language": "^6.12.3",
-		"@codemirror/language-data": "^6.5.2",
-		"@codemirror/state": "^6.6.0",
-		"@codemirror/view": "^6.43.1",
-		"@cweijan/exceljs": "^5.0.0",
-		"@eigenpal/docx-editor-react": "^1.9.0",
-		"@lezer/highlight": "^1.2.3",
-		"@mind-elixir/import-xmind": "^1.0.8",
-		"@vscode/codicons": "^0.0.45",
-		"@vscode/extension-telemetry": "^1.5.2",
-		"@zip.js/zip.js": "^2.8.26",
-		"ag-psd": "^30.1.1",
-		"antd": "^5.15.4",
-		"axios": "^1.18.1",
-		"buffer": "^6.0.3",
-		"chart.js": "^4.5.1",
-		"chrome-finder": "^1.0.7",
-		"codemirror": "^6.0.2",
-		"codemirror-lang-latex": "^0.4.1",
-		"codemirror-lang-mermaid": "^0.5.0",
-		"date-format": "^4.0.14",
-		"diff-match-patch": "1.0.5",
-		"epubjs": "^0.3.93",
-		"file-type": "^19.6.0",
-		"heic2any": "^0.0.4",
-		"highlight.js": "^11.10.0",
-		"hyparquet": "^1.26.1",
-		"hyparquet-writer": "^0.15.7",
-		"iconv-lite": "^0.6.3",
-		"jszip": "^3.10.1",
-		"katex": "^0.16.2",
-		"markdown-it": "^14.1.0",
-		"markdown-it-anchor": "^9.2.0",
-		"markdown-it-checkbox": "^1.1.0",
-		"markdown-it-front-matter": "^0.2.4",
-		"markdown-it-mark": "^4.0.0",
-		"markdown-it-obsidian-callouts": "^0.3.4",
-		"markdown-it-plantuml": "^1.4.1",
-		"markdown-it-toc-done-right": "^4.2.0",
-		"mermaid": "^11.15.0",
-		"mind-elixir": "^5.12.2",
-		"mustache": "^4.0.1",
-		"node-html-parser": "^7.0.1",
-		"opentype.js": "1.3.4",
-		"pdf-lib": "^1.11.2",
-		"pptxviewjs": "^1.1.9",
-		"prosemirror-commands": "^1.7.1",
-		"prosemirror-dropcursor": "^1.8.2",
-		"prosemirror-history": "^1.5.0",
-		"prosemirror-keymap": "^1.2.3",
-		"prosemirror-model": "^1.25.9",
-		"prosemirror-state": "^1.4.4",
-		"prosemirror-tables": "^1.8.5",
-		"prosemirror-transform": "^1.12.0",
-		"prosemirror-view": "^1.41.9",
-		"puppeteer-core": "^25.1.0",
-		"react": "^19.2.7",
-		"react-dom": "^19.2.7",
-		"react-image-gallery": "^1.3.0",
-		"save-svg-as-png": "^1.4.17",
-		"tar": "^7.5.16",
-		"udsv": "^0.5.3",
-		"utif": "^3.1.0",
-		"vscode-html-to-docx": "^1.1.3",
-		"xlsx": "^0.18.5",
-		"yaml": "^2.9.0"
-	}
+  "name": "excel-ai-vba-studio",
+  "displayName": "Excel AI & VBA Studio",
+  "description": "View and edit Excel or CSV files in VS Code, open native Excel and VBA tools, and expose detailed local workbook context to AI.",
+  "version": "0.1.0",
+  "publisher": "steph-tools",
+  "preview": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/StephaneSGL/excel-ai-vba-studio.git"
+  },
+  "homepage": "https://github.com/StephaneSGL/excel-ai-vba-studio#readme",
+  "bugs": {
+    "url": "https://github.com/StephaneSGL/excel-ai-vba-studio/issues"
+  },
+  "icon": "image/marketplace-icon.png",
+  "galleryBanner": {
+    "color": "#107C41",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "engines": {
+    "vscode": ">=1.95.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "categories": [
+    "Visualization",
+    "Data Science",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "excel",
+    "xlsx",
+    "xlsm",
+    "xls",
+    "xlsb",
+    "csv",
+    "spreadsheet",
+    "workbook",
+    "formula",
+    "vba",
+    "macro",
+    "developer",
+    "artificial intelligence",
+    "copilot",
+    "data"
+  ],
+  "qna": "marketplace",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Opening native Excel and exporting workbook or VBA context executes local automation and therefore requires a trusted workspace."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Native Excel and VBA integration requires local Windows files."
+    }
+  },
+  "activationEvents": [
+    "onCustomEditor:excelAiVbaStudio.officeViewer",
+    "onView:excelAiVbaExplorer",
+    "onLanguageModelTool:excel_ai_vba_readWorkbook"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "excelAiVbaStudio.exportWorkbook",
+        "title": "Excel AI & VBA Studio : Exporter le contexte du classeur",
+        "icon": "$(sparkle-filled)",
+        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+      },
+      {
+        "command": "excelAiVbaStudio.copyWorkbookContext",
+        "title": "Excel AI & VBA Studio : Exporter et copier le contexte",
+        "icon": "$(copy)",
+        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+      },
+      {
+        "command": "excelAiVbaStudio.openWorkbookContext",
+        "title": "Excel AI & VBA Studio : Ouvrir le dernier contexte exporté",
+        "icon": "$(book-open)"
+      },
+      {
+        "command": "excelAiVbaStudio.copyGeneratedContext",
+        "title": "Excel AI & VBA Studio : Copier le dernier contexte exporté",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "excelAiVbaStudio.openFullExcel",
+        "title": "Excel AI & VBA Studio : Ouvrir dans Microsoft Excel",
+        "icon": "$(window)",
+        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+      },
+      {
+        "command": "excelAiVbaStudio.openVbaDeveloper",
+        "title": "Excel AI & VBA Studio : Ouvrir Excel en mode Développeur / VBA",
+        "icon": "$(code)",
+        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+      },
+      {
+        "command": "excelAiVbaStudio.openVbaExplorer",
+        "title": "Excel AI & VBA Studio : Exporter et révéler les sources VBA",
+        "icon": "$(folder-opened)",
+        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+      },
+      {
+        "command": "excelAiVbaStudio.refreshExplorer",
+        "title": "Excel AI & VBA Studio : Actualiser l’explorateur",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "excelAiVbaStudio.cleanExports",
+        "title": "Excel AI & VBA Studio : Nettoyer les exports générés",
+        "icon": "$(trash)"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "excel_ai_vba_readWorkbook",
+        "displayName": "Lire un classeur Excel local",
+        "toolReferenceName": "excelVbaWorkbook",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(table)",
+        "userDescription": "Lit localement un classeur Excel et fournit ses valeurs, formules, métadonnées et, si autorisé, son contexte VBA.",
+        "modelDescription": "Utilise cet outil pour inspecter un classeur Excel local. Il produit un contexte Markdown ou JSON borné, sans clé API et sans télémétrie. Le code VBA est inclus uniquement lorsque Microsoft Excel autorise explicitement l’accès programmatique au projet VBA.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "workbookPath": {
+              "type": "string",
+              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code. Omettre pour utiliser le classeur actif."
+            },
+            "includeVba": {
+              "type": "boolean",
+              "description": "Inclure les modules et références VBA lorsque l’accès programmatique est autorisé."
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "markdown",
+                "json"
+              ],
+              "default": "markdown",
+              "description": "Format du contexte retourné au modèle."
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "excelAiVbaStudio.openFullExcel",
+        "key": "ctrl+alt+e",
+        "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+      },
+      {
+        "command": "excelAiVbaStudio.openVbaDeveloper",
+        "key": "ctrl+alt+f11",
+        "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "excelAiVbaStudio.exportWorkbook",
+          "group": "navigation@1",
+          "when": "view == excelAiVbaExplorer"
+        },
+        {
+          "command": "excelAiVbaStudio.openFullExcel",
+          "group": "navigation@2",
+          "when": "view == excelAiVbaExplorer"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "group": "navigation@3",
+          "when": "view == excelAiVbaExplorer"
+        },
+        {
+          "command": "excelAiVbaStudio.refreshExplorer",
+          "group": "navigation@4",
+          "when": "view == excelAiVbaExplorer"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "excelAiVbaStudio.openFullExcel",
+          "group": "navigation@1",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "group": "navigation@2",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbaExplorer",
+          "group": "navigation@3",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        },
+        {
+          "command": "excelAiVbaStudio.exportWorkbook",
+          "group": "navigation@4",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "excelAiVbaStudio.openFullExcel",
+          "group": "excelAiVbaStudio@1",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "group": "excelAiVbaStudio@2",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbaExplorer",
+          "group": "excelAiVbaStudio@3",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        },
+        {
+          "command": "excelAiVbaStudio.exportWorkbook",
+          "group": "excelAiVbaStudio@4",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        },
+        {
+          "command": "excelAiVbaStudio.copyWorkbookContext",
+          "group": "excelAiVbaStudio@5",
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "excelAiVbaExplorer",
+          "name": "Excel & VBA",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "excelAiVbaStudio.officeViewer",
+        "displayName": "Excel AI & VBA Studio",
+        "selector": [
+          {
+            "filenamePattern": "*.xlsx"
+          },
+          {
+            "filenamePattern": "*.xlsm"
+          },
+          {
+            "filenamePattern": "*.xls"
+          },
+          {
+            "filenamePattern": "*.csv"
+          },
+          {
+            "filenamePattern": "*.tsv"
+          }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "Excel AI & VBA Studio",
+      "properties": {
+        "excelAiVbaStudio.maxRows": {
+          "type": "integer",
+          "default": 200,
+          "minimum": 1,
+          "maximum": 5000,
+          "description": "Nombre maximal de lignes exportées par feuille pour le contexte IA (de 1 à 5 000)."
+        },
+        "excelAiVbaStudio.maxColumns": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Nombre maximal de colonnes exportées par feuille pour le contexte IA (de 1 à 256)."
+        },
+        "excelAiVbaStudio.includeVba": {
+          "type": "boolean",
+          "default": false,
+          "description": "Inclure les modules et références VBA lorsque Microsoft Excel autorise l’accès programmatique."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vite --mode=development",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build --mode=production",
+    "vscode:prepublish": "npm run build",
+    "validate:manifest": "node tools/validate-manifest.mjs",
+    "validate:macro-readonly": "node tools/validate-macro-readonly.mjs",
+    "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
+    "validate:package": "node tools/validate-package.mjs",
+    "validate": "npm run validate:manifest && npm run validate:macro-readonly && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:package",
+    "package": "vsce package --target win32-x64 --no-dependencies",
+    "release:check": "node tools/release-check.mjs",
+    "release:prepare": "node tools/prepare-release.mjs"
+  },
+  "devDependencies": {
+    "@ant-design/icons": "^5.3.5",
+    "@cweijan/exceljs": "^5.0.0",
+    "@types/node": "^26.1.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.95.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vscode/codicons": "^0.0.45",
+    "@vscode/vsce": "^3.9.1",
+    "antd": "^5.15.4",
+    "buffer": "^6.0.3",
+    "esbuild": "^0.28.1",
+    "iconv-lite": "^0.6.3",
+    "jszip": "^3.10.1",
+    "less": "^4.2.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "typescript": "^5.9.3",
+    "udsv": "^0.5.3",
+    "vite": "^8.0.16",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  }
 }

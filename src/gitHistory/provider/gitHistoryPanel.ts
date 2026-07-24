@@ -1,7 +1,7 @@
 import * as nodePath from 'path';
 import * as vscode from 'vscode';
 import { ReactApp } from '../../common/reactApp';
-import { getExtensionResourceRoots } from '../../common/extensionResource';
+import { getReactWebviewResourceRoots } from '../../common/extensionResource';
 import type { CommitService } from '../service/commitService';
 import type { GitActions } from '../service/gitActions';
 import type { RepoDiscovery } from '../service/repoDiscovery';
@@ -17,7 +17,7 @@ import {
     type FileHistorySplitLayout,
 } from '../util/gitHistoryPreferences';
 
-export const GIT_HISTORY_VIEW_TYPE = 'office-git-history';
+export const GIT_HISTORY_VIEW_TYPE = 'excelAiVbaStudio.gitHistory';
 
 function isCursorApp(): boolean {
     return /Cursor/i.test(vscode.env.appName);
@@ -146,7 +146,7 @@ export class GitHistoryPanel {
     }
 
     private static getLocalResourceRoots(context: vscode.ExtensionContext): vscode.Uri[] {
-        return getExtensionResourceRoots(context);
+        return getReactWebviewResourceRoots(context);
     }
 
     static async restore(

@@ -12,7 +12,6 @@ export default class DropdownItem extends Item {
     this.dd = this.dropdown();
     this.dd.change = (it) => {
       const value = this.getValue(it);
-      this.trackTelemetry({ value });
       this.change(tag, value);
     };
     return super.element().child(

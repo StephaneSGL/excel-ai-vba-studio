@@ -214,6 +214,9 @@ export default class Toolbar {
     if (data.settings.mode === 'read') {
       this.saveEl.el.hide();
     }
+    if (data.settings.allowSaveAs === false) {
+      this.saveAsEl.el.hide();
+    }
     if (!data.settings.showEditInVSCode) {
       this.editInVSCodeEl.el.hide();
     }

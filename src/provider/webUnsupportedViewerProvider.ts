@@ -1,12 +1,12 @@
 import { basename } from 'path';
 import { ReactApp } from '@/common/reactApp';
-import { getExtensionResourceRoots } from '@/common/extensionResource';
+import { getReactWebviewResourceRoots } from '@/common/extensionResource';
 import * as vscode from 'vscode';
 
 /** Existing package.json viewTypes that are desktop-only; on web show the unsupported screen instead. */
 const WEB_UNSUPPORTED_VIEW_TYPES = [
-	'cweijan.archiveViewer',
-	'cweijan.classViewer',
+	'excelAiVbaStudio.archiveViewer',
+	'excelAiVbaStudio.classViewer',
 ] as const;
 
 /**
@@ -34,7 +34,7 @@ export class WebUnsupportedViewerProvider implements vscode.CustomReadonlyEditor
 		const folderPath = vscode.Uri.joinPath(document.uri, '..');
 		webview.options = {
 			enableScripts: true,
-			localResourceRoots: [...getExtensionResourceRoots(this.context), folderPath],
+			localResourceRoots: getReactWebviewResourceRoots(this.context),
 		};
 		void ReactApp.view(webview, {
 			route: 'webUnsupported',

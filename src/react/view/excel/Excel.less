@@ -488,46 +488,42 @@ body:has(.excel-app) {
         left: 0;
         right: 0;
         z-index: 999;
-        padding: 4px 12px;
+        min-height: 28px;
+        padding: 4px 48px 4px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 8px 12px;
         font-size: 12px;
         text-align: center;
         color: #5c4b00;
         background: #fff8e1;
         border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-        pointer-events: none;
+        pointer-events: auto;
+    }
+
+    .excel-macro-preservation-banner {
+        font-weight: 500;
+    }
+
+    .excel-readonly-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+
+        .ant-btn {
+            height: 22px;
+            padding: 0 8px;
+            font-size: 11px;
+            line-height: 20px;
+        }
     }
 
     body.office-dark & .excel-readonly-banner {
         color: #e8d48b;
         background: rgba(92, 75, 0, 0.35);
         border-bottom-color: rgba(255, 255, 255, 0.08);
-    }
-
-    .excel-bottombar-sponsor {
-        display: flex;
-        flex: 0 0 auto;
-        align-items: center;
-        align-self: stretch;
-        padding-left: 8px;
-        padding-right: 8px;
-
-        .office-sponsor-bar,
-        .office-sponsor-bar--right {
-            position: static;
-            right: auto;
-            bottom: auto;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-    }
-
-    // Kept for compatibility; sponsor now lives in bottombar flex layout
-    --excel-footer-reserve: 0px;
-
-    &.excel-viewer--no-sponsor {
-        --excel-footer-reserve: 0px;
     }
 
     --excel-selection: rgb(33, 186, 69);
@@ -1231,15 +1227,6 @@ body.office-adaptive {
 
 body.office-dark {
     background-color: var(--vscode-editor-background, #1e1e1e);
-}
-
-@media (max-width: 650px) {
-    .excel-viewer {
-        .excel-bottombar-sponsor,
-        .office-sponsor-bar {
-            display: none !important;
-        }
-    }
 }
 
 // ─── Apple-style UI beautification ────────────────────────────────────────────

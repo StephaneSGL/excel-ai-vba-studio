@@ -1,11 +1,9 @@
 import { MoonOutlined, SunOutlined } from "@ant-design/icons";
 import { App, Button, Modal, Radio, Spin } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { handler, vscodeApi } from "../../util/vscode.ts";
 import { isVscodeEditorDark, observeVscodeThemeChange } from "../../util/vscodeTheme.ts";
 import { loadOfficeBuffer } from "../../util/loadOfficeContent.ts";
-import SponsorBar from '../components/SponsorBar';
 import './Excel.less';
 import { MIN_VIEW_COLS, MIN_VIEW_ROWS } from "./excel_meta.ts";
 import { detectCsvEncoding } from "./csvEncoding.ts";
@@ -19,6 +17,7 @@ import { initExcelLocale, t } from './excel_i18n';
 initExcelLocale();
 
 type ExcelColorMode = 'adaptive' | 'light';
+type EmbeddedReadOnlyReason = 'macro-preservation' | 'file-permissions';
 
 const EXCEL_COLOR_MODE_KEY = 'office-excel-color-mode';
 const LEGACY_DARK_MODE_KEY = 'office-dark-mode';
@@ -100,12 +99,17 @@ function isCsvLikeExt(ext: string): boolean {
     return /^(csv|tsv)$/i.test(ext.replace(/^\./, ''));
 }
 
+function isFindPanelTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && Boolean(target.closest('.frp-panel'));
+}
+
 function ExcelViewer() {
     const { message, modal } = App.useApp();
     const [loading, setLoading] = useState(true)
     const [colorMode, setColorMode] = useState(loadExcelColorMode)
     const [vscodeDark, setVscodeDark] = useState(isVscodeEditorDark)
     const [readOnly, setReadOnly] = useState(false)
+    const [readOnlyReason, setReadOnlyReason] = useState<EmbeddedReadOnlyReason | null>(null)
     const [findPanel, setFindPanel] = useState<'find' | 'replace' | null>(null)
     const findPanelRef = useRef<'find' | 'replace' | null>(null)
     const findReplacePanelRef = useRef<FindReplacePanelHandle>(null)
@@ -113,14 +117,28 @@ function ExcelViewer() {
     const [saveAsVisible, setSaveAsVisible] = useState(false)
     const [saveAsFormat, setSaveAsFormat] = useState('xlsx')
     const [activeSpreadsheet, setActiveSpreadsheet] = useState<Spreadsheet | null>(null)
-    const [bottombarEl, setBottombarEl] = useState<HTMLElement | null>(null)
     const extRef = useRef('')
     const documentCacheIdRef = useRef('')
     const readOnlyRef = useRef(false)
+    const readOnlyReasonRef = useRef<EmbeddedReadOnlyReason | null>(null)
     const spreadSheetRef = useRef<Spreadsheet | null>(null)
     const csvEncodingRef = useRef<'utf8' | 'gbk'>('utf8')
     const csvDelimiterRef = useRef(',')
     const initialFormattingRef = useRef('')
+    const lastMacroBlockedNoticeRef = useRef(0)
+
+    const notifyMacroWriteBlocked = useCallback(() => {
+        const now = Date.now();
+        if (now - lastMacroBlockedNoticeRef.current < 1000) {
+            return;
+        }
+        lastMacroBlockedNoticeRef.current = now;
+        message.warning({
+            duration: 4,
+            content: t('viewer.macroWriteBlocked'),
+            className: 'excel-validation-error-message',
+        });
+    }, [message]);
 
     useEffect(() => {
         findPanelRef.current = findPanel;
@@ -175,12 +193,20 @@ function ExcelViewer() {
     }, [message]);
 
     const handleSaveAs = useCallback(() => {
+        if (readOnlyReasonRef.current === 'macro-preservation') {
+            notifyMacroWriteBlocked();
+            return;
+        }
         setSaveAsVisible(true);
-    }, []);
+    }, [notifyMacroWriteBlocked]);
 
     const handleSave = useCallback(async () => {
         const spreadSheet = spreadSheetRef.current;
         if (!spreadSheet) return;
+        if (readOnlyReasonRef.current === 'macro-preservation') {
+            notifyMacroWriteBlocked();
+            return;
+        }
         if (readOnlyRef.current) {
             await handleSaveAs();
             return;
@@ -262,11 +288,16 @@ function ExcelViewer() {
         } catch (error) {
             console.error(`Failed to save Excel file: ${(error as Error).message}`);
         }
-    }, [modal, handleSaveAs]);
+    }, [modal, handleSaveAs, notifyMacroWriteBlocked]);
 
     const confirmSaveAs = useCallback(async (fmt: string) => {
         const spreadSheet = spreadSheetRef.current;
         if (!spreadSheet) return;
+        if (readOnlyReasonRef.current === 'macro-preservation') {
+            setSaveAsVisible(false);
+            notifyMacroWriteBlocked();
+            return;
+        }
         setSaveAsVisible(false);
         try {
             await exportSaveAs(spreadSheet, fmt, csvEncodingRef.current, csvDelimiterRef.current);
@@ -276,7 +307,7 @@ function ExcelViewer() {
         } catch (error) {
             console.error(`Failed to save Excel file: ${(error as Error).message}`);
         }
-    }, []);
+    }, [notifyMacroWriteBlocked]);
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
@@ -309,17 +340,60 @@ function ExcelViewer() {
             if ((e.ctrlKey || e.metaKey) && e.altKey && e.code === 'Digit0') {
                 e.preventDefault();
                 handleAutoFitColumns();
+                return;
+            }
+
+            if (
+                readOnlyReasonRef.current === 'macro-preservation'
+                && !isFindPanelTarget(e.target)
+            ) {
+                const modifierEdit = (e.ctrlKey || e.metaKey)
+                    && ['KeyV', 'KeyX', 'KeyY', 'KeyZ'].includes(e.code);
+                const directEdit = !e.ctrlKey
+                    && !e.metaKey
+                    && !e.altKey
+                    && (e.key.length === 1
+                        || e.key === 'Backspace'
+                        || e.key === 'Delete'
+                        || e.key === 'F2');
+                if (modifierEdit || directEdit) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    notifyMacroWriteBlocked();
+                }
             }
         };
-        window.addEventListener('keydown', onKeyDown);
-        return () => window.removeEventListener('keydown', onKeyDown);
-    }, [handleAutoFitColumns, handleSave, handleSaveAs]);
+        const blockInputEvent = (e: Event) => {
+            if (
+                readOnlyReasonRef.current !== 'macro-preservation'
+                || isFindPanelTarget(e.target)
+            ) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            notifyMacroWriteBlocked();
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+        document.addEventListener('beforeinput', blockInputEvent, true);
+        document.addEventListener('paste', blockInputEvent, true);
+        document.addEventListener('cut', blockInputEvent, true);
+        document.addEventListener('drop', blockInputEvent, true);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown, true);
+            document.removeEventListener('beforeinput', blockInputEvent, true);
+            document.removeEventListener('paste', blockInputEvent, true);
+            document.removeEventListener('cut', blockInputEvent, true);
+            document.removeEventListener('drop', blockInputEvent, true);
+        };
+    }, [handleAutoFitColumns, handleSave, handleSaveAs, notifyMacroWriteBlocked]);
 
     useEffect(() => {
         const container = document.getElementById('container');
 
         const initSpreadsheet = async (buffer: ArrayBuffer, payload: any) => {
             const fileReadOnly = payload.readOnly === true;
+            const preserveMacros = payload.readOnlyReason === 'macro-preservation';
             if (payload.ext?.match(/csv/i)) {
                 csvEncodingRef.current = detectCsvEncoding(buffer);
             }
@@ -332,6 +406,7 @@ function ExcelViewer() {
             container.innerHTML = '';
             const spreadSheet = new Spreadsheet(container, {
                 mode: fileReadOnly ? 'read' : 'edit',
+                allowSaveAs: !preserveMacros,
                 showToolbar: true,
                 extendToolbar: {
                     right: [
@@ -358,9 +433,6 @@ function ExcelViewer() {
             setActiveSpreadsheet(spreadSheet);
             setLoading(false);
             spreadSheet.loadData(sheets);
-            requestAnimationFrame(() => {
-                setBottombarEl(document.querySelector('.x-spreadsheet-bottombar') as HTMLElement | null);
-            });
             if (!fileReadOnly) {
                 spreadSheet.on('save', () => void handleSave());
             }
@@ -414,8 +486,14 @@ function ExcelViewer() {
             extRef.current = payload.ext ?? '';
             documentCacheIdRef.current = payload.documentCacheId ?? '';
             const fileReadOnly = payload.readOnly === true;
+            const reason = payload.readOnlyReason === 'macro-preservation'
+                || payload.readOnlyReason === 'file-permissions'
+                ? payload.readOnlyReason as EmbeddedReadOnlyReason
+                : null;
             readOnlyRef.current = fileReadOnly;
+            readOnlyReasonRef.current = reason;
             setReadOnly(fileReadOnly);
+            setReadOnlyReason(reason);
             loadOfficeBuffer(payload).then(async (buffer) => {
                 try {
                     await initSpreadsheet(buffer, payload);
@@ -432,6 +510,12 @@ function ExcelViewer() {
                 setLoading(false);
             });
         }).on("saveDone", () => {
+        }).on("writeBlocked", (payload) => {
+            message.warning({
+                duration: 4,
+                content: payload?.message || t('viewer.macroWriteBlocked'),
+                className: 'excel-validation-error-message',
+            });
         }).emit("init")
 
         let themeTimer: ReturnType<typeof setTimeout>;
@@ -444,7 +528,6 @@ function ExcelViewer() {
         return () => {
             spreadSheetRef.current = null;
             setActiveSpreadsheet(null);
-            setBottombarEl(null);
             themeObserver.disconnect();
             clearTimeout(themeTimer);
         };
@@ -467,8 +550,32 @@ function ExcelViewer() {
                 </div>
             )}
             {readOnly && !loading && !loadError && (
-                <div className="excel-readonly-banner">
-                    {t('viewer.readonlyBanner')}
+                <div
+                    className={`excel-readonly-banner${readOnlyReason === 'macro-preservation' ? ' excel-macro-preservation-banner' : ''}`}
+                    role="status"
+                    aria-live="polite"
+                >
+                    <span>
+                        {readOnlyReason === 'macro-preservation'
+                            ? t('viewer.macroReadonlyBanner')
+                            : t('viewer.readonlyBanner')}
+                    </span>
+                    {readOnlyReason === 'macro-preservation' && (
+                        <span className="excel-readonly-actions">
+                            <Button
+                                size="small"
+                                onClick={() => handler.emit('openNativeExcel')}
+                            >
+                                {t('viewer.openNativeExcel')}
+                            </Button>
+                            <Button
+                                size="small"
+                                onClick={() => handler.emit('openVbaDeveloper')}
+                            >
+                                {t('viewer.openVbaDeveloper')}
+                            </Button>
+                        </span>
+                    )}
                 </div>
             )}
             {findPanel && !loading && !loadError && (
@@ -533,12 +640,6 @@ function ExcelViewer() {
             >
                 {adaptiveColorMode ? <SunOutlined /> : <MoonOutlined />}
             </button>
-            {!loading && !loadError && bottombarEl && createPortal(
-                <div className="excel-bottombar-sponsor">
-                    <SponsorBar placement="right" />
-                </div>,
-                bottombarEl,
-            )}
         </div>
     )
 }

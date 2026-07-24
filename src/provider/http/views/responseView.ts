@@ -77,8 +77,8 @@ export class HttpResponseView {
 
     public constructor() {
         workspace.registerTextDocumentContentProvider(this.scheme, this.contentProvider);
-        commands.registerCommand('vscode-office.copy-response-body', () => this.copyBody());
-        commands.registerCommand('vscode-office.save-response-body', () => this.saveBody());
+        commands.registerCommand('excelAiVbaStudio.http.copyResponseBody', () => this.copyBody());
+        commands.registerCommand('excelAiVbaStudio.http.saveResponseBody', () => this.saveBody());
     }
 
     public async render(response: HttpResponse, column?: ViewColumn) {

@@ -1,0 +1,64 @@
+name: "Proposer une fonctionnalité / Feature request"
+description: "Décrire une amélioration utile et son cas d'usage."
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci pour votre proposition. Décrivez d'abord le besoin utilisateur, puis la solution envisagée.
+
+        Pour les questions d'utilisation, préférez les [GitHub Discussions](https://github.com/StephaneSGL/excel-ai-vba-studio/discussions).
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Domaine / Area"
+      options:
+        - "Interface Excel intégrée / Embedded Excel interface"
+        - "Excel natif, VBA ou mode Développeur / Native Excel, VBA or Developer mode"
+        - "Contexte de classeur et IA / Workbook context and AI"
+        - "Formats, import ou export / Formats, import or export"
+        - "Accessibilité ou expérience utilisateur / Accessibility or UX"
+        - "Documentation"
+        - "Autre / Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problème à résoudre / Problem to solve"
+      description: "Quel flux de travail est difficile ou impossible aujourd'hui ?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Solution proposée / Proposed solution"
+      description: "Décrivez le comportement attendu, sans imposer une implémentation si ce n'est pas nécessaire."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Solutions alternatives / Alternatives considered"
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: "Contexte supplémentaire / Additional context"
+      description: "Maquettes, exemples synthétiques ou liens publics utiles. N'ajoutez aucune donnée confidentielle."
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: "Confirmations"
+      options:
+        - label: "J'ai recherché les issues et discussions existantes / I searched existing issues and discussions."
+          required: true
+        - label: "Cette demande ne contient aucune donnée confidentielle ou propriétaire / This request contains no confidential or proprietary data."
+          required: true

@@ -619,20 +619,8 @@ interface IOptions {
     /** 编辑器中选中文字后触发 */
     select?(value: string): void;
 
-    /** 打开 About 面板时触发 */
-    onAboutOpen?(): void;
-
     /** Ctrl/⌘+单击、双击或中键打开链接时触发；未配置则使用浏览器默认行为 */
     onLinkClick?(payload: ILinkClickPayload, event: MouseEvent, vditor: IVditor): void;
-
-    /** 点击赞助 Logo 后触发 */
-    onSponsorLogoClick?(): void;
-
-    /** 点击赞助站点后触发 */
-    onSponsorSiteClick?(): void;
-
-    /** 遥测事件回调；配置后 vditor 内部通过 telemetry() 上报 */
-    onTelemetry?(event: string, properties?: Record<string, string | number | boolean>): void;
 
     /** 全局设置变更后触发（仅在配置文件同步启用时） */
     onSettingsChange?(settings: ViewerSettingsExport): void;

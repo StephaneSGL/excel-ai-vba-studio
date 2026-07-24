@@ -4,7 +4,7 @@ export type FileHistorySplitLayout = 'vertical' | 'horizontal';
 
 export const DEFAULT_FILE_HISTORY_SPLIT_LAYOUT: FileHistorySplitLayout = 'vertical';
 
-const FILE_HISTORY_SPLIT_LAYOUT_KEY = 'office.gitHistory.fileSplitLayout';
+const FILE_HISTORY_SPLIT_LAYOUT_KEY = 'excelAiVbaStudio.gitHistory.fileSplitLayout';
 
 export function getFileHistorySplitLayout(context: vscode.ExtensionContext): FileHistorySplitLayout {
     const value = context.globalState.get<FileHistorySplitLayout>(FILE_HISTORY_SPLIT_LAYOUT_KEY);

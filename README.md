@@ -1,151 +1,72 @@
-# Office Viewer
+# Excel AI & VBA Studio
 
-English | [简体中文](README-CN.md) | [繁體中文](README-TW.md)
+> Preview — Windows x64
 
-## Introduction
+Open Excel and CSV files in Visual Studio Code, inspect workbook structure with AI, and jump to the real Microsoft Excel or VBA interface when you need the full native toolset.
 
-This extension lets you preview and edit common office and design files directly in VS Code.
+Visualisez les fichiers Excel et CSV dans Visual Studio Code, fournissez à l’IA un contexte détaillé du classeur, puis ouvrez le véritable Excel ou l’éditeur VBA pour les fonctions natives avancées.
 
-- Excel: `.xls`, `.xlsx`, `.xlsm`, `.csv`, `.ods`
-- Word: `.docx`, `.dotx`
-- PowerPoint: `.pptx`, `.pptm`
-- PDF & eBook: `.pdf`, `.epub`
-- HEIC/TIFF: `.heic`, `.heif`, `.tiff`
-- Design: `.psd`, `.xmind`, `.icns`, `.svg`
-- Font: `.ttf`, `.otf`, `.woff`, `.woff2`
-- Markdown: `.md`, `.markdown`
-- HTML: `.html`, `.htm`
-- HTTP request: `.http`, `.rest`
-- Java: `.class` (decompiler)
-- Compressed files: `.zip`, `.jar`, `.vsix`, `.rar`, `.7z`, `.tar`, `.tar.gz`, `.tgz`, `.apk`
+## Features / Fonctionnalités
 
-## Git History
+- Embedded viewer/editor for `.xlsx`, `.csv`, and `.tsv`; `.xlsm` and legacy `.xls` remain view-only in VS Code so the embedded writer can never strip VBA projects or legacy workbook records.
+- Native Microsoft Excel launch with the complete ribbon, including Data and Developer tools.
+- Direct access to the Visual Basic Editor (VBE) and the workbook VBA project explorer.
+- Local, bounded workbook export in Markdown and JSON: values, formulas, formats, tables, charts, names, links, validations, comments, connections, Power Query metadata, and VBA metadata when permitted.
+- **Excel & VBA** explorer in the VS Code sidebar.
+- VS Code language-model tool `#excelVbaWorkbook` for explicitly sharing workbook context with an AI assistant.
+- No extension telemetry and no extension-managed API key.
 
-Office Viewer includes a full Git History workspace for exploring repositories without leaving VS Code. Open it from the Source Control view, the editor title bar, the editor context menu, or the file explorer context menu.
+## Requirements
 
-![1783342874748](image/README/1783342874748.png)
+- Windows x64.
+- Visual Studio Code 1.95 or later.
+- Microsoft Excel desktop is required for native Excel, VBA, legacy workbook, and COM-based context-export features.
+- The embedded viewer does not reproduce every proprietary Excel feature. Commands that need the complete ribbon, Power Query, data tools, add-ins, macros, or VBE open the installed Microsoft Excel application.
 
-## Markdown
+## Quick start / Démarrage rapide
 
-This extension replaces the default Markdown editor with a WYSIWYG editor.
+1. Open a supported spreadsheet in VS Code.
+2. Use the editor toolbar or the **Excel & VBA** explorer.
+3. Run one of these commands from the Command Palette:
 
-To use the built-in VS Code Markdown editor instead, add this to your `settings.json`:
+| Command | Purpose |
+| --- | --- |
+| `Excel AI & VBA Studio : Ouvrir dans Microsoft Excel` | Open the active file in native Excel. |
+| `Excel AI & VBA Studio : Ouvrir Excel en mode Développeur / VBA` | Open Excel and display the Developer/VBE interface. |
+| `Excel AI & VBA Studio : Exporter le contexte du classeur` | Create local Markdown and JSON context files. |
+| `Excel AI & VBA Studio : Exporter et copier le contexte` | Export and copy a bounded context to the clipboard. |
+| `Excel AI & VBA Studio : Exporter et révéler les sources VBA` | Reveal exported VBA files when Excel grants access. |
+| `Excel AI & VBA Studio : Nettoyer les exports générés` | Remove extension-generated context exports. |
 
-```json
-{
-    "workbench.editorAssociations": {
-        "*.md": "default",
-        "*.markdown": "default"
-    }
-}
-```
+Keyboard shortcuts:
 
-Right-click in the editor to export Markdown to PDF, DOCX, or HTML. PDF export requires Chromium; set the browser path with `vscode-office.chromiumPath`.
+- `Ctrl+Alt+E`: open in native Excel.
+- `Ctrl+Alt+F11`: open Excel in Developer/VBA mode.
 
-![Export Markdown](image/README-CN/1685418034035.png)
+In an AI chat that supports VS Code language-model tools, reference `#excelVbaWorkbook`. The workbook is read only when the tool is explicitly invoked or an export command is run.
 
-Shortcuts: Based on [shortcut.md](shortcut.md), plus:
+## VBA security
 
-- New line: `Ctrl+Enter` / `⌘ Enter`
-- Hard line break: `Shift+Enter` / `⇧ Enter`
-- Edit hyperlink: `Alt+Enter` / `^ Enter`
-- Set CodeMirror language: `Alt+Enter` / `^ Enter`
-- Edit in VS Code: `Ctrl Alt E` / `⌘ ^ E`
-- Paste as plain text: `Ctrl+Shift+V` / `⌘ ⇧ V`
+Displaying the VBE does not require the extension to enable unsafe settings. Reading VBA module source programmatically is different: Excel blocks it unless the user explicitly enables **Trust access to the VBA project object model** in Excel Trust Center.
 
-## Other features
+The extension never changes that security setting. Macro execution is disabled during context export. Only enable VBA project access when you understand and accept the security implications.
 
-- HTML: live preview while editing; press `Ctrl+Shift+V` to open the live view
-- YAML: document outline and anchor navigation (Go to Definition for alias references)
-- Icon theme: includes a subset of [Material Icon Theme](https://github.com/PKief/vscode-material-icon-theme) icons, plus **Office Material Icon Theme** and **One Dark Modern** color themes
-- Excel: preview and save `.xlsx`, `.xls`, `.xlsm`, `.csv`, and `.ods` files
-- HTTP: send requests from `.http` and `.rest` files (integrated from [REST Client](https://github.com/Huachao/vscode-restclient) with fixes for local request issues); press `Ctrl+Enter` / `⌘ Enter` to send
-- Java: decompile and view `.class` files
+The embedded grid deliberately blocks editing, direct save, and Save As for `.xlsm` and `.xls`. Use **Ouvrir dans Microsoft Excel** or **Ouvrir Excel en mode Développeur / VBA** to edit those formats without rebuilding the workbook.
 
-## Sponsor
+## Data and privacy
 
-[![Database Client](https://doc.database-client.com/public/logo.png)](https://marketplace.visualstudio.com/items?itemName=cweijan.vscode-database-client2)
+Workbook processing and generated exports are local. The extension contains no telemetry client and does not send workbooks to a service by itself. When you deliberately pass generated context to an AI feature, the selected VS Code AI/model provider processes that context under its own terms.
 
-Database Client for Visual Studio Code, supporting the management of **MySQL/MariaDB, PostgreSQL, SQLite, Redis**, and **ElasticSearch**, and works as an **SSH** client to boost your productivity! [Get it now](https://marketplace.visualstudio.com/items?itemName=cweijan.vscode-database-client2).
+See [PRIVACY.md](PRIVACY.md) for the complete data-handling statement and [SUPPORT.md](SUPPORT.md) before reporting an issue.
 
-## Development Guide
+## Preview limitations
 
-### Prerequisites
+- This first release targets Windows x64 only.
+- Microsoft Excel must be installed for native Excel/VBA integration.
+- `.xlsb` can be handled by native Excel/context commands but is not rendered by the embedded editor.
+- Password-protected, corrupted, or policy-restricted workbooks may expose only partial metadata.
+- VBA source export depends on Excel Trust Center policy; the VBE can still be opened visually when source export is blocked.
 
-- [Node.js](https://nodejs.org/) 18+
-- [VS Code](https://code.visualstudio.com/) 1.64+
+## Open-source notice
 
-### Getting started
-
-```bash
-git clone https://github.com/cweijan/vscode-office.git
-cd vscode-office
-npm install
-```
-
-### Development
-
-**Desktop extension** (full feature set):
-
-```bash
-npm run dev
-```
-
-Press `F5` in VS Code, or choose **Extension** from Run and Debug.
-
-**Web extension** (Markdown, HTML, YAML in the browser):
-
-```bash
-npm run dev:web
-```
-
-Choose **Extension (Web)** from Run and Debug.
-
-### Build & package
-
-```bash
-npm run build    # production build
-npm run package  # create .vsix
-```
-
-## Usage data
-
-Office Viewer collects **anonymous usage data** to understand which preview features are used, so we can improve the extension. Data is sent to [Azure Application Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview) via the official [`@vscode/extension-telemetry`](https://www.npmjs.com/package/@vscode/extension-telemetry) module.
-
-### What we collect
-
-| Event         | When                              | Properties                                                                                                 |
-| ------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `view.open` | A custom preview/editor is opened | `viewType` (e.g. `excel`, `markdown`, `pdf`), `fileType` (extension only, e.g. `xlsx`, `md`) |
-
-We **do not** collect file paths, file names, URLs, repository names, request contents, or other personally identifiable information.
-
-### How to opt out
-
-Telemetry is sent only when **both** of the following allow it:
-
-1. VS Code global telemetry is enabled (`telemetry.telemetryLevel` is not `off`, or `telemetry.enableTelemetry` is `true` on older versions).
-2. Extension telemetry is enabled: set `vscode-office.enableTelemetry` to `false` in Settings.
-
-You can also disable all VS Code telemetry in **Settings → Application → Telemetry**.
-
-### Maintainer setup
-
-If you build and publish this extension yourself, see [docs/telemetry.md](docs/telemetry.md) for Azure Application Insights setup and sample queries.
-
-## Credits
-
-- PDF rendering: [mozilla/pdf.js](https://github.com/mozilla/pdf.js/)
-- DOCX rendering: [VolodymyrBaydalka/docxjs](https://github.com/VolodymyrBaydalka/docxjs)
-- PPTX rendering: [pptxviewjs](https://www.npmjs.com/package/pptxviewjs)
-- XLSX rendering:
-  - [SheetJS/sheetjs](https://github.com/SheetJS/sheetjs): XLSX parsing
-  - [myliang/x-spreadsheet](https://github.com/myliang/x-spreadsheet): XLSX rendering
-- EPUB: [futurepress/epub.js](https://github.com/futurepress/epub.js)
-- PSD: [ag-psd](https://github.com/Agamnentzar/ag-psd)
-- XMind: [mind-elixir](https://github.com/ssshooter/mind-elixir-core), [@mind-elixir/import-xmind](https://github.com/ssshooter/mind-elixir-core)
-- HEIC conversion: [heic2any](https://github.com/alexcorvi/heic2any)
-- Java decompiler: [JetBrains/java-decompiler](https://github.com/JetBrains/intellij-community/tree/master/plugins/java-decompiler/engine)
-- HTTP: [REST Client](https://github.com/Huachao/vscode-restclient)
-- Markdown: [Vanessa219/vditor](https://github.com/Vanessa219/vditor)
-- Material Icon theme: [PKief/vscode-material-icon-theme](https://github.com/PKief/vscode-material-icon-theme)
+This project is a focused fork derived from **Office Viewer** by Weijan Chen and remains available under the MIT License. See [NOTICE.md](NOTICE.md), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and [LICENSE](LICENSE).

@@ -9,7 +9,6 @@ import {EditorTheme} from "./EditorTheme";
 import {EditorThemeLabel} from "./EditorThemeLabel";
 import {EditorThemeToggle} from "./EditorThemeToggle";
 import {Headings} from "./Headings";
-import {Help} from "./Help";
 import {Indent} from "./Indent";
 import {Find} from "./Find";
 import {Info} from "./Info";
@@ -100,9 +99,6 @@ export class Toolbar {
                 break;
             case "redo":
                 menuItemObj = new Redo(vditor, menuItem);
-                break;
-            case "help":
-                menuItemObj = new Help(vditor, menuItem);
                 break;
             case "upload":
                 menuItemObj = new Upload(vditor, menuItem);

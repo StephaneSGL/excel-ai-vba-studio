@@ -1,0 +1,119 @@
+name: "Signaler un bug / Bug report"
+description: "Signaler un problème reproductible dans Excel AI & VBA Studio."
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de vérifier les problèmes existants avant de continuer.
+
+        **Ne publiez aucun classeur confidentiel, code VBA privé, identifiant ou donnée personnelle.** Utilisez un classeur synthétique si un fichier de reproduction est nécessaire.
+
+        Pour une vulnérabilité, n'ouvrez pas d'issue publique : utilisez le [signalement privé GitHub](https://github.com/StephaneSGL/excel-ai-vba-studio/security/advisories/new).
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Fonction concernée / Affected area"
+      options:
+        - "Visualisation ou édition intégrée / Embedded viewer or editor"
+        - "Ouverture dans Excel ou VBA / Native Excel or VBA"
+        - "Export du contexte ou outil IA / Context export or AI tool"
+        - "Installation ou mise à jour / Installation or update"
+        - "Autre / Other"
+    validations:
+      required: true
+
+  - type: input
+    id: extension-version
+    attributes:
+      label: "Version de l'extension / Extension version"
+      description: "Visible dans le panneau Extensions de VS Code."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: vscode-version
+    attributes:
+      label: "Version de VS Code / VS Code version"
+      placeholder: "1.95.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: "Version de Windows / Windows version"
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: input
+    id: excel-version
+    attributes:
+      label: "Version de Microsoft Excel / Microsoft Excel version"
+      description: "Facultatif si le problème ne concerne pas l'intégration native."
+      placeholder: "Microsoft 365, version 2506"
+
+  - type: dropdown
+    id: workbook-format
+    attributes:
+      label: "Format du classeur / Workbook format"
+      options:
+        - ".xlsx"
+        - ".xlsm"
+        - ".xls"
+        - ".xlsb"
+        - ".csv"
+        - ".tsv"
+        - "Sans objet / Not applicable"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Étapes pour reproduire / Reproduction steps"
+      description: "Donnez la suite minimale et exacte d'actions."
+      placeholder: |
+        1. Ouvrir…
+        2. Exécuter la commande…
+        3. Observer…
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Résultat attendu / Expected result"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Résultat obtenu / Actual result"
+      description: "Incluez le message d'erreur complet après avoir supprimé toute donnée sensible."
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: "Contexte supplémentaire / Additional context"
+      description: "Macros, protection, liens externes, Power Query, politiques d'organisation ou journaux nettoyés."
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: "Confirmations"
+      options:
+        - label: "J'ai recherché les issues existantes / I searched existing issues."
+          required: true
+        - label: "Ce rapport ne contient aucune donnée confidentielle ou personnelle / This report contains no confidential or personal data."
+          required: true
+        - label: "Il ne s'agit pas d'une vulnérabilité de sécurité / This is not a security vulnerability."
+          required: true

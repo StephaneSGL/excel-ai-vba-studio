@@ -1012,6 +1012,7 @@ function toolbarChange(type, value) {
     return;
   }
   if (type === 'save-as') {
+    if (data.settings.allowSaveAs === false) return;
     this.trigger('save-as');
     return;
   }

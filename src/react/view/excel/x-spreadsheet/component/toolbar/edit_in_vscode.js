@@ -11,7 +11,6 @@ export default class EditInVSCode extends Item {
       .addClass('vscode')
       .child(new Icon('vscode'))
       .on('click', () => {
-        this.trackTelemetry();
         this.change('edit-in-vscode');
       });
   }

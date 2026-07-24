@@ -15,7 +15,7 @@ export type FileHistorySplitLayout = 'vertical' | 'horizontal';
 export type GitHistoryColorMode = 'adaptive' | 'light';
 
 export const DEFAULT_COLOR_MODE: GitHistoryColorMode = 'adaptive';
-const COLOR_MODE_KEY = 'office.gitHistory.colorMode';
+const COLOR_MODE_KEY = 'excelAiVbaStudio.gitHistory.colorMode';
 
 export const DEFAULT_FILE_HISTORY_SPLIT_LAYOUT: FileHistorySplitLayout = 'vertical';
 

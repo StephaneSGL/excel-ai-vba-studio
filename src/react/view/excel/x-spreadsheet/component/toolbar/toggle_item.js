@@ -11,7 +11,6 @@ export default class ToggleItem extends Item {
 
   click() {
     const next = this.toggle();
-    this.trackTelemetry({ active: next });
     this.change(this.tag, next);
   }
 

@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWindowSize } from '../../util/reactUtils';
 import { handler } from '../../util/vscode';
 import { $t } from '../../i18n/i18nConfig';
-import SponsorBar from '../components/SponsorBar';
 import { VSCodeLogoSVG } from '../vscode';
 import SvgCodeEditor from './SvgCodeEditor';
 import {
@@ -411,9 +410,6 @@ function SvgViewerInner() {
                     </div>
                 </div>
             )}
-            <footer className="svg-viewer__sponsor-footer">
-                <SponsorBar placement="center" />
-            </footer>
         </div>
     );
 }

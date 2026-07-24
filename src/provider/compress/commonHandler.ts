@@ -1,118 +1,173 @@
-import * as vscode from 'vscode';
+import { Handler } from '@/common/handler';
+import { parseSafeExternalUri } from '@/common/webviewUri';
+import {
+    emitFileOfficeOpen,
+    emitVirtualOfficeOpen,
+    getEmbeddedSpreadsheetReadOnlyState,
+    isVirtualUri,
+    requiresNativeExcelForEditing,
+    type EmbeddedSpreadsheetReadOnlyReason,
+} from '@/provider/handlers/officeContent';
 import { basename, join, parse } from 'path';
-import { Handler } from "@/common/handler";
-import { isUriReadOnly } from '@/common/fileReadOnly';
+import * as vscode from 'vscode';
 import { Uri, workspace } from 'vscode';
-import { emitFileOfficeOpen, emitVirtualOfficeOpen, isVirtualUri } from '@/provider/handlers/officeContent';
 
 const fileSaveTimes: Record<string, number> = {};
 const INTERNAL_SAVE_CHANGE_WINDOW_MS = 1500;
-
-function buildDefaultXlsxUri(uri: Uri): Uri {
-    const { dir, name } = parse(uri.fsPath);
-    const fileName = `${name}.xlsx`;
-    if (uri.scheme === 'file') {
-        return Uri.file(join(dir, fileName));
-    }
-    return Uri.joinPath(uri, '..', fileName);
-}
+const MACRO_WRITE_BLOCKED_MESSAGE =
+    'Protection VBA : les fichiers .xlsm et .xls sont en lecture seule dans l’éditeur intégré afin de préserver leurs macros et données héritées. Ouvrez le fichier dans Microsoft Excel pour le modifier.';
+const SAVE_FORMATS: Record<string, { label: string; exts: string[] }> = {
+    xlsx: { label: 'Excel Workbook', exts: ['xlsx'] },
+    xlsm: { label: 'Excel Macro-Enabled Workbook', exts: ['xlsm'] },
+    xls: { label: 'Excel 97-2003 Workbook', exts: ['xls'] },
+    ods: { label: 'OpenDocument Spreadsheet', exts: ['ods'] },
+    csv: { label: 'CSV (Comma delimited)', exts: ['csv'] },
+    tsv: { label: 'TSV (Tab delimited)', exts: ['tsv'] },
+};
 
 export function shouldSkipFileChange(uri: Uri): boolean {
     const lastSaveTime = fileSaveTimes[uri.toString()];
-    return !!(lastSaveTime && Date.now() - lastSaveTime < INTERNAL_SAVE_CHANGE_WINDOW_MS);
+    return Boolean(
+        lastSaveTime &&
+        Date.now() - lastSaveTime < INTERNAL_SAVE_CHANGE_WINDOW_MS
+    );
 }
 
-function setDirty(handler: Handler, uri: Uri, dirty: boolean) {
-    const panel = handler.panel;
+function setDirty(handler: Handler, uri: Uri, dirty: boolean): void {
     const fileName = basename(uri.fsPath);
-    panel.title = dirty ? `● ${fileName}` : fileName;
+    handler.panel.title = dirty ? `● ${fileName}` : fileName;
     if (dirty) {
         void vscode.commands.executeCommand('workbench.action.keepEditor');
     }
 }
 
-export function handleCommonEvent(uri: Uri, handler: Handler, options?: { skipOpen?: boolean }) {
-    let readOnly = false;
-    const send = async () => {
+function toBytes(content: unknown): Uint8Array {
+    if (Array.isArray(content)) {
+        return new Uint8Array(content);
+    }
+    if (typeof content === 'string') {
+        return new TextEncoder().encode(content);
+    }
+    throw new Error('Invalid spreadsheet save payload.');
+}
+
+function notifyMacroWriteBlocked(handler: Handler): void {
+    handler.emit('writeBlocked', {
+        reason: 'macro-preservation',
+        message: MACRO_WRITE_BLOCKED_MESSAGE,
+    });
+    void vscode.window.showWarningMessage(MACRO_WRITE_BLOCKED_MESSAGE);
+}
+
+export function handleCommonEvent(uri: Uri, handler: Handler): void {
+    let readOnlyReason: EmbeddedSpreadsheetReadOnlyReason | undefined =
+        requiresNativeExcelForEditing(uri) ? 'macro-preservation' : undefined;
+
+    const refreshReadOnlyState = async () => {
+        const state = await getEmbeddedSpreadsheetReadOnlyState(uri);
+        readOnlyReason = state.readOnlyReason;
+        return state;
+    };
+
+    const send = async (): Promise<void> => {
         if (shouldSkipFileChange(uri)) {
             return;
         }
-        readOnly = await isUriReadOnly(uri);
+        await refreshReadOnlyState();
         if (isVirtualUri(uri)) {
-            void emitVirtualOfficeOpen(handler, uri);
+            await emitVirtualOfficeOpen(handler, uri);
             return;
         }
         await emitFileOfficeOpen(handler, uri, handler.panel.webview);
-    }
-    const events = handler
-        .on("editInVSCode", (full: boolean) => {
+    };
+
+    handler
+        .on('editInVSCode', (full: boolean) => {
             const side = full ? vscode.ViewColumn.Active : vscode.ViewColumn.Beside;
-            vscode.commands.executeCommand('vscode.openWith', uri, "default", side);
+            return vscode.commands.executeCommand('vscode.openWith', uri, 'default', side);
         })
-    if (!options?.skipOpen) {
-        events.on("init", () => { void send(); }).on("fileChange", () => { void send(); })
-    }
-    events
-        .on("change", () => {
+        .on('init', () => send())
+        .on('fileChange', () => send())
+        .on('change', () => {
+            if (readOnlyReason === 'macro-preservation') {
+                notifyMacroWriteBlocked(handler);
+                return;
+            }
             setDirty(handler, uri, true);
         })
-        .on("save", async (content) => {
-            const res = Array.isArray(content) ? new Uint8Array(content) : new TextEncoder().encode(content)
-            if (readOnly) {
-                handler.emit('saveAs', { content: [...res] });
+        .on('save', async (content: unknown) => {
+            const state = await refreshReadOnlyState();
+            if (state.readOnlyReason === 'macro-preservation') {
+                notifyMacroWriteBlocked(handler);
+                return;
+            }
+            const bytes = toBytes(content);
+            if (state.readOnly) {
+                handler.emit('saveAs', { content: [...bytes] });
                 return;
             }
             fileSaveTimes[uri.toString()] = Date.now();
-            await workspace.fs.writeFile(uri, res)
+            await workspace.fs.writeFile(uri, bytes);
             fileSaveTimes[uri.toString()] = Date.now();
             setDirty(handler, uri, false);
-            handler.emit("saveDone")
+            handler.emit('saveDone');
         })
-        .on("saveAs", async (payload: { content: number[], ext?: string }) => {
-            const res = new Uint8Array(payload.content);
-            const ext = (payload.ext ?? 'xlsx').toLowerCase();
+        .on('saveAs', async (payload: { content: number[]; ext?: string }) => {
+            const state = await refreshReadOnlyState();
+            if (state.readOnlyReason === 'macro-preservation') {
+                notifyMacroWriteBlocked(handler);
+                return;
+            }
+            const ext = (payload?.ext ?? 'xlsx').toLowerCase();
+            const format = SAVE_FORMATS[ext];
+            if (!format || !Array.isArray(payload?.content)) {
+                throw new Error(`Unsupported spreadsheet save format: ${ext}`);
+            }
+
+            const bytes = new Uint8Array(payload.content);
             const { dir, name } = parse(uri.fsPath);
             const defaultFileName = `${name}.${ext}`;
             const defaultUri = uri.scheme === 'file'
                 ? Uri.file(join(dir, defaultFileName))
                 : Uri.joinPath(uri, '..', defaultFileName);
-            const filterMap: Record<string, { label: string; exts: string[] }> = {
-                xlsx: { label: 'Excel Workbook', exts: ['xlsx'] },
-                xlsm: { label: 'Excel Macro-Enabled Workbook', exts: ['xlsm'] },
-                xls: { label: 'Excel 97-2003 Workbook', exts: ['xls'] },
-                ods: { label: 'OpenDocument Spreadsheet', exts: ['ods'] },
-                csv: { label: 'CSV (Comma delimited)', exts: ['csv'] },
-                parquet: { label: 'Apache Parquet', exts: ['parquet'] },
-                docx: { label: 'Word Document', exts: ['docx'] },
-                dotx: { label: 'Word Template', exts: ['dotx'] },
-            };
-            const info = filterMap[ext] ?? { label: ext.toUpperCase(), exts: [ext] };
             const target = await vscode.window.showSaveDialog({
                 defaultUri,
-                filters: { [info.label]: info.exts },
+                filters: { [format.label]: format.exts },
             });
-            if (!target) return;
+            if (!target) {
+                return;
+            }
+
             fileSaveTimes[target.toString()] = Date.now();
-            await workspace.fs.writeFile(target, res);
+            await workspace.fs.writeFile(target, bytes);
             fileSaveTimes[target.toString()] = Date.now();
             setDirty(handler, uri, false);
-            handler.emit("saveDone");
-            await vscode.commands.executeCommand('vscode.openWith', target, 'cweijan.officeViewer');
-        })
-        .on('developerTool', () => vscode.commands.executeCommand('workbench.action.toggleDevTools'))
-        .on('sponsorClick', () => { })
-        .on('openSponsor', () => {
-            vscode.commands.executeCommand(
-                'workbench.extensions.action.showExtensionsWithIds',
-                ['cweijan.vscode-database-client2'],
+            handler.emit('saveDone');
+            await vscode.commands.executeCommand(
+                'vscode.openWith',
+                target,
+                'excelAiVbaStudio.officeViewer'
             );
         })
+        .on('openNativeExcel', () =>
+            vscode.commands.executeCommand(
+                'excelAiVbaStudio.openFullExcel',
+                uri
+            )
+        )
+        .on('openVbaDeveloper', () =>
+            vscode.commands.executeCommand(
+                'excelAiVbaStudio.openVbaDeveloper',
+                uri
+            )
+        )
         .on('openExternal', (url: string) => {
-            if (url) {
-                vscode.env.openExternal(vscode.Uri.parse(url));
+            const externalUri = parseSafeExternalUri(url);
+            if (externalUri) {
+                return vscode.env.openExternal(externalUri);
             }
         })
         .on('dispose', () => {
             delete fileSaveTimes[uri.toString()];
-        })
+        });
 }

@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { handler } from '../../util/vscode';
 import { loadOfficeBuffer } from '../../util/loadOfficeContent';
 import { observeVscodeThemeChange } from '../../util/vscodeTheme';
-import SponsorBar from '../components/SponsorBar';
 import { buildMindElixirTheme } from './mindElixirTheme';
 import { parseXmind, XmindDocument, XmindSheet } from './xmindParser';
 import './XmindViewer.css';
@@ -197,7 +196,6 @@ export default function XmindViewer() {
                             )}
                             <div ref={mapRef} className="xmind-map" />
                             <div className="xmind-map-footer">
-                                <SponsorBar placement="left" />
                                 <div className="xmind-zoom-controls">
                                     <Button
                                         type="text"

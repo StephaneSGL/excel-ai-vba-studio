@@ -86,6 +86,7 @@ const defaultSettings = {
   showToolbar: true,
   showContextmenu: true,
   showBottomBar: true,
+  allowSaveAs: true,
   row: {
     len: MIN_VIEW_ROWS,
     height: 25,

@@ -2,8 +2,6 @@ import { Alert, Layout, Spin } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { handler } from '../../util/vscode';
 import { loadOfficeBuffer } from '../../util/loadOfficeContent';
-import { useVscodeSponsorDark } from '../../util/vscodeTheme';
-import Sponsor from '../components/Sponsor';
 import { IcnsIconItem, parseIcnsIcons } from './icnsParser';
 import './IcnsViewer.css';
 
@@ -15,7 +13,6 @@ export default function IcnsViewer() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const sponsorDark = useVscodeSponsorDark();
 
     const loadIcns = useCallback(async (payload: { path?: string; buffer?: number[]; error?: string }) => {
         setLoading(true);
@@ -62,9 +59,6 @@ export default function IcnsViewer() {
                                     <span className="icns-size-label">{icon.label}</span>
                                 </div>
                             ))}
-                        </div>
-                        <div className="icns-sider-bottom">
-                            <Sponsor variant="sidebar" dark={sponsorDark} />
                         </div>
                     </div>
                 </Sider>

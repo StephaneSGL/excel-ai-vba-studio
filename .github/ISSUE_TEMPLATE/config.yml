@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "Vulnérabilité de sécurité / Security vulnerability"
+    url: "https://github.com/StephaneSGL/excel-ai-vba-studio/security/advisories/new"
+    about: "Signalez une vulnérabilité en privé. Ne publiez pas les détails dans une issue."
+  - name: "Questions et aide / Questions and support"
+    url: "https://github.com/StephaneSGL/excel-ai-vba-studio/discussions"
+    about: "Posez une question d'utilisation ou échangez avec la communauté."

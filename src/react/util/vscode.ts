@@ -65,6 +65,5 @@ export function isCompose(e) {
 }
 
 window.addEventListener('keydown', e => {
-    if (e.code == 'F12') handler.emit('developerTool')
-    else if ((isCompose(e) && e.code == 'KeyV')) e.preventDefault()  // vscode的bug, hebrew(希伯来语)键盘会粘贴两次
+    if (isCompose(e) && e.code == 'KeyV') e.preventDefault()
 })
