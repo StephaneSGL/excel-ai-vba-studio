@@ -1419,10 +1419,13 @@ export default class DataProxy {
 
   revalidateAll() {
     const { rows, validations } = this;
+    // Cap to sheet row length so whole-column Excel validations (e.g. E2:E1048576)
+    // do not iterate millions of empty cells on load.
+    const maxRi = Math.max(0, rows.len - 1);
     validations.validateAll((ri, ci) => {
       const cell = rows.getCell(ri, ci);
       return (cell && cell.text) ? cell.text : '';
-    });
+    }, maxRi);
   }
 
   ensureViewExtent() {

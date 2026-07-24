@@ -80,15 +80,19 @@ class Validations {
     return true;
   }
 
-  validateAll(getCellText) {
+  validateAll(getCellText, maxRi = Infinity) {
     this.errors.clear();
     for (let i = 0; i < this._.length; i += 1) {
       const v = this._[i];
       for (let j = 0; j < v.refs.length; j += 1) {
         const cr = CellRange.valueOf(v.refs[j]);
-        cr.each((ri, ci) => {
-          this.validate(ri, ci, getCellText(ri, ci));
-        });
+        const eri = Math.min(cr.eri, maxRi);
+        if (eri < cr.sri) continue;
+        for (let ri = cr.sri; ri <= eri; ri += 1) {
+          for (let ci = cr.sci; ci <= cr.eci; ci += 1) {
+            this.validate(ri, ci, getCellText(ri, ci));
+          }
+        }
       }
     }
   }
