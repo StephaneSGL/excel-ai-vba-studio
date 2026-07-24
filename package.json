@@ -321,13 +321,13 @@
     "antd": "^5.15.4",
     "buffer": "^6.0.3",
     "esbuild": "^0.28.1",
-    "iconv-lite": "^0.6.3",
+    "iconv-lite": "^0.7.3",
     "jszip": "^3.10.1",
     "less": "^4.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^5.9.3",
-    "udsv": "^0.5.3",
+    "udsv": "^0.7.3",
     "vite": "^8.0.16",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
