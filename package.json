@@ -318,7 +318,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "@vscode/codicons": "^0.0.45",
     "@vscode/vsce": "^3.9.1",
-    "antd": "^5.15.4",
+    "antd": "^6.5.2",
     "buffer": "^6.0.3",
     "esbuild": "^0.28.1",
     "iconv-lite": "^0.6.3",
