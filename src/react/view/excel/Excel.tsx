@@ -1,6 +1,7 @@
 import { MoonOutlined, SunOutlined } from "@ant-design/icons";
 import { App, Button, Modal, Radio, Spin } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { handler, vscodeApi } from "../../util/vscode.ts";
 import { isVscodeEditorDark, observeVscodeThemeChange } from "../../util/vscodeTheme.ts";
 import { loadOfficeBuffer } from "../../util/loadOfficeContent.ts";
@@ -112,6 +113,7 @@ function ExcelViewer() {
     const [saveAsVisible, setSaveAsVisible] = useState(false)
     const [saveAsFormat, setSaveAsFormat] = useState('xlsx')
     const [activeSpreadsheet, setActiveSpreadsheet] = useState<Spreadsheet | null>(null)
+    const [bottombarEl, setBottombarEl] = useState<HTMLElement | null>(null)
     const extRef = useRef('')
     const documentCacheIdRef = useRef('')
     const readOnlyRef = useRef(false)
@@ -356,6 +358,9 @@ function ExcelViewer() {
             setActiveSpreadsheet(spreadSheet);
             setLoading(false);
             spreadSheet.loadData(sheets);
+            requestAnimationFrame(() => {
+                setBottombarEl(document.querySelector('.x-spreadsheet-bottombar') as HTMLElement | null);
+            });
             if (!fileReadOnly) {
                 spreadSheet.on('save', () => void handleSave());
             }
@@ -439,6 +444,7 @@ function ExcelViewer() {
         return () => {
             spreadSheetRef.current = null;
             setActiveSpreadsheet(null);
+            setBottombarEl(null);
             themeObserver.disconnect();
             clearTimeout(themeTimer);
         };
@@ -519,17 +525,20 @@ function ExcelViewer() {
                 </div>
             </Modal>
             <div id='container'></div>
-            <div className="excel-footer-actions">
-                <button
-                    type="button"
-                    className="dark-mode-toggle"
-                    title={adaptiveColorMode ? t('viewer.switchToLightMode') : t('viewer.switchToDarkMode')}
-                    onClick={toggleColorMode}
-                >
-                    {adaptiveColorMode ? <SunOutlined /> : <MoonOutlined />}
-                </button>
-                {!loading && <SponsorBar placement="right" />}
-            </div>
+            <button
+                type="button"
+                className="dark-mode-toggle"
+                title={adaptiveColorMode ? t('viewer.switchToLightMode') : t('viewer.switchToDarkMode')}
+                onClick={toggleColorMode}
+            >
+                {adaptiveColorMode ? <SunOutlined /> : <MoonOutlined />}
+            </button>
+            {!loading && !loadError && bottombarEl && createPortal(
+                <div className="excel-bottombar-sponsor">
+                    <SponsorBar placement="right" />
+                </div>,
+                bottombarEl,
+            )}
         </div>
     )
 }

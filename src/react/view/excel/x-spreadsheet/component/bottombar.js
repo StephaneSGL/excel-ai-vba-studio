@@ -1,9 +1,8 @@
 import { h } from './element';
 import { bindClickoutside, unbindClickoutside, mouseMoveUp } from './event';
 import { cssPrefix } from '../config';
-import Icon from './icon';
 import FormInput from './form_input';
-import { tf } from '../locale/locale';
+import { t, tf } from '../locale/locale';
 
 const menuItems = [
   { key: 'rename',    title: tf('contextmenu.renameSheet'),    icon: 'edit' },
@@ -11,6 +10,8 @@ const menuItems = [
   { key: 'divider' },
   { key: 'delete',    title: tf('contextmenu.deleteSheet'),    icon: 'trash' },
 ];
+
+const TAB_SCROLL_STEP = 180;
 
 function buildMenuItem(item) {
   if (item.key === 'divider') {
@@ -54,6 +55,31 @@ class ContextMenu {
   }
 }
 
+function buildNavBtn(name, icon, titleKey, onClick) {
+  let iconChild;
+  if (name === 'first') {
+    iconChild = h('span', `${cssPrefix}-sheet-nav-icon first`).children(
+      h('span', 'bar'),
+      h('i', 'codicon codicon-chevron-left'),
+    );
+  } else if (name === 'last') {
+    iconChild = h('span', `${cssPrefix}-sheet-nav-icon last`).children(
+      h('i', 'codicon codicon-chevron-right'),
+      h('span', 'bar'),
+    );
+  } else {
+    iconChild = h('i', `codicon codicon-${icon}`);
+  }
+  return h('button', `${cssPrefix}-sheet-nav-btn ${name}`)
+    .attr('type', 'button')
+    .attr('title', t(titleKey))
+    .child(iconChild)
+    .on('click', (evt) => {
+      evt.preventDefault();
+      onClick();
+    });
+}
+
 export default class Bottombar {
   constructor(addFunc = () => {},
     swapFunc = () => {},
@@ -63,30 +89,202 @@ export default class Bottombar {
     this.swapFunc = swapFunc;
     this.updateFunc = updateFunc;
     this.moveFunc = moveFunc;
+    this.addFunc = addFunc;
     this.dataNames = [];
     this.activeEl = null;
     this.contextEl = null;
     this.items = [];
     this.dragFromIndex = -1;
+    this.moreOpen = false;
     this.dropMarkerEl = h('div', `${cssPrefix}-sheet-drop-marker`).hide();
     this.contextMenu = new ContextMenu();
     this.contextMenu.itemClick = (key) => menuFunc(key);
+
+    this.navFirstEl = buildNavBtn('first', 'chevron-left', 'bottombar.firstSheet', () => {
+      this.scrollTabsTo('start');
+    });
+    this.navPrevEl = buildNavBtn('prev', 'chevron-left', 'bottombar.prevSheet', () => {
+      this.scrollTabsBy(-TAB_SCROLL_STEP);
+    });
+    this.navNextEl = buildNavBtn('next', 'chevron-right', 'bottombar.nextSheet', () => {
+      this.scrollTabsBy(TAB_SCROLL_STEP);
+    });
+    this.navLastEl = buildNavBtn('last', 'chevron-right', 'bottombar.lastSheet', () => {
+      this.scrollTabsTo('end');
+    });
+    this.navEl = h('div', `${cssPrefix}-sheet-nav`).children(
+      this.navFirstEl,
+      this.navPrevEl,
+      this.navNextEl,
+      this.navLastEl,
+    );
+
+    this.menuEl = h('ul', `${cssPrefix}-menu`);
+    this.menuEl.on('scroll', () => this.updateNavState());
+    this.menuEl.on('wheel', (evt) => {
+      if (Math.abs(evt.deltaY) > Math.abs(evt.deltaX)) {
+        evt.preventDefault();
+        this.menuEl.el.scrollLeft += evt.deltaY;
+        this.updateNavState();
+      }
+    });
+
+    this.moreListEl = h('div', `${cssPrefix}-sheet-more-list`);
+    this.moreMenuEl = h('div', `${cssPrefix}-sheet-more-menu`)
+      .child(this.moreListEl)
+      .hide();
+    this.moreBtnEl = h('button', `${cssPrefix}-sheet-action-btn more`)
+      .attr('type', 'button')
+      .attr('title', t('bottombar.moreSheets'))
+      .child(h('i', 'codicon codicon-ellipsis'))
+      .hide()
+      .on('click', (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        this.toggleMoreMenu();
+      });
+
+    this.addBtnEl = h('button', `${cssPrefix}-sheet-action-btn add`)
+      .attr('type', 'button')
+      .attr('title', t('bottombar.addSheet'))
+      .child(h('i', 'codicon codicon-add'))
+      .on('click', (evt) => {
+        evt.preventDefault();
+        addFunc();
+      });
+
+    this.actionsEl = h('div', `${cssPrefix}-sheet-actions`).children(
+      this.moreBtnEl,
+      this.moreMenuEl,
+      this.addBtnEl,
+    );
+
+    this.tabsEl = h('div', `${cssPrefix}-sheet-tabs`).children(
+      this.menuEl,
+      this.actionsEl,
+    );
+
     this.el = h('div', `${cssPrefix}-bottombar`).children(
       this.contextMenu.el,
       this.dropMarkerEl,
-      this.menuEl = h('ul', `${cssPrefix}-menu`).child(
-        h('li', '').children(
-          new Icon('add').on('click', () => {
-            addFunc();
-          }),
-        ),
-      ),
+      this.navEl,
+      this.tabsEl,
     );
+
+    this.resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => this.updateNavState())
+      : null;
+    if (this.resizeObserver) {
+      this.resizeObserver.observe(this.menuEl.el);
+      this.resizeObserver.observe(this.tabsEl.el);
+    }
+  }
+
+  scrollTabsBy(delta) {
+    this.menuEl.el.scrollLeft += delta;
+    this.updateNavState();
+  }
+
+  scrollTabsTo(edge) {
+    const el = this.menuEl.el;
+    el.scrollLeft = edge === 'start' ? 0 : el.scrollWidth;
+    this.updateNavState();
+  }
+
+  updateNavState() {
+    const menu = this.menuEl.el;
+    const maxScroll = Math.max(0, menu.scrollWidth - menu.clientWidth);
+    const left = menu.scrollLeft;
+    const atStart = left <= 1;
+    const atEnd = left >= maxScroll - 1;
+    const scrollOverflow = maxScroll > 1;
+    const moreVisible = this.moreBtnEl.el.style.display !== 'none';
+    const moreWidth = moreVisible ? this.moreBtnEl.el.offsetWidth + 2 : 0;
+    // Hysteresis: decide visibility as if more were hidden, to avoid show/hide flicker.
+    const needsMore = menu.scrollWidth > menu.clientWidth + moreWidth + 1;
+
+    this.setNavDisabled(this.navFirstEl, !scrollOverflow || atStart);
+    this.setNavDisabled(this.navPrevEl, !scrollOverflow || atStart);
+    this.setNavDisabled(this.navNextEl, !scrollOverflow || atEnd);
+    this.setNavDisabled(this.navLastEl, !scrollOverflow || atEnd);
+
+    if (needsMore) {
+      this.moreBtnEl.show();
+    } else {
+      this.hideMoreMenu();
+      this.moreBtnEl.hide();
+    }
+  }
+
+  setNavDisabled(btn, disabled) {
+    if (disabled) {
+      btn.addClass('disabled');
+      btn.attr('disabled', 'disabled');
+    } else {
+      btn.removeClass('disabled');
+      btn.el.removeAttribute('disabled');
+    }
+  }
+
+  scrollActiveIntoView() {
+    if (!this.activeEl) return;
+    const menu = this.menuEl.el;
+    const tab = this.activeEl.el;
+    const tabLeft = tab.offsetLeft;
+    const tabRight = tabLeft + tab.offsetWidth;
+    const viewLeft = menu.scrollLeft;
+    const viewRight = viewLeft + menu.clientWidth;
+    if (tabLeft < viewLeft) {
+      menu.scrollLeft = Math.max(0, tabLeft - 8);
+    } else if (tabRight > viewRight) {
+      menu.scrollLeft = tabRight - menu.clientWidth + 8;
+    }
+    this.updateNavState();
+  }
+
+  toggleMoreMenu() {
+    if (this.moreOpen) {
+      this.hideMoreMenu();
+    } else {
+      this.showMoreMenu();
+    }
+  }
+
+  showMoreMenu() {
+    this.moreListEl.html('');
+    for (let i = 0; i < this.items.length; i += 1) {
+      const name = this.dataNames[i];
+      const item = this.items[i];
+      const row = h('div', `${cssPrefix}-sheet-more-item${item === this.activeEl ? ' active' : ''}`)
+        .child(name)
+        .on('click', () => {
+          this.hideMoreMenu();
+          this.clickSwap2(item);
+          this.scrollActiveIntoView();
+        });
+      this.moreListEl.child(row);
+    }
+    this.moreMenuEl.show();
+    this.moreBtnEl.addClass('active');
+    this.moreOpen = true;
+    bindClickoutside(this.actionsEl, () => this.hideMoreMenu());
+  }
+
+  hideMoreMenu() {
+    if (!this.moreOpen) return;
+    this.moreMenuEl.hide();
+    this.moreBtnEl.removeClass('active');
+    this.moreOpen = false;
+    unbindClickoutside(this.actionsEl);
   }
 
   bindTabItem(item, options) {
     item.on('mousedown', (evt) => {
-      if (options.mode === 'read' || evt.button !== 0) return;
+      if (evt.button !== 0) return;
+      if (options.mode === 'read') {
+        this.clickSwap2(item);
+        return;
+      }
       const fromIndex = this.items.findIndex(it => it === item);
       if (fromIndex < 0) return;
       const startX = evt.clientX;
@@ -119,9 +317,13 @@ export default class Bottombar {
     }).on('contextmenu', (evt) => {
       if (options.mode === 'read') return;
       evt.preventDefault();
-      const { offsetLeft, offsetHeight } = evt.target;
+      const rect = item.box();
+      const bar = this.el.box();
       this.contextEl = item;
-      this.contextMenu.setOffset({ left: offsetLeft, bottom: offsetHeight + 1 });
+      this.contextMenu.setOffset({
+        left: rect.left - bar.left,
+        bottom: bar.bottom - rect.top + 1,
+      });
     }).on('dblclick', () => {
       if (options.mode === 'read') return;
       const index = this.items.findIndex(it => it === item);
@@ -135,14 +337,17 @@ export default class Bottombar {
     this.bindTabItem(item, options);
     if (options.mode === 'read' && !this.addHidden) {
       this.addHidden = true;
-      const addLi = this.menuEl.el.firstElementChild;
-      if (addLi) addLi.style.display = 'none';
+      this.addBtnEl.hide();
     }
     if (active) {
       this.clickSwap(item);
     }
     this.items.push(item);
     this.menuEl.child(item);
+    requestAnimationFrame(() => {
+      if (active) this.scrollActiveIntoView();
+      else this.updateNavState();
+    });
   }
 
   insertItem(index, name, active, options) {
@@ -163,6 +368,10 @@ export default class Bottombar {
       this.activeEl = item;
       this.swapFunc(index);
     }
+    requestAnimationFrame(() => {
+      if (active) this.scrollActiveIntoView();
+      else this.updateNavState();
+    });
   }
 
   getContextSheetIndex() {
@@ -190,6 +399,7 @@ export default class Bottombar {
     if (this.activeEl === item) {
       this.swapFunc(to);
     }
+    requestAnimationFrame(() => this.updateNavState());
   }
 
   findTabDropIndex(clientX) {
@@ -210,7 +420,7 @@ export default class Bottombar {
     }
     const item = this.items[index];
     const rect = item.box();
-    const bar = this.menuEl.box();
+    const bar = this.el.box();
     this.dropMarkerEl.offset({
       left: rect.left - bar.left,
       bottom: 0,
@@ -250,12 +460,15 @@ export default class Bottombar {
   }
 
   clear() {
+    this.hideMoreMenu();
     this.items.forEach((it) => {
       this.menuEl.removeChild(it.el);
     });
     this.items = [];
     this.dataNames = [];
     this.contextEl = null;
+    this.activeEl = null;
+    requestAnimationFrame(() => this.updateNavState());
   }
 
   deleteItem() {
@@ -273,8 +486,13 @@ export default class Bottombar {
       const [f] = this.items;
       this.activeEl = f;
       this.activeEl.toggle();
+      requestAnimationFrame(() => {
+        this.scrollActiveIntoView();
+        this.updateNavState();
+      });
       return [index, 0];
     }
+    requestAnimationFrame(() => this.updateNavState());
     return [index, -1];
   }
 
@@ -283,6 +501,7 @@ export default class Bottombar {
     this.clickSwap(item);
     this.activeEl.toggle();
     this.swapFunc(index);
+    this.scrollActiveIntoView();
   }
 
   clickSwap(item) {

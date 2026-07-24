@@ -821,6 +821,10 @@ body {
 .@{css-prefix}-bottombar {
   position: relative;
   border-top: 1px solid #e0e2e4;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  overflow: visible;
 
   .@{css-prefix}-sheet-drop-marker {
     position: absolute;
@@ -832,13 +836,161 @@ body {
     z-index: 2;
   }
 
+  .@{css-prefix}-sheet-nav {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 0;
+    padding: 0 2px;
+  }
+
+  .@{css-prefix}-sheet-nav-btn,
+  .@{css-prefix}-sheet-action-btn {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 2px;
+    background: transparent;
+    color: rgba(0, 0, 0, 0.72);
+    cursor: pointer;
+
+    .codicon {
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .@{css-prefix}-sheet-nav-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+
+      .bar {
+        display: inline-block;
+        width: 1.5px;
+        height: 11px;
+        background: currentColor;
+        border-radius: 1px;
+        flex: 0 0 auto;
+      }
+
+      .codicon {
+        font-size: 12px;
+        margin: 0 -2px;
+      }
+
+      &.first .bar {
+        margin-right: 1px;
+      }
+
+      &.last .bar {
+        margin-left: 1px;
+      }
+    }
+
+    &:hover:not(.disabled) {
+      background: rgba(0, 0, 0, 0.06);
+    }
+
+    &.disabled,
+    &:disabled {
+      color: rgba(0, 0, 0, 0.22);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    &.active {
+      background: rgba(0, 0, 0, 0.08);
+    }
+  }
+
+  .@{css-prefix}-sheet-actions {
+    position: relative;
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    padding: 0 2px;
+  }
+
+  .@{css-prefix}-sheet-tabs {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .@{css-prefix}-sheet-more-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 4px);
+    min-width: 160px;
+    max-width: 280px;
+    max-height: 280px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    z-index: 1003;
+    background: #fff;
+    border: 1px solid #e0e2e4;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    padding: 4px 0;
+  }
+
+  .@{css-prefix}-sheet-more-item {
+    padding: 6px 14px;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: rgba(0, 0, 0, 0.82);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+
+    &.active {
+      color: #057c52;
+      background: rgba(5, 124, 82, 0.1);
+      font-weight: 600;
+    }
+  }
+
+  .@{css-prefix}-menu {
+    flex: 0 1 auto;
+    min-width: 0;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+      height: 0;
+    }
+  }
+
   .@{css-prefix}-menu > li {
+    float: none;
+    flex-shrink: 0;
     line-height: 35px;
     height: 35px;
     padding-top: 0;
     padding-bottom: 0;
     vertical-align: middle;
-    // border-right: 1px solid #e8eaed;
   }
 }
 

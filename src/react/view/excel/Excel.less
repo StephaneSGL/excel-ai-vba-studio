@@ -302,17 +302,55 @@ body:has(.excel-app) {
         }
     }
 
-    // Light mode bottombar — pill-style sheet tabs
+    // Light mode bottombar — WPS-style sheet tabs
     .x-spreadsheet-bottombar {
         background: #f2f3f5;
         border-top: 1px solid #e1e4e8;
         height: 38px;
         align-items: center;
-        padding: 0 6px;
+        padding: 0 4px;
+        gap: 2px;
 
-        // The scrollable tab list
         .x-spreadsheet-menu {
             align-items: center;
+        }
+
+        .x-spreadsheet-sheet-nav-btn,
+        .x-spreadsheet-sheet-action-btn {
+            color: rgba(0, 0, 0, 0.62);
+
+            &:hover:not(.disabled) {
+                background: rgba(0, 0, 0, 0.06);
+                color: rgba(0, 0, 0, 0.82);
+            }
+
+            &.disabled,
+            &:disabled {
+                color: rgba(0, 0, 0, 0.22);
+            }
+
+            &.active {
+                background: rgba(0, 0, 0, 0.08);
+            }
+        }
+
+        .x-spreadsheet-sheet-more-menu {
+            background: #fff;
+            border-color: #e1e4e8;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+        }
+
+        .x-spreadsheet-sheet-more-item {
+            color: rgba(0, 0, 0, 0.82);
+
+            &:hover {
+                background: rgba(0, 0, 0, 0.06);
+            }
+
+            &.active {
+                color: #057c52;
+                background: rgba(5, 124, 82, 0.1);
+            }
         }
 
         // All tab items
@@ -321,7 +359,7 @@ body:has(.excel-app) {
             height: 26px;
             line-height: 26px;
             padding: 0 14px;
-            border-radius: 13px;
+            border-radius: 6px;
             border-bottom: none !important;
             margin: 0 2px;
             font-size: 12.5px;
@@ -339,32 +377,6 @@ body:has(.excel-app) {
                 background: rgba(5, 124, 82, 0.1);
                 color: #057c52;
                 border-bottom: none !important;
-            }
-        }
-
-        // "+" add-sheet button (first li, contains only the icon)
-        .x-spreadsheet-menu > li:first-child {
-            padding: 0;
-            width: 26px;
-            min-width: 26px;
-            height: 26px;
-            border-radius: 6px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 6px;
-
-            .x-spreadsheet-icon {
-                margin: 0;
-            }
-
-            .x-spreadsheet-icon-img {
-                filter: brightness(0) opacity(0.45);
-                opacity: 1;
-            }
-
-            &:hover .x-spreadsheet-icon-img {
-                filter: brightness(0) opacity(0.7);
             }
         }
     }
@@ -396,6 +408,10 @@ body:has(.excel-app) {
     }
 
     .dark-mode-toggle {
+        position: fixed;
+        top: 5px;
+        right: 10px;
+        z-index: 1001;
         width: 28px;
         height: 28px;
         flex-shrink: 0;
@@ -411,14 +427,6 @@ body:has(.excel-app) {
         &:hover {
             background-color: rgba(0, 0, 0, 0.06);
         }
-    }
-
-    .excel-footer-actions .dark-mode-toggle {
-        position: fixed;
-        top: 5px;
-        right: 10px;
-        bottom: auto;
-        z-index: 1001;
     }
 
     .excel-load-error {
@@ -495,29 +503,32 @@ body:has(.excel-app) {
         border-bottom-color: rgba(255, 255, 255, 0.08);
     }
 
-    .excel-footer-actions {
-        position: fixed;
-        right: 12px;
-        bottom: 6px;
-        z-index: 1000;
+    .excel-bottombar-sponsor {
         display: flex;
+        flex: 0 0 auto;
         align-items: center;
-        gap: 10px;
-        pointer-events: none;
+        align-self: stretch;
+        padding-left: 8px;
+        padding-right: 8px;
 
-        > * {
-            pointer-events: auto;
-        }
-
+        .office-sponsor-bar,
         .office-sponsor-bar--right {
             position: static;
             right: auto;
             bottom: auto;
             padding: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
     }
 
-    --excel-footer-reserve: 270px;
+    // Kept for compatibility; sponsor now lives in bottombar flex layout
+    --excel-footer-reserve: 0px;
+
+    &.excel-viewer--no-sponsor {
+        --excel-footer-reserve: 0px;
+    }
 
     --excel-selection: rgb(33, 186, 69);
     --excel-selection-fill: rgba(33, 186, 69, 0.1);
@@ -566,16 +577,33 @@ body:has(.excel-app) {
 
     .x-spreadsheet-bottombar {
         overflow: visible;
+        display: flex;
+        align-items: center;
+
+        .x-spreadsheet-sheet-tabs {
+            display: flex;
+            flex: 1 1 auto;
+            align-items: center;
+            min-width: 0;
+            gap: 2px;
+        }
 
         .x-spreadsheet-menu {
-            flex: 1;
+            flex: 0 1 auto;
             min-width: 0;
-            max-width: calc(100vw - var(--excel-footer-reserve));
+            width: max-content;
+            max-width: 100%;
             overflow-x: auto;
             overflow-y: hidden;
             display: flex;
             flex-wrap: nowrap;
             float: none;
+            scrollbar-width: none;
+
+            &::-webkit-scrollbar {
+                display: none;
+                height: 0;
+            }
 
             > li {
                 float: none;
@@ -712,23 +740,11 @@ body.office-adaptive .excel-viewer {
         border-top: 1px solid var(--excel-border);
 
         .x-spreadsheet-menu {
-            scrollbar-color: var(--excel-scrollbar-thumb) var(--excel-scrollbar-track);
+            scrollbar-width: none;
 
             &::-webkit-scrollbar {
-                height: 8px;
-            }
-
-            &::-webkit-scrollbar-track {
-                background: var(--excel-scrollbar-track);
-            }
-
-            &::-webkit-scrollbar-thumb {
-                background-color: var(--excel-scrollbar-thumb);
-                border-radius: 4px;
-            }
-
-            &::-webkit-scrollbar-thumb:hover {
-                background-color: var(--excel-scrollbar-thumb-hover);
+                display: none;
+                height: 0;
             }
         }
     }
@@ -912,14 +928,56 @@ body.office-adaptive .excel-viewer {
         }
     }
 
-    // VS Code adaptive theme — pill-style sheet tabs
+    // VS Code adaptive theme — WPS-style sheet tabs
     .x-spreadsheet-bottombar {
         height: 38px;
         align-items: center;
-        padding: 0 6px;
+        padding: 0 4px;
+        gap: 2px;
 
         .x-spreadsheet-menu {
             align-items: center;
+        }
+
+        .x-spreadsheet-sheet-nav-btn,
+        .x-spreadsheet-sheet-action-btn {
+            color: var(--excel-fg);
+            opacity: 0.72;
+
+            &:hover:not(.disabled) {
+                background: var(--excel-hover);
+                opacity: 1;
+            }
+
+            &.disabled,
+            &:disabled {
+                opacity: 0.28;
+            }
+
+            &.active {
+                background: var(--excel-hover);
+                opacity: 1;
+            }
+        }
+
+        .x-spreadsheet-sheet-more-menu {
+            background: var(--excel-widget-bg);
+            border-color: var(--excel-border);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+            color: var(--excel-widget-fg);
+        }
+
+        .x-spreadsheet-sheet-more-item {
+            color: var(--excel-fg);
+
+            &:hover {
+                background: var(--excel-hover);
+            }
+
+            &.active {
+                color: var(--excel-accent);
+                background: color-mix(in srgb, var(--excel-accent) 15%, transparent);
+            }
         }
 
         .x-spreadsheet-menu > li {
@@ -927,7 +985,7 @@ body.office-adaptive .excel-viewer {
             height: 26px;
             line-height: 26px;
             padding: 0 14px;
-            border-radius: 13px;
+            border-radius: 6px;
             border-bottom: none !important;
             margin: 0 2px;
             font-size: 12.5px;
@@ -948,35 +1006,6 @@ body.office-adaptive .excel-viewer {
                 color: var(--excel-accent);
                 border-bottom: none !important;
                 opacity: 1;
-            }
-        }
-
-        .x-spreadsheet-menu > li:first-child {
-            padding: 0;
-            width: 26px;
-            min-width: 26px;
-            height: 26px;
-            border-radius: 6px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 6px;
-
-            .x-spreadsheet-icon {
-                margin: 0;
-            }
-
-            .x-spreadsheet-icon-img {
-                filter: var(--excel-toolbar-icon-filter);
-                opacity: 0.55;
-            }
-
-            &:hover {
-                background: var(--excel-hover);
-
-                .x-spreadsheet-icon-img {
-                    opacity: 0.85;
-                }
             }
         }
     }
@@ -1205,8 +1234,11 @@ body.office-dark {
 }
 
 @media (max-width: 650px) {
-    .excel-viewer .office-sponsor-bar {
-        display: none !important;
+    .excel-viewer {
+        .excel-bottombar-sponsor,
+        .office-sponsor-bar {
+            display: none !important;
+        }
     }
 }
 
