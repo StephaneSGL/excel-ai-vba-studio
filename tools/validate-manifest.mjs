@@ -26,7 +26,10 @@ expect(manifest.engines?.vscode === '>=1.95.0', 'engines.vscode must be >=1.95.0
 expect(JSON.stringify(manifest.extensionKind) === JSON.stringify(['ui']), 'extensionKind must be ["ui"]');
 expect(manifest.main === './out/extension.js', 'desktop entry point must be ./out/extension.js');
 expect(!Object.hasOwn(manifest, 'browser'), 'Windows-only extension must not expose a browser entry point');
-expect(manifest.license === 'MIT', 'license must remain MIT');
+expect(
+  manifest.license === 'SEE LICENSE IN LICENSE',
+  'mixed licensing must be described by the packaged LICENSE file',
+);
 expect(
   manifest.repository?.url === 'https://github.com/StephaneSGL/excel-ai-vba-studio.git',
   'repository must point to the public GitHub repository',
@@ -112,6 +115,10 @@ expect(
 
 const requiredFiles = [
   'LICENSE',
+  'LICENSING.md',
+  'LICENSES/POLYFORM-NONCOMMERCIAL-1.0.0.md',
+  'LICENSES/OFFICE-VIEWER-MIT.txt',
+  'LICENSES/X-DATA-SPREADSHEET-MIT.txt',
   'README.md',
   'CHANGELOG.md',
   'SUPPORT.md',

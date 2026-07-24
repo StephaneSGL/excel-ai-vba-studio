@@ -7,6 +7,7 @@ const outputPath = path.join(root, "THIRD_PARTY_LICENSES.txt");
 const normalizeLineEndings = (text) => text.replace(/\r\n?/g, "\n");
 
 const components = [
+  ["x-data-spreadsheet vendored code", "LICENSES/X-DATA-SPREADSHEET-MIT.txt"],
   ["SheetJS Community Edition (xlsx 0.20.3)", "node_modules/xlsx/LICENSE"],
   ["ExcelJS (@cweijan/exceljs 5.0.1)", "node_modules/@cweijan/exceljs/LICENSE"],
   ["React (react 19.2.8)", "node_modules/react/LICENSE"],

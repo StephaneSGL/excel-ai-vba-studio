@@ -1,22 +1,55 @@
-MIT License
+Excel AI & VBA Studio - Licensing Notice
 
-Copyright (c) 2020 Weijan Chen
-Copyright (c) 2026 StephaneSGL contributors
+Copyright (c) 2026 StephaneSGL.
+All rights reserved except as expressly licensed below.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Required Notice: Copyright (c) 2026 StephaneSGL. Original Excel AI & VBA Studio contributions are licensed for noncommercial purposes only unless StephaneSGL grants a separate written commercial license.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. PROJECT-SPECIFIC CONTRIBUTIONS
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Except for the third-party material described below, the original source code,
+documentation, assets, and modifications first introduced by StephaneSGL in
+Excel AI & VBA Studio version 0.1.1 and later are made available under the:
+
+PolyForm Noncommercial License 1.0.0
+https://polyformproject.org/licenses/noncommercial/1.0.0
+
+The complete terms are preserved in:
+
+LICENSES/POLYFORM-NONCOMMERCIAL-1.0.0.md
+
+No commercial-use license is granted for those project-specific contributions.
+Commercial use requires a separate written license from StephaneSGL.
+
+2. OFFICE VIEWER UPSTREAM MATERIAL
+
+This repository contains substantial portions derived from Office Viewer by
+Weijan Chen. The upstream baseline and all portions governed by its original
+notice remain licensed under the MIT License. The complete preserved notice is:
+
+LICENSES/OFFICE-VIEWER-MIT.txt
+
+Nothing in this file revokes, narrows, or replaces the rights granted by that
+MIT License for upstream material.
+
+3. OTHER THIRD-PARTY MATERIAL
+
+Third-party libraries, fonts, icons, and other components remain governed by
+their respective licenses. See THIRD_PARTY_NOTICES.md and
+THIRD_PARTY_LICENSES.txt. Preserved license files for vendored source are kept
+in the LICENSES directory.
+
+4. MIXED FILES AND PRIOR GRANTS
+
+When a file contains both upstream material and project-specific modifications,
+each portion remains subject to its applicable license. See LICENSING.md for the
+licensing map and fork baseline.
+
+Versions and commits previously distributed under the MIT License remain
+available under the rights already granted for those versions. This licensing
+notice applies prospectively and does not revoke prior grants.
+
+5. TRADEMARKS
+
+No trademark rights are granted. Microsoft, Visual Studio, Visual Studio Code,
+Excel, VBA, and related names are trademarks of their respective owners.

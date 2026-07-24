@@ -1,11 +1,11 @@
 {
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
-  "description": "View and edit Excel or CSV files in VS Code, open native Excel and VBA tools, and expose detailed local workbook context to AI.",
-  "version": "0.1.0",
+  "description": "View and edit safe spreadsheet formats in VS Code, inspect bounded workbook context with AI, and open native Excel or VBA tools.",
+  "version": "0.1.1",
   "publisher": "steph-tools",
   "preview": true,
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/StephaneSGL/excel-ai-vba-studio.git"
@@ -48,7 +48,7 @@
     "copilot",
     "data"
   ],
-  "qna": "marketplace",
+  "qna": "https://github.com/StephaneSGL/excel-ai-vba-studio/discussions",
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,

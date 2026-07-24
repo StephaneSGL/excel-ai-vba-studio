@@ -6,7 +6,9 @@ The complete license texts shipped with the extension are collected in [THIRD_PA
 
 | Component | Version | License | Source |
 | --- | ---: | --- | --- |
-| Office Viewer by Weijan Chen | fork base | MIT | <https://github.com/cweijan/vscode-office> |
+| Office Viewer by Weijan Chen | 4.1.7 fork base | MIT | <https://github.com/cweijan/vscode-office> |
+| x-data-spreadsheet by myliang | vendored fork | MIT | <https://github.com/myliang/x-spreadsheet> |
+| Vditor by B3log | source tree only | MIT | <https://github.com/Vanessa219/vditor> |
 | SheetJS Community Edition (`xlsx`) | 0.20.3 | Apache-2.0 | <https://git.sheetjs.com/SheetJS/sheetjs> |
 | ExcelJS (`@cweijan/exceljs`) | 5.0.1 | MIT | <https://github.com/exceljs/exceljs> |
 | React / React DOM | 19.2.8 | MIT | <https://github.com/facebook/react> |
@@ -23,3 +25,8 @@ VS Code Codicons and its icon font are Copyright (c) Microsoft Corporation and a
 SheetJS Community Edition is used under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). The pinned distribution contains no separate `NOTICE` file.
 
 Build-only tooling such as Vite, esbuild, TypeScript, and `@vscode/vsce` is not shipped as a runtime dependency in the VSIX.
+
+The preserved license texts for the Office Viewer baseline, vendored
+x-data-spreadsheet code, and the Vditor source tree are stored in the
+[LICENSES](LICENSES) directory. Vditor is retained in the public source tree
+but is excluded from the targeted Excel AI & VBA Studio VSIX.

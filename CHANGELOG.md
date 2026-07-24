@@ -4,6 +4,20 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.1.1] - 2026-07-24
+
+### Documentation
+
+- Rebuilt the public README with installation instructions, a format support matrix, architecture, security boundaries, settings, roadmap, and support links.
+- Added an explicit licensing map, upstream baseline, CODEOWNERS, and clearer contribution rules.
+- Added missing preserved notices for the vendored x-data-spreadsheet code and the Vditor source tree.
+
+### Licensing
+
+- Project-specific contributions distributed from version 0.1.1 are source-available under PolyForm Noncommercial 1.0.0.
+- The Office Viewer baseline and all third-party portions retain their original licenses.
+- Earlier MIT grants remain valid for versions and commits that were already distributed under MIT.
+
 ## [0.1.0] - 2026-07-24
 
 ### Added

@@ -1,72 +1,176 @@
-# Excel AI & VBA Studio
+<p align="center">
+  <img src="image/marketplace-icon.png" width="128" alt="Excel AI & VBA Studio">
+</p>
 
-> Preview — Windows x64
+<h1 align="center">Excel AI & VBA Studio</h1>
 
-Open Excel and CSV files in Visual Studio Code, inspect workbook structure with AI, and jump to the real Microsoft Excel or VBA interface when you need the full native toolset.
+<p align="center">
+  <strong>Excel dans Visual Studio Code, avec un contexte de classeur contrôlé pour l’IA.</strong>
+</p>
 
-Visualisez les fichiers Excel et CSV dans Visual Studio Code, fournissez à l’IA un contexte détaillé du classeur, puis ouvrez le véritable Excel ou l’éditeur VBA pour les fonctions natives avancées.
+<p align="center">
+  <a href="https://github.com/StephaneSGL/excel-ai-vba-studio/actions/workflows/main.yml"><img src="https://github.com/StephaneSGL/excel-ai-vba-studio/actions/workflows/main.yml/badge.svg?branch=main" alt="Validation"></a>
+  <img src="https://img.shields.io/badge/status-Preview-f59e0b" alt="Preview">
+  <img src="https://img.shields.io/badge/platform-Windows%20x64-0078d4" alt="Windows x64">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-7a2f8f" alt="PolyForm Noncommercial"></a>
+</p>
 
-## Features / Fonctionnalités
+Visualisez et modifiez les formats sûrs dans VS Code, inspectez à la demande les valeurs, formules et métadonnées d’un classeur, puis ouvrez le véritable Microsoft Excel ou le VBE lorsque vous avez besoin du ruban complet, de Power Query, des compléments, des macros ou des outils Développeur.
 
-- Embedded viewer/editor for `.xlsx`, `.csv`, and `.tsv`; `.xlsm` and legacy `.xls` remain view-only in VS Code so the embedded writer can never strip VBA projects or legacy workbook records.
-- Native Microsoft Excel launch with the complete ribbon, including Data and Developer tools.
-- Direct access to the Visual Basic Editor (VBE) and the workbook VBA project explorer.
-- Local, bounded workbook export in Markdown and JSON: values, formulas, formats, tables, charts, names, links, validations, comments, connections, Power Query metadata, and VBA metadata when permitted.
-- **Excel & VBA** explorer in the VS Code sidebar.
-- VS Code language-model tool `#excelVbaWorkbook` for explicitly sharing workbook context with an AI assistant.
-- No extension telemetry and no extension-managed API key.
+*View and edit safe spreadsheet formats in VS Code, expose bounded workbook context to AI on demand, and hand advanced operations off to native Microsoft Excel or the Visual Basic Editor.*
 
-## Requirements
+> [!IMPORTANT]
+> La grille intégrée n’est pas une réimplémentation complète de Microsoft Excel. Le ruban Excel, Power Query, les compléments, les outils de données avancés, les macros et le VBE restent fournis par l’application Microsoft Excel installée.
 
-- Windows x64.
-- Visual Studio Code 1.95 or later.
-- Microsoft Excel desktop is required for native Excel, VBA, legacy workbook, and COM-based context-export features.
-- The embedded viewer does not reproduce every proprietary Excel feature. Commands that need the complete ribbon, Power Query, data tools, add-ins, macros, or VBE open the installed Microsoft Excel application.
+## Fonctionnalités actuelles
 
-## Quick start / Démarrage rapide
+| Format | Dans VS Code | Excel natif | Contexte IA |
+| --- | --- | --- | --- |
+| `.xlsx` | Lecture et édition | Oui | Oui |
+| `.csv`, `.tsv` | Lecture et édition | Oui | Oui |
+| `.xlsm`, `.xls` | Lecture seule protégée | Édition, ruban et VBA | Oui |
+| `.xlsb` | Pas de rendu intégré | Oui | Oui |
 
-1. Open a supported spreadsheet in VS Code.
-2. Use the editor toolbar or the **Excel & VBA** explorer.
-3. Run one of these commands from the Command Palette:
+- Grille de classeur directement dans un onglet VS Code.
+- Explorateur **Excel & VBA** dans la barre latérale.
+- Ouverture du fichier actif dans Microsoft Excel avec son interface complète.
+- Accès direct au mode Développeur et au Visual Basic Editor.
+- Export local borné en Markdown et JSON : valeurs, formules, formats, tableaux, graphiques, noms, liens, validations, commentaires, connexions et métadonnées VBA autorisées.
+- Outil IA référençable `#excelVbaWorkbook`, exécuté uniquement à la demande.
+- Aucune télémétrie de l’extension et aucune clé API gérée par l’extension.
 
-| Command | Purpose |
+## Installation
+
+### Depuis un VSIX
+
+Téléchargez un fichier `excel-ai-vba-studio-win32-x64-<version>.vsix`, puis exécutez :
+
+```powershell
+code --install-extension .\excel-ai-vba-studio-win32-x64-<version>.vsix
+```
+
+Vous pouvez aussi utiliser **Extensions → … → Installer à partir d’un fichier VSIX** dans VS Code.
+
+### Depuis les sources
+
+Prérequis de construction : Node.js 22, npm, Git et Visual Studio Code 1.95 ou version ultérieure.
+
+```powershell
+git clone https://github.com/StephaneSGL/excel-ai-vba-studio.git
+cd excel-ai-vba-studio
+npm ci
+npm run validate
+npm run package
+```
+
+Le Marketplace Visual Studio n’est pas encore publié. Le dépôt GitHub public reste pour l’instant la source officielle.
+
+## Démarrage en 60 secondes
+
+1. Ouvrez un fichier pris en charge dans VS Code.
+2. Utilisez la grille intégrée ou l’explorateur **Excel & VBA**.
+3. Exportez un contexte local si vous souhaitez l’inspecter.
+4. Dans un chat IA compatible avec les outils de modèle VS Code, référencez explicitement `#excelVbaWorkbook`.
+5. Basculez vers Microsoft Excel ou le VBE pour les fonctions natives avancées.
+
+### Commandes principales
+
+| Commande | Fonction |
 | --- | --- |
-| `Excel AI & VBA Studio : Ouvrir dans Microsoft Excel` | Open the active file in native Excel. |
-| `Excel AI & VBA Studio : Ouvrir Excel en mode Développeur / VBA` | Open Excel and display the Developer/VBE interface. |
-| `Excel AI & VBA Studio : Exporter le contexte du classeur` | Create local Markdown and JSON context files. |
-| `Excel AI & VBA Studio : Exporter et copier le contexte` | Export and copy a bounded context to the clipboard. |
-| `Excel AI & VBA Studio : Exporter et révéler les sources VBA` | Reveal exported VBA files when Excel grants access. |
-| `Excel AI & VBA Studio : Nettoyer les exports générés` | Remove extension-generated context exports. |
+| `Excel AI & VBA Studio : Ouvrir dans Microsoft Excel` | Ouvre le classeur actif dans Excel natif. |
+| `Excel AI & VBA Studio : Ouvrir Excel en mode Développeur / VBA` | Ouvre Excel et affiche l’environnement Développeur/VBE. |
+| `Excel AI & VBA Studio : Exporter le contexte du classeur` | Produit les exports Markdown et JSON locaux. |
+| `Excel AI & VBA Studio : Exporter et copier le contexte` | Exporte puis copie un contexte borné. |
+| `Excel AI & VBA Studio : Exporter et révéler les sources VBA` | Révèle les fichiers VBA quand la stratégie Excel l’autorise. |
+| `Excel AI & VBA Studio : Nettoyer les exports générés` | Supprime les exports contrôlés par l’extension. |
 
-Keyboard shortcuts:
+Raccourcis :
 
-- `Ctrl+Alt+E`: open in native Excel.
-- `Ctrl+Alt+F11`: open Excel in Developer/VBA mode.
+- `Ctrl+Alt+E` : ouvrir dans Microsoft Excel ;
+- `Ctrl+Alt+F11` : ouvrir le mode Développeur / VBA.
 
-In an AI chat that supports VS Code language-model tools, reference `#excelVbaWorkbook`. The workbook is read only when the tool is explicitly invoked or an export command is run.
+### Paramètres
 
-## VBA security
+| Paramètre | Défaut | Rôle |
+| --- | ---: | --- |
+| `excelAiVbaStudio.maxRows` | `200` | Nombre maximal de lignes exportées par feuille. |
+| `excelAiVbaStudio.maxColumns` | `50` | Nombre maximal de colonnes exportées par feuille. |
+| `excelAiVbaStudio.includeVba` | `false` | Inclut le code VBA uniquement si Excel l’autorise explicitement. |
 
-Displaying the VBE does not require the extension to enable unsafe settings. Reading VBA module source programmatically is different: Excel blocks it unless the user explicitly enables **Trust access to the VBA project object model** in Excel Trust Center.
+## Architecture
 
-The extension never changes that security setting. Macro execution is disabled during context export. Only enable VBA project access when you understand and accept the security implications.
+```mermaid
+flowchart LR
+  File["Classeur local"] --> Grid["Grille intégrée VS Code"]
+  File --> Host["Extension host"]
+  Explorer["Explorateur Excel & VBA"] --> Host
+  Tool["#excelVbaWorkbook"] --> Host
+  Host --> Bridge["Bridge PowerShell sécurisé"]
+  Bridge --> Excel["Instance Excel COM contrôlée"]
+  Excel --> Export["Exports locaux bornés"]
+  Export --> Tool
+  Host --> Native["Excel / VBE natif"]
+  Tool -. "partage explicite" .-> AI["Fournisseur IA choisi dans VS Code"]
+```
 
-The embedded grid deliberately blocks editing, direct save, and Save As for `.xlsm` and `.xls`. Use **Ouvrir dans Microsoft Excel** or **Ouvrir Excel en mode Développeur / VBA** to edit those formats without rebuilding the workbook.
+Le bundle publié démarre dans `src/extension.ts` et n’enregistre que les surfaces Excel/VBA/IA prévues. Le dépôt conserve des sources historiques du projet d’origine qui ne sont pas incluses dans le VSIX ciblé.
 
-## Data and privacy
+## Sécurité Excel, VBA et IA
 
-Workbook processing and generated exports are local. The extension contains no telemetry client and does not send workbooks to a service by itself. When you deliberately pass generated context to an AI feature, the selected VS Code AI/model provider processes that context under its own terms.
+- L’export utilise une instance Excel dédiée et refuse de poursuivre si l’exécution des macros ne peut pas être désactivée.
+- Les événements, la mise à jour des liens et le calcul automatique sont désactivés pendant l’analyse contrôlée.
+- L’extension ne modifie jamais le paramètre **Trust access to the VBA project object model** du Centre de gestion de la confidentialité Excel.
+- `.xlsm` et `.xls` ne sont jamais réécrits par la grille intégrée.
+- Les exports sont locaux, limités en taille et supprimables.
+- Le contenu du classeur est traité comme une donnée non fiable, pas comme une instruction pour l’IA.
+- Aucun classeur n’est transmis automatiquement à un fournisseur IA.
 
-See [PRIVACY.md](PRIVACY.md) for the complete data-handling statement and [SUPPORT.md](SUPPORT.md) before reporting an issue.
+Ce mécanisme ne constitue pas un bac à sable réseau : Microsoft Excel, Windows, des compléments installés ou des logiciels de sécurité peuvent avoir leurs propres comportements réseau.
 
-## Preview limitations
+Consultez [SECURITY.md](SECURITY.md) et [PRIVACY.md](PRIVACY.md) avant d’utiliser de vrais classeurs professionnels.
 
-- This first release targets Windows x64 only.
-- Microsoft Excel must be installed for native Excel/VBA integration.
-- `.xlsb` can be handled by native Excel/context commands but is not rendered by the embedded editor.
-- Password-protected, corrupted, or policy-restricted workbooks may expose only partial metadata.
-- VBA source export depends on Excel Trust Center policy; the VBE can still be opened visually when source export is blocked.
+## Limites de la Preview
 
-## Open-source notice
+- Windows x64 uniquement.
+- Microsoft Excel desktop est requis pour Excel natif, COM, VBA et les anciens formats.
+- Les classeurs protégés, corrompus ou restreints par une politique d’entreprise peuvent ne fournir qu’un contexte partiel.
+- L’accès au code source VBA dépend de la politique du Centre de gestion de la confidentialité Excel.
+- Le ruban Excel complet n’est pas reproduit dans VS Code ; il est ouvert dans Excel natif.
 
-This project is a focused fork derived from **Office Viewer** by Weijan Chen and remains available under the MIT License. See [NOTICE.md](NOTICE.md), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and [LICENSE](LICENSE).
+## Feuille de route
+
+- enrichir progressivement l’expérience de grille et son accessibilité ;
+- améliorer les surfaces Formules, Données et Développeur dans VS Code ;
+- étendre les classeurs synthétiques et les tests de non-régression ;
+- préserver le VBA avant toute future édition intégrée des formats macro ;
+- compléter la localisation française et anglaise ;
+- préparer les mises à jour Marketplace après configuration du Publisher.
+
+La feuille de route exprime une direction et ne constitue pas une promesse de date ou de fonctionnalité.
+
+## Développement et contribution
+
+```powershell
+npm ci
+npm run validate
+```
+
+Les classeurs de test doivent être entièrement synthétiques. N’envoyez jamais de données d’entreprise, d’identifiants, de secrets ou de code VBA propriétaire.
+
+- Bugs reproductibles : [GitHub Issues](https://github.com/StephaneSGL/excel-ai-vba-studio/issues)
+- Questions et idées : [GitHub Discussions](https://github.com/StephaneSGL/excel-ai-vba-studio/discussions)
+- Vulnérabilités : [signalement privé GitHub](https://github.com/StephaneSGL/excel-ai-vba-studio/security/advisories/new)
+- Règles de contribution : [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Licence et propriété
+
+Ce dépôt est **public et source-available**, mais il n’est pas « open source » au sens de l’Open Source Initiative.
+
+- Les contributions et modifications propres à **Excel AI & VBA Studio**, distribuées à partir de la version `0.1.1`, sont proposées sous la [PolyForm Noncommercial License 1.0.0](LICENSE). Leur exploitation commerciale nécessite une autorisation écrite séparée de StephaneSGL.
+- Les portions provenant d’**Office Viewer** par Weijan Chen restent disponibles sous leur licence MIT d’origine.
+- Chaque dépendance tierce conserve sa propre licence.
+- Les versions ou commits déjà distribués sous MIT conservent les droits qui avaient déjà été accordés ; un changement de licence ne peut pas révoquer ces droits antérieurs.
+
+La répartition complète est expliquée dans [LICENSING.md](LICENSING.md). Les mentions obligatoires sont conservées dans [NOTICE.md](NOTICE.md), [LICENSES/OFFICE-VIEWER-MIT.txt](LICENSES/OFFICE-VIEWER-MIT.txt) et [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Microsoft, Visual Studio, Visual Studio Code, Excel et VBA sont des marques de leurs propriétaires respectifs. Ce projet indépendant n’est ni publié ni approuvé par Microsoft.

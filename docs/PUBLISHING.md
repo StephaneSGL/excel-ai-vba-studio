@@ -20,16 +20,18 @@ The workflow uses GitHub Actions OIDC. Do not create a `VSCE_PAT` secret.
 2. Run `npm ci`.
 3. Run `npm run release:prepare -- 0.1.1` with the intended semantic version.
 4. Update `CHANGELOG.md` and review privacy/notices.
-5. Run `npm run validate`.
-6. Commit the version and lockfile.
-7. Create an annotated tag whose value exactly matches `v` plus `package.json` version:
+5. Confirm that `LICENSE`, `LICENSING.md`, the `LICENSES` directory, and all
+   third-party notices match the files included in the VSIX.
+6. Run `npm run validate`.
+7. Commit the version and lockfile.
+8. Create an annotated tag whose value exactly matches `v` plus `package.json` version:
 
    ```text
    git tag -a v0.1.1 -m "Excel AI & VBA Studio 0.1.1"
    git push origin main v0.1.1
    ```
 
-8. GitHub Actions validates, builds, packages for `win32-x64`, obtains a short-lived Marketplace credential through OIDC, and publishes.
+9. GitHub Actions validates, builds, packages for `win32-x64`, obtains a short-lived Marketplace credential through OIDC, and publishes.
 
 If the tag and manifest version differ, publication stops before `vsce publish`.
 
