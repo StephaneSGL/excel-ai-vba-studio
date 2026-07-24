@@ -269,17 +269,13 @@ export const processKeydown = (vditor: IVditor, event: KeyboardEvent) => {
         return true;
     }
 
-    // shift+enter：软换行，但 table/hr/heading 处理、cell 内换行、block render 换行处理单独写在上面，li & p 使用浏览器默认
-    if (!isCtrl(event) && event.shiftKey && !event.altKey && event.key === "Enter" &&
-        !headingElement &&
-        startContainer.parentElement.tagName !== "LI" && startContainer.parentElement.tagName !== "P") {
-        if (["STRONG", "STRIKE", "S", "I", "EM", "B"].includes(startContainer.parentElement.tagName)) {
-            // 行内元素软换行需继续 https://github.com/Vanessa219/vditor/issues/170
-            range.insertNode(document.createTextNode("\n" + Constants.ZWSP));
-        } else {
-            range.insertNode(document.createTextNode("\n"));
-        }
-        range.collapse(false);
+    // shift+enter：段落内硬换行（\n + ZWSP）；table/heading 等由上方 fixTable / fixHeadingEnter 处理
+    // 段末仅插 \n 时 pre-wrap 下光标不换行，需 ZWSP 占位；行内同理 https://github.com/Vanessa219/vditor/issues/170
+    if (!isCtrl(event) && event.shiftKey && !event.altKey && event.key === "Enter" && !headingElement) {
+        const textNode = document.createTextNode("\n" + Constants.ZWSP);
+        range.insertNode(textNode);
+        range.setStart(textNode, 1);
+        range.collapse(true);
         setSelectionFocus(range);
         afterRenderEvent(vditor);
         event.preventDefault();

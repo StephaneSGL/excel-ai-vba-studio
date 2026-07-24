@@ -47,6 +47,7 @@ Right-click in the editor to export Markdown to PDF, DOCX, or HTML. PDF export r
 Shortcuts: Based on [shortcut.md](shortcut.md), plus:
 
 - New line: `Ctrl+Enter` / `⌘ Enter`
+- Hard line break: `Shift+Enter` / `⇧ Enter`
 - Edit hyperlink: `Alt+Enter` / `^ Enter`
 - Set CodeMirror language: `Alt+Enter` / `^ Enter`
 - Edit in VS Code: `Ctrl Alt E` / `⌘ ^ E`
