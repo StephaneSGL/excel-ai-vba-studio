@@ -623,6 +623,7 @@ const resetPreviewRenderElement = (
         codeEl.removeAttribute("data-math");
         codeEl.classList.remove("vditor-reset--error");
     } else if (language === "plantuml") {
+        codeEl.removeAttribute("data-plantuml");
         codeEl.classList.remove("vditor-reset--error");
     }
     codeEl.textContent = source;
@@ -659,7 +660,7 @@ const rerenderSpecialPreview = (preview: HTMLElement, vditor: IVditor, source?: 
     if (language === "mermaid") {
         mermaidRender(preview, vditor.options.cdn, vditor);
     } else if (language === "plantuml") {
-        plantumlRender(preview, vditor.options.cdn);
+        plantumlRender(preview, vditor.options.cdn, vditor);
     } else if (language === "math") {
         mathRender(preview, { cdn: vditor.options.cdn, math: vditor.options.preview.math });
     }
@@ -1984,7 +1985,7 @@ const sanitizePreviewCodeBlockClone = (
     liveBlock: HTMLElement | undefined,
 ) => {
     removeBlockPreviews(cloneBlock);
-    cloneBlock.querySelectorAll(".vditor-cm-chrome, .cm-editor, .vditor-mermaid-chrome").forEach((el) => {
+    cloneBlock.querySelectorAll(".vditor-cm-chrome, .cm-editor, .vditor-mermaid-chrome, .vditor-plantuml-chrome").forEach((el) => {
         el.remove();
     });
     syncBlockSourceFromLive(cloneBlock, liveBlock);
@@ -2106,7 +2107,7 @@ const sanitizeCopyBlockClone = (
 
 const stripCopyFragmentChrome = (root: ParentNode) => {
     (root as HTMLElement).querySelectorAll(
-        ".vditor-cm-chrome, .vditor-mermaid-chrome, .cm-editor",
+        ".vditor-cm-chrome, .vditor-mermaid-chrome, .vditor-plantuml-chrome, .cm-editor",
     ).forEach((el) => {
         el.remove();
     });

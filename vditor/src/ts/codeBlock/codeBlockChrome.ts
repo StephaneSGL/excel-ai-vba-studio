@@ -61,7 +61,9 @@ export const isInsideCodeBlockChrome = (target: EventTarget | Node | null) => {
         return false;
     }
     const node = target instanceof Element ? target : (target as Node).parentElement;
-    return !!node?.closest(`.${CHROME_CLASS}`) || !!node?.closest(".vditor-mermaid-chrome");
+    return !!node?.closest(`.${CHROME_CLASS}`)
+        || !!node?.closest(".vditor-mermaid-chrome")
+        || !!node?.closest(".vditor-plantuml-chrome");
 };
 
 const codicon = (name: string, className = "") =>

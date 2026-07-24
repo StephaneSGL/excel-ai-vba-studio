@@ -268,6 +268,7 @@ class Undo {
                 }
                 if (item.firstElementChild.classList.contains("language-plantuml")) {
                     item.firstElementChild.removeAttribute("data-processed");
+                    item.firstElementChild.removeAttribute("data-plantuml");
                     const sourceElement = item.previousElementSibling?.firstElementChild;
                     item.firstElementChild.innerHTML = sourceElement?.innerHTML || "";
                     item.setAttribute("data-render", "2");
