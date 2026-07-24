@@ -4,6 +4,7 @@ import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputPath = path.join(root, "THIRD_PARTY_LICENSES.txt");
+const normalizeLineEndings = (text) => text.replace(/\r\n?/g, "\n");
 
 const components = [
   ["SheetJS Community Edition (xlsx 0.20.3)", "node_modules/xlsx/LICENSE"],
@@ -29,7 +30,9 @@ const sections = [
 ];
 
 for (const [name, relativePath] of components) {
-  const text = (await readFile(path.join(root, relativePath), "utf8"))
+  const text = normalizeLineEndings(
+    await readFile(path.join(root, relativePath), "utf8"),
+  )
     .replace(/[ \t]+$/gm, "");
   sections.push("", divider, name, divider, "", text.trimEnd());
 }
@@ -44,7 +47,7 @@ if (process.argv.includes("--check")) {
     // A missing output is reported as stale below.
   }
 
-  if (existing !== generated) {
+  if (normalizeLineEndings(existing) !== generated) {
     console.error("THIRD_PARTY_LICENSES.txt is missing or out of date.");
     process.exitCode = 1;
   } else {

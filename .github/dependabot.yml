@@ -13,6 +13,11 @@ updates:
       - npm
     commit-message:
       prefix: "deps"
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
       development-dependencies:
         dependency-type: development
