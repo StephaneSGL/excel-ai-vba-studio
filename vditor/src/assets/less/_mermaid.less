@@ -31,8 +31,9 @@
   --mm-chrome-panel-bg: var(--panel-background-color, var(--second-bg-color, var(--bg-color, #fff)));
   --mm-chrome-fg: var(--front-color, #24292e);
   --mm-chrome-accent: var(--list-hover-color, var(--link-color, #0969da));
-  --mm-chrome-trigger-bg: var(--second-bg-color, color-mix(in srgb, var(--front-color, #24292e) 12%, var(--bg-color, #fff)));
-  --mm-chrome-hover-bg: color-mix(in srgb, var(--mm-chrome-accent) 12%, var(--mm-chrome-panel-bg));
+  // Auto: 跟随编辑器；命名主题由 host/panel 的 data-mermaid-theme 覆盖
+  --mm-chrome-trigger-bg: var(--cm-lang-trigger-bg, var(--second-bg-color, color-mix(in srgb, var(--front-color, #24292e) 12%, var(--bg-color, #fff))));
+  --mm-chrome-hover-bg: color-mix(in srgb, var(--mm-chrome-fg) 10%, var(--mm-chrome-trigger-bg));
   --mm-chrome-icon-color: var(--link-color, var(--mm-chrome-accent));
 }
 
@@ -192,7 +193,7 @@
   padding: 0 10px;
   border: none;
   border-radius: 8px;
-  background: var(--cm-lang-trigger-bg, var(--second-bg-color, color-mix(in srgb, var(--mm-chrome-fg) 18%, var(--bg-color, var(--mm-chrome-bg)))));
+  background: var(--mm-chrome-trigger-bg);
   color: var(--mm-chrome-fg);
   line-height: 1;
   cursor: pointer;
@@ -202,7 +203,7 @@
   transition: opacity 0.15s ease, visibility 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 
   &:hover {
-    background: color-mix(in srgb, var(--mm-chrome-fg) 10%, var(--cm-lang-trigger-bg, var(--second-bg-color, var(--mm-chrome-bg))));
+    background: var(--mm-chrome-hover-bg);
   }
 }
 
@@ -223,7 +224,7 @@
   padding: 0 10px;
   border: none;
   border-radius: 8px;
-  background: var(--cm-lang-trigger-bg, var(--second-bg-color, color-mix(in srgb, var(--mm-chrome-fg) 18%, var(--bg-color, var(--mm-chrome-bg)))));
+  background: var(--mm-chrome-trigger-bg);
   color: var(--mm-chrome-fg);
   line-height: 1;
   cursor: pointer;
@@ -233,7 +234,7 @@
   transition: opacity 0.15s ease, visibility 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 
   &:hover {
-    background: color-mix(in srgb, var(--mm-chrome-fg) 10%, var(--cm-lang-trigger-bg, var(--second-bg-color, var(--mm-chrome-bg))));
+    background: var(--mm-chrome-hover-bg);
   }
 }
 
