@@ -246,8 +246,18 @@ export default class Selector {
 
   resetData(data) {
     this.data = data;
+    const { ri, ci, range } = data.selector;
+    // Default / single-cell selection must expand to cover merges (e.g. A1 in a merge).
+    if (!range.multiple()) {
+      data.calSelectedRangeByStart(ri, ci);
+    } else {
+      data.selector.range = data.merges.union(range);
+    }
     this.range = data.selector.range;
+    this.indexes = [Math.max(ri, 0), Math.max(ci, 0)];
+    this.moveIndexes = [this.range.sri, this.range.sci];
     this.resetAreaOffset();
+    this.el.show();
     // Clipboard marching-ants border is per-sheet; sync visibility when switching sheets.
     if (data.clipboard.isClear()) {
       this.hideClipboard();

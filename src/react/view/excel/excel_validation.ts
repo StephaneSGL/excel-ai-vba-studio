@@ -1,4 +1,5 @@
 import type * as ExcelJS from '@cweijan/exceljs';
+import { expr2xy, xy2expr } from './x-spreadsheet/core/alphabet';
 
 export interface SpreadsheetValidationItem {
     refs: string[];
@@ -7,6 +8,61 @@ export interface SpreadsheetValidationItem {
     required?: boolean;
     operator?: string;
     value?: string | string[] | number;
+}
+
+type ValidationBounds = {
+    sri: number;
+    sci: number;
+    eri: number;
+    eci: number;
+    count: number;
+};
+
+/** ExcelJS expands range sqref (e.g. E2:E1048576) into per-cell model keys; collapse back to ranges. */
+function collapseExcelJsValidations(
+    model: Record<string, ExcelJS.DataValidation>,
+): SpreadsheetValidationItem[] {
+    const groups = new Map<ExcelJS.DataValidation, ValidationBounds>();
+    for (const ref in model) {
+        if (!Object.prototype.hasOwnProperty.call(model, ref)) continue;
+        const dv = model[ref];
+        if (!dv) continue;
+        const [ci, ri] = expr2xy(ref);
+        const bounds = groups.get(dv);
+        if (!bounds) {
+            groups.set(dv, {
+                sri: ri, sci: ci, eri: ri, eci: ci, count: 1,
+            });
+            continue;
+        }
+        if (ri < bounds.sri) bounds.sri = ri;
+        if (ci < bounds.sci) bounds.sci = ci;
+        if (ri > bounds.eri) bounds.eri = ri;
+        if (ci > bounds.eci) bounds.eci = ci;
+        bounds.count += 1;
+    }
+
+    const items: SpreadsheetValidationItem[] = [];
+    for (const [dv, bounds] of groups) {
+        const area = (bounds.eri - bounds.sri + 1) * (bounds.eci - bounds.sci + 1);
+        if (bounds.count === area) {
+            const start = xy2expr(bounds.sci, bounds.sri);
+            const ref = bounds.count === 1
+                ? start
+                : `${start}:${xy2expr(bounds.eci, bounds.eri)}`;
+            const converted = excelValidationToSpreadsheet(ref, dv);
+            if (converted) items.push(converted);
+            continue;
+        }
+        // Multi-area / sparse: keep per-cell (small in practice)
+        for (const ref in model) {
+            if (!Object.prototype.hasOwnProperty.call(model, ref)) continue;
+            if (model[ref] !== dv) continue;
+            const converted = excelValidationToSpreadsheet(ref, dv);
+            if (converted) items.push(converted);
+        }
+    }
+    return items;
 }
 
 type ExcelOperator = NonNullable<ExcelJS.DataValidation['operator']>;
@@ -148,14 +204,7 @@ export function excelValidationToSpreadsheet(
 export function readWorksheetValidations(worksheet: ExcelJS.Worksheet): SpreadsheetValidationItem[] {
     const model = (worksheet as { dataValidations?: { model?: Record<string, ExcelJS.DataValidation> } })
         .dataValidations?.model ?? {};
-    const items: SpreadsheetValidationItem[] = [];
-    for (const ref of Object.keys(model)) {
-        const dv = model[ref];
-        if (!dv) continue;
-        const converted = excelValidationToSpreadsheet(ref, dv);
-        if (converted) items.push(converted);
-    }
-    return items;
+    return collapseExcelJsValidations(model);
 }
 
 export function spreadsheetValidationToExcel(

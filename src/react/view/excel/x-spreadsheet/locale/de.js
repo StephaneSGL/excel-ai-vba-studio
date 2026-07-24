@@ -26,6 +26,14 @@ export default {
     formula: 'Funktionen',
     more: 'Mehr',
   },
+  bottombar: {
+    firstSheet: 'Zum ersten Blatt scrollen',
+    prevSheet: 'Nach links scrollen',
+    nextSheet: 'Nach rechts scrollen',
+    lastSheet: 'Zum letzten Blatt scrollen',
+    moreSheets: 'Alle Blätter',
+    addSheet: 'Blatt hinzufügen',
+  },
   align: {
     left: 'Links ausrichten',
     center: 'Zentrieren',

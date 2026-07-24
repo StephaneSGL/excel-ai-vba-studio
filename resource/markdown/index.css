@@ -128,6 +128,10 @@ body.is-web .vditor-context-menu__item--desktop-only:focus-visible {
     color: var(--ctx-icon-copy-html);
 }
 
+[data-type="edit-in-vscode"] .codicon-vscode {
+    color: #2489ca;
+}
+
 .vditor-context-menu__item[data-action="copyAsPlainText"] .codicon {
     color: var(--ctx-icon-copy-plain);
 }

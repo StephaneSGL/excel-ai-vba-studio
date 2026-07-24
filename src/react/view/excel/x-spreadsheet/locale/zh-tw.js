@@ -28,6 +28,14 @@ export default {
     saveAs: '另存新檔',
     more: '更多',
   },
+  bottombar: {
+    firstSheet: '捲動到第一個工作表',
+    prevSheet: '向左捲動',
+    nextSheet: '向右捲動',
+    lastSheet: '捲動到最後一個工作表',
+    moreSheets: '全部工作表',
+    addSheet: '新增工作表',
+  },
   align: {
     left: '靠左對齊',
     center: '水平置中',

@@ -28,6 +28,14 @@ export default {
     saveAs: '另存为',
     more: '更多',
   },
+  bottombar: {
+    firstSheet: '滚动到第一个工作表',
+    prevSheet: '向左滚动',
+    nextSheet: '向右滚动',
+    lastSheet: '滚动到最后一个工作表',
+    moreSheets: '全部工作表',
+    addSheet: '新建工作表',
+  },
   align: {
     left: '左对齐',
     center: '水平居中',

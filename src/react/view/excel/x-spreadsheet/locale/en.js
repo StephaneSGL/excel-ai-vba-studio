@@ -28,6 +28,14 @@ export default {
     saveAs: 'Save As',
     more: 'More',
   },
+  bottombar: {
+    firstSheet: 'Scroll to first sheet',
+    prevSheet: 'Scroll left',
+    nextSheet: 'Scroll right',
+    lastSheet: 'Scroll to last sheet',
+    moreSheets: 'All sheets',
+    addSheet: 'Add sheet',
+  },
   align: {
     left: 'Align left',
     center: 'Align center',

@@ -47,6 +47,7 @@ Office Viewer 內建完整的 Git 歷史工作區，讓你無需離開 VS Code �
 快捷鍵：基於 [shortcut.md](shortcut.md)，以及：
 
 - 新行: `Ctrl+Enter` / `⌘ Enter`
+- 硬換行: `Shift+Enter` / `⇧ Enter`
 - 編輯超連結: `Alt+Enter` / `^ Enter`
 - 設定 CodeMirror 語言: `Alt+Enter` / `^ Enter`
 - 在 VS Code 中編輯: `Ctrl Alt E` / `⌘ ^ E`

@@ -198,7 +198,7 @@ export const processCodeRender = (previewPanel: HTMLElement, vditor: IVditor) =>
     if (language === "mermaid") {
         mermaidRender(previewPanel, vditor.options.cdn, vditor);
     } else if (language === "plantuml") {
-        plantumlRender(previewPanel, vditor.options.cdn);
+        plantumlRender(previewPanel, vditor.options.cdn, vditor);
     } else if (language === "math") {
         mathRender(previewPanel, { cdn: vditor.options.cdn, math: vditor.options.preview.math });
         if (parentElement.getAttribute("data-type") === "math-block") {

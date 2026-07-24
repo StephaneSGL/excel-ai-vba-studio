@@ -1,5 +1,34 @@
 # Change log
 
+# 4.1.7 2026-7-24
+
+Markdown Editor:
+
+- Support hard line breaks (`Shift+Enter`).
+- Support opening PlantUML diagrams in the browser.
+- Update Mermaid toolbar color scheme.
+- Update Edit in VS Code icon color.
+
+Excel:
+
+- Add auto-fit columns action.
+- Update toolbar VS Code icons.
+- Polish sheet tab interaction area (WPS-style navigation, sheet list menu, and active tab scrolling).
+- Fix:
+  - Tolerate unsupported formats and formulas.
+  - Fix inaccurate cell positioning after scrolling.
+  - Fix workbook loading failure caused by expanded data validation rules.
+  - Fix merged cell region recognition for the default selected cell.
+  - Fix CSV loading failure when the first row is empty.
+
+PDF:
+
+- Add PDF Pro tools and polish the tools dialog.
+
+Git History:
+
+- Improve details dialog positioning.
+
 # 4.1.6 2026-7-20
 
 Markdown Editor:
