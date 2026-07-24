@@ -309,7 +309,7 @@
     "release:prepare": "node tools/prepare-release.mjs"
   },
   "devDependencies": {
-    "@ant-design/icons": "^5.3.5",
+    "@ant-design/icons": "^6.3.2",
     "@cweijan/exceljs": "^5.0.0",
     "@types/node": "^26.1.0",
     "@types/react": "^19.2.17",
