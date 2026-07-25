@@ -84,6 +84,7 @@ const defaultSettings = {
     width: () => document.documentElement.clientWidth,
   },
   showGrid: true,
+  showHeaders: true,
   showToolbar: true,
   showContextmenu: true,
   showBottomBar: true,

@@ -46,6 +46,53 @@
     user-select: none;
 }
 
+.excel-conditional-dialog {
+    display: grid;
+    gap: 16px;
+    padding: 8px 0;
+
+    label {
+        display: grid;
+        grid-template-columns: 145px minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+    }
+
+    p {
+        color: var(--vscode-descriptionForeground, #6b7280);
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 0;
+    }
+}
+
+.excel-integrated-feature-dialog {
+    display: grid;
+    gap: 14px;
+    padding: 8px 0;
+
+    p {
+        color: var(--vscode-descriptionForeground, #6b7280);
+        line-height: 1.5;
+        margin: 0;
+    }
+
+    .is-success,
+    .is-error {
+        border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #0078d4) 35%, transparent);
+        border-radius: 4px;
+        background: color-mix(in srgb, var(--vscode-focusBorder, #0078d4) 10%, transparent);
+        color: var(--vscode-foreground, #1f2937);
+        padding: 10px 12px;
+    }
+
+    .is-error {
+        border-color: color-mix(in srgb, var(--vscode-errorForeground, #be1100) 42%, transparent);
+        background: color-mix(in srgb, var(--vscode-errorForeground, #be1100) 10%, transparent);
+        color: var(--vscode-errorForeground, #be1100);
+    }
+}
+
 .excel-ribbon-tabs-row {
     height: 34px;
     display: flex;
@@ -312,25 +359,6 @@
             white-space: nowrap;
         }
     }
-}
-
-.excel-ribbon-native-badge {
-    position: absolute;
-    top: 1px;
-    right: 2px;
-    padding: 1px 3px;
-    border-radius: 6px;
-    color: #fff;
-    background: #107c41;
-    font-size: 7px;
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: 0.02em;
-    pointer-events: none;
-}
-
-.excel-ribbon-button.is-compact .excel-ribbon-native-badge {
-    display: none;
 }
 
 .excel-ribbon-button-icon {

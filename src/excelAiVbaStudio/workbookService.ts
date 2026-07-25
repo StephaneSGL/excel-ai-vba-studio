@@ -1183,6 +1183,12 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		await this.vbaStudioPanel.prepare(result);
 		await this.writeCopilotWorkspaceFiles(result);
 		await this.exposeVbaFolderToWorkspace(result);
+		const requestedTask =
+			candidate &&
+			typeof candidate === 'object' &&
+			typeof (candidate as { request?: unknown }).request === 'string'
+				? (candidate as { request: string }).request.trim().slice(0, 4000)
+				: '';
 		const prompt = [
 			'Utilise #excelVbaWorkbook pour analyser ce classeur local.',
 			`workbookPath: ${workbookUri.fsPath}`,
@@ -1190,6 +1196,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			`Le projet VBA est aussi disponible comme dossier VS Code : ${result.paths.vbaDirectory}`,
 			'Lis les fichiers .bas, .cls et .frm du dossier VBA avant de proposer des modifications.',
 			'Commence par résumer les objets Excel, les modules, les classes et les UserForms.',
+			...(requestedTask ? [`Tâche demandée depuis le ruban : ${requestedTask}`] : []),
 			'N’exécute aucune macro : analyse uniquement le code et les données.'
 		].join('\n');
 		try {

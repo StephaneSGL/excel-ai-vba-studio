@@ -498,7 +498,7 @@ function ExcelViewer() {
                 onOpenVbaDeveloper={() => handler.emit('openVbaDeveloper')}
                 onExportWorkbookContext={() => handler.emit('exportWorkbookContext')}
                 onOpenVbaExplorer={() => handler.emit('openVbaExplorer')}
-                onAskCopilotAboutWorkbook={() => handler.emit('askCopilotAboutWorkbook')}
+                onAskCopilotAboutWorkbook={(request) => handler.emit('askCopilotAboutWorkbook', request)}
             />
             {loadError && !loading && (
                 <div className="excel-load-error">

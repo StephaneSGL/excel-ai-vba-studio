@@ -167,10 +167,13 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
                 uri
             )
         )
-        .on('askCopilotAboutWorkbook', () =>
+        .on('askCopilotAboutWorkbook', (request?: string) =>
             vscode.commands.executeCommand(
                 'excelAiVbaStudio.askCopilotAboutWorkbook',
-                uri
+                {
+                    resourceUri: uri,
+                    request: typeof request === 'string' ? request.slice(0, 4000) : undefined,
+                }
             )
         )
         .on('openExternal', (url: string) => {

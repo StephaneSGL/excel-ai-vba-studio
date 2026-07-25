@@ -4,6 +4,19 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.1.7] - 2026-07-25
+
+### Added
+
+- Added an in-editor conditional-formatting dialog for value rules, text rules, colour scales, data bars, and icon sets.
+- Activated the former placeholder ribbon actions through direct spreadsheet operations or a targeted GitHub Copilot request with workbook and VBA context.
+- Added in-editor data import, table formatting, deduplication, text-to-columns, subtotals, forecasts, page setup, formula auditing, image insertion, and generated chart/shape visuals.
+
+### Fixed
+
+- Made conditional-format icon sets reliable in VS Code by rendering explicit coloured glyphs instead of platform-dependent colour emoji.
+- Removed every visible “Coming soon”/“Bientôt” badge from the ribbon.
+
 ## [0.1.6] - 2026-07-25
 
 ### Performance

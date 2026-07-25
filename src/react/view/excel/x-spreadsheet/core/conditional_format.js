@@ -158,24 +158,34 @@ function colorScaleStyle(rule, value, values) {
   return { bgcolor: colors[colors.length - 1] };
 }
 
+const icon = (glyph, color) => ({ glyph, color });
+const RED = '#c62828';
+const ORANGE = '#ef6c00';
+const YELLOW = '#f9a825';
+const GREEN = '#2e7d32';
+const GRAY = '#667085';
+const BLACK = '#202124';
+
+// Canvas text cannot reliably render colour emoji in every VS Code font stack.
+// Use plain glyphs with an explicit colour so workbook icon sets are always visible.
 const ICON_SETS = {
-  '3Arrows': ['🔻', '➡️', '🔺'],
-  '3ArrowsGray': ['▼', '→', '▲'],
-  '3Flags': ['🔻', '🚩', '🟢'],
-  '3Signs': ['🔴', '🟡', '🟢'],
-  '3Symbols': ['❌', '⚠️', '✅'],
-  '3Symbols2': ['❌', '❕', '✅'],
-  '3TrafficLights1': ['🔴', '🟡', '🟢'],
-  '3TrafficLights2': ['🔴', '🟡', '🟢'],
-  '4Arrows': ['⬇️', '↘️', '↗️', '⬆️'],
-  '4ArrowsGray': ['↓', '↘', '↗', '↑'],
-  '4Rating': ['●', '●●', '●●●', '●●●●'],
-  '4RedToBlack': ['🔴', '🟠', '⚫', '⚫'],
-  '4TrafficLights': ['🔴', '🟠', '🟡', '🟢'],
-  '5Arrows': ['⬇️', '↘️', '➡️', '↗️', '⬆️'],
-  '5ArrowsGray': ['↓', '↘', '→', '↗', '↑'],
-  '5Quarters': ['◔', '◑', '◕', '●', '●'],
-  '5Rating': ['●', '●●', '●●●', '●●●●', '●●●●●'],
+  '3Arrows': [icon('▼', RED), icon('→', YELLOW), icon('▲', GREEN)],
+  '3ArrowsGray': [icon('▼', GRAY), icon('→', GRAY), icon('▲', GRAY)],
+  '3Flags': [icon('▼', RED), icon('◆', YELLOW), icon('▲', GREEN)],
+  '3Signs': [icon('●', RED), icon('●', YELLOW), icon('●', GREEN)],
+  '3Symbols': [icon('×', RED), icon('!', YELLOW), icon('✓', GREEN)],
+  '3Symbols2': [icon('×', RED), icon('!', YELLOW), icon('✓', GREEN)],
+  '3TrafficLights1': [icon('●', RED), icon('●', YELLOW), icon('●', GREEN)],
+  '3TrafficLights2': [icon('●', RED), icon('●', YELLOW), icon('●', GREEN)],
+  '4Arrows': [icon('↓', RED), icon('↘', ORANGE), icon('↗', YELLOW), icon('↑', GREEN)],
+  '4ArrowsGray': [icon('↓', GRAY), icon('↘', GRAY), icon('↗', GRAY), icon('↑', GRAY)],
+  '4Rating': [icon('●', RED), icon('●●', ORANGE), icon('●●●', YELLOW), icon('●●●●', GREEN)],
+  '4RedToBlack': [icon('●', RED), icon('●', ORANGE), icon('●', BLACK), icon('●', BLACK)],
+  '4TrafficLights': [icon('●', RED), icon('●', ORANGE), icon('●', YELLOW), icon('●', GREEN)],
+  '5Arrows': [icon('↓', RED), icon('↘', ORANGE), icon('→', YELLOW), icon('↗', '#7cb342'), icon('↑', GREEN)],
+  '5ArrowsGray': [icon('↓', GRAY), icon('↘', GRAY), icon('→', GRAY), icon('↗', GRAY), icon('↑', GRAY)],
+  '5Quarters': [icon('○', RED), icon('◔', ORANGE), icon('◑', YELLOW), icon('◕', '#7cb342'), icon('●', GREEN)],
+  '5Rating': [icon('●', RED), icon('●●', ORANGE), icon('●●●', YELLOW), icon('●●●●', '#7cb342'), icon('●●●●●', GREEN)],
 };
 
 function iconForRule(rule, value, values) {
@@ -192,7 +202,10 @@ function iconForRule(rule, value, values) {
   const icons = ICON_SETS[rule.iconSet] || ICON_SETS['3TrafficLights1'];
   index = Math.max(0, Math.min(icons.length - 1, index));
   if (rule.reverse) index = icons.length - 1 - index;
-  return icons[index];
+  return {
+    ...icons[index],
+    showValue: rule.showValue !== false,
+  };
 }
 
 function dataBarForRule(rule, value, values) {

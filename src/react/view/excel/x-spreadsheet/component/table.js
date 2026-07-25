@@ -148,9 +148,6 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     if (formatter) {
       cellText = formatter.render(cellText);
     }
-    if (conditional?.icon) {
-      cellText = `${conditional.icon} ${cellText}`;
-    }
     const font = Object.assign({}, style.font);
     if (!font.name) {
       font.name = (defaultStyle.font && defaultStyle.font.name) || 'Arial';
@@ -165,6 +162,21 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
       strike: style.strike,
       underline: style.underline || !!hyperlink,
     };
+    if (conditional?.icon) {
+      const icon = typeof conditional.icon === 'string'
+        ? { glyph: conditional.icon, color: drawStyle.color, showValue: true }
+        : conditional.icon;
+      draw.save();
+      draw.attr({
+        fillStyle: icon.color || drawStyle.color,
+        textAlign: 'left',
+        textBaseline: 'middle',
+        font: `700 ${npx(12 * data.getZoomScale())}px Arial`,
+      });
+      draw.fillText(icon.glyph || '●', dbox.x + 5, dbox.y + (dbox.height / 2));
+      draw.restore();
+      cellText = icon.showValue === false ? '' : `   ${cellText}`;
+    }
     draw.text(cellText, dbox, drawStyle, style.textwrap);
     // error
     const error = data.getValidationError(rindex, cindex);
@@ -249,6 +261,7 @@ function renderSelectedHeaderCell(x, y, w, h) {
 // ty: moving distance on y-axis
 function renderFixedHeaders(type, viewRange, w, h, tx, ty) {
   const { draw, data } = this;
+  if (data.settings.showHeaders === false) return;
   const { rows, cols, exceptRowSet } = data;
   const {
     sri: viewSri, sci: viewSci, eri: viewEri, eci: viewEci,
@@ -319,7 +332,8 @@ function renderFixedHeaders(type, viewRange, w, h, tx, ty) {
 }
 
 function renderFixedLeftTopCell(fw, fh) {
-  const { draw } = this;
+  const { draw, data } = this;
+  if (data.settings.showHeaders === false) return;
   draw.save();
   // left-top-cell
   draw.attr({ fillStyle: getExcelThemeColor('--excel-header-bg', '#f4f5f8') })
