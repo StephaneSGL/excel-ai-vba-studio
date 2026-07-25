@@ -4,6 +4,16 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.1.6] - 2026-07-25
+
+### Performance
+
+- Reduced the initial webview JavaScript from about 2.00 MB to 219 KB by loading the spreadsheet interface progressively.
+- Deferred Excel export, CSV parsing, and legacy XLS/ODS engines until those features are actually used.
+- Loaded the workbook parser and sort-state reader concurrently instead of opening the XLSX archive sequentially twice.
+- Removed a redundant full worksheet traversal and skipped unnecessary formatting snapshots for XLSX/XLSM files.
+- Added an automated bundle-size and lazy-loading regression check.
+
 ## [0.1.5] - 2026-07-25
 
 ### Changed

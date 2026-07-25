@@ -1,7 +1,5 @@
-import ExcelJS from '@cweijan/exceljs';
-import JSZip from 'jszip';
-import * as XLSX from 'xlsx';
-import { inferSchema, initParser } from 'udsv';
+import type ExcelJS from '@cweijan/exceljs';
+import type * as XLSX from 'xlsx';
 import { decodeCsvBuffer } from './csvEncoding';
 import { DEFAULT_ROW_HEIGHT_PX, excelFreezeToExpr, excelRowHeightToPx, readAutofilterRef } from './excel_meta';
 import { readWorksheetSortStateXml } from './excel_sort_state';
@@ -175,13 +173,22 @@ const readWorksheetMerges = (worksheet: ExcelJS.Worksheet): string[] => {
 };
 
 const expandSizeForMerge = (merge: string, size: { maxRow: number; maxCols: number }) => {
-    const range = XLSX.utils.decode_range(merge);
-    size.maxRow = Math.max(size.maxRow, range.e.r + 1);
-    size.maxCols = Math.max(size.maxCols, range.e.c + 1);
+    const endAddress = merge.split(':').at(-1)?.replace(/\$/g, '');
+    const match = /^([A-Z]+)(\d+)$/i.exec(endAddress ?? '');
+    if (!match) return;
+    let col = 0;
+    const letters = match[1].toUpperCase();
+    for (let i = 0; i < letters.length; i += 1) {
+        col = col * 26 + letters.charCodeAt(i) - 64;
+    }
+    size.maxRow = Math.max(size.maxRow, Number(match[2]));
+    size.maxCols = Math.max(size.maxCols, col);
 };
 
-const readSheetJsMerges = (worksheet: XLSX.WorkSheet) => (worksheet['!merges'] ?? [])
-    .map(merge => XLSX.utils.encode_range(merge));
+type SheetJsUtils = typeof import('xlsx')['utils'];
+
+const readSheetJsMerges = (worksheet: XLSX.WorkSheet, utils: SheetJsUtils) => (worksheet['!merges'] ?? [])
+    .map(merge => utils.encode_range(merge));
 
 const expandSizeForSheetJsMerge = (merge: XLSX.Range, size: { maxRow: number; maxCols: number }) => {
     size.maxRow = Math.max(size.maxRow, merge.e.r + 1);
@@ -263,6 +270,7 @@ const applyRowHeight = (rows: RowMap, ri: number, excelRow: ExcelJS.Row) => {
 };
 
 const readWorkbookSortStateXml = async (buffer: ArrayBuffer) => {
+    const { default: JSZip } = await import('jszip');
     const zip = await JSZip.loadAsync(buffer);
     const entries = new Map<number, ReturnType<typeof readWorksheetSortStateXml>>();
     const worksheetFiles = Object.keys(zip.files)
@@ -303,8 +311,11 @@ const convertExcelJsWorksheet = (
     let maxRow = 0;
 
     worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
-        if (!row || row.cellCount === 0) return;
+        if (!row) return;
         const ri = rowNumber - 1;
+        applyRowHeight(rows, ri, row);
+        if (row.height != null && ri + 1 > maxRow) maxRow = ri + 1;
+        if (row.cellCount === 0) return;
         const cells: Record<number, CellData> = {};
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
             if (cell.isMerged && cell.address !== cell.master.address) return;
@@ -315,8 +326,9 @@ const convertExcelJsWorksheet = (
             const editable = readCellEditableFromExcel(cell, sheetProtected);
             const hl = readCellHyperlink(cell, ri, ci);
             const comment = noteToComment(cell.note);
+            const hasHyperlink = Object.keys(hl).length > 0;
             if (comment) comments[cell.address] = comment;
-            if (!text && !cellStyle && editable === undefined && !Object.keys(hl).length && !comment) return;
+            if (!text && !cellStyle && editable === undefined && !hasHyperlink && !comment) return;
 
             const styleIndex = styleRegistry.add(cellStyle);
             const cellData: CellData = { text };
@@ -327,22 +339,15 @@ const convertExcelJsWorksheet = (
             cells[ci] = cellData;
             if (ci + 1 > maxCols) maxCols = ci + 1;
             if (ri + 1 > maxRow) maxRow = ri + 1;
-            if (Object.keys(hl).length) hyperlinkParts.push(hl);
+            if (hasHyperlink) hyperlinkParts.push(hl);
         });
         if (Object.keys(cells).length > 0) {
-            rows[ri] = { cells };
+            const existing = rows[ri];
+            rows[ri] = existing && typeof existing === 'object' && 'height' in existing
+                ? { cells, height: existing.height }
+                : { cells };
         }
-        applyRowHeight(rows, ri, row);
     });
-
-    const rowCount = Math.max(maxRow, worksheet.rowCount || 0);
-    for (let rowNumber = 1; rowNumber <= rowCount; rowNumber += 1) {
-        if (rows[rowNumber - 1]) continue;
-        const excelRow = worksheet.getRow(rowNumber);
-        if (excelRow.height == null) continue;
-        applyRowHeight(rows, rowNumber - 1, excelRow);
-        if (rowNumber > maxRow) maxRow = rowNumber;
-    }
 
     const merges = readWorksheetMerges(worksheet);
     const sheetSize = { maxRow, maxCols };
@@ -423,9 +428,11 @@ const convertExcelJsWorkbook = (
 };
 
 const loadWithExcelJs = async (buffer: ArrayBuffer): Promise<ExcelData> => {
-    const workbook = new ExcelJS.Workbook();
+    const sortStateXmlPromise = readWorkbookSortStateXml(buffer);
+    const { default: ExcelJSRuntime } = await import('@cweijan/exceljs');
+    const workbook = new ExcelJSRuntime.Workbook();
     await workbook.xlsx.load(buffer);
-    const sortStateXmlMap = await readWorkbookSortStateXml(buffer);
+    const sortStateXmlMap = await sortStateXmlPromise;
     return convertExcelJsWorkbook(workbook, sortStateXmlMap);
 };
 
@@ -454,7 +461,10 @@ const formatSheetJsCell = (cell: XLSX.CellObject) => {
     return String(cell.v);
 };
 
-const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'rows' | 'cols' | 'merges'> => {
+const convertSheetJsWorksheet = (
+    worksheet: XLSX.WorkSheet,
+    utils: SheetJsUtils,
+): Pick<SheetData, 'rows' | 'cols' | 'merges'> => {
     const rows: RowMap = {};
     let maxCols = 0;
     let maxRow = 0;
@@ -463,12 +473,12 @@ const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'ro
         return { rows: { len: 0 }, cols: { len: 0 } };
     }
 
-    const range = XLSX.utils.decode_range(ref);
+    const range = utils.decode_range(ref);
     for (let ri = range.s.r; ri <= range.e.r; ri += 1) {
         const cells: Record<number, CellData> = {};
         let hasContent = false;
         for (let ci = range.s.c; ci <= range.e.c; ci += 1) {
-            const addr = XLSX.utils.encode_cell({ r: ri, c: ci });
+            const addr = utils.encode_cell({ r: ri, c: ci });
             const cell = worksheet[addr];
             if (!cell) continue;
             const text = formatSheetJsCell(cell);
@@ -489,7 +499,7 @@ const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'ro
     maxCols = sheetSize.maxCols;
 
     const colCount = Math.max(maxCols, range.e.c - range.s.c + 1);
-    const merges = readSheetJsMerges(worksheet);
+    const merges = readSheetJsMerges(worksheet, utils);
     return {
         rows: { len: maxRow, ...rows },
         cols: { len: colCount, ...buildColsFromSheetJsWorksheet(worksheet, colCount) },
@@ -497,13 +507,13 @@ const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'ro
     };
 };
 
-const convertSheetJsWorkbook = (workbook: XLSX.WorkBook): ExcelData => {
+const convertSheetJsWorkbook = (workbook: XLSX.WorkBook, utils: SheetJsUtils): ExcelData => {
     const sheets: SheetData[] = [];
     let maxLength = 0;
     let maxCols = 26;
 
     for (const sheetName of workbook.SheetNames) {
-        const converted = convertSheetJsWorksheet(workbook.Sheets[sheetName]);
+        const converted = convertSheetJsWorksheet(workbook.Sheets[sheetName], utils);
         const rowCount = converted.rows?.len ?? 0;
         if (maxLength < rowCount) maxLength = rowCount;
 
@@ -521,12 +531,13 @@ const convertSheetJsWorkbook = (workbook: XLSX.WorkBook): ExcelData => {
     return { sheets, maxLength, maxCols };
 };
 
-const loadWithSheetJs = (buffer: ArrayBuffer): ExcelData => {
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    return convertSheetJsWorkbook(workbook);
+const loadWithSheetJs = async (buffer: ArrayBuffer): Promise<ExcelData> => {
+    const XLSXRuntime = await import('xlsx');
+    const workbook = XLSXRuntime.read(buffer, { type: 'array', cellDates: true });
+    return convertSheetJsWorkbook(workbook, XLSXRuntime.utils);
 };
 
-const loadCsv = (buffer: ArrayBuffer): ExcelData => {
+const loadCsv = async (buffer: ArrayBuffer): Promise<ExcelData> => {
     let maxCols = 26;
     const emptySheet = { maxCols, sheets: [{ name: 'Sheet1', rows: { len: 0 } }] };
     let csvStr = decodeCsvBuffer(buffer);
@@ -547,6 +558,7 @@ const loadCsv = (buffer: ArrayBuffer): ExcelData => {
         }
         let parseInput = csvToParse;
         if (!parseInput.includes('\n')) parseInput += '\n';
+        const { inferSchema, initParser } = await import('udsv');
         const schema = inferSchema(parseInput, { header: () => [] });
         const rows = initParser(schema).stringArrs(parseInput);
         const colCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
@@ -599,7 +611,7 @@ export async function loadSheets(buffer: ArrayBuffer, ext: string): Promise<Exce
     return loadWithExcelJs(buffer);
 }
 
-export function readCSV(buffer: ArrayBuffer): ExcelData {
+export async function readCSV(buffer: ArrayBuffer): Promise<ExcelData> {
     return loadCsv(buffer);
 }
 

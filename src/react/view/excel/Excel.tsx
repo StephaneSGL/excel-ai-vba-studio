@@ -1,13 +1,18 @@
-import { App, Button, Modal, Radio, Spin } from "antd";
+import { App, Button, ConfigProvider, Modal, Radio, Spin } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handler, vscodeApi } from "../../util/vscode.ts";
 import { isVscodeEditorDark, observeVscodeThemeChange } from "../../util/vscodeTheme.ts";
 import { loadOfficeBuffer } from "../../util/loadOfficeContent.ts";
+import { antThemeConfig } from '../../antThemeConfig.ts';
 import './Excel.less';
-import { MIN_VIEW_COLS, MIN_VIEW_ROWS } from "./excel_meta.ts";
+import {
+    buildFormattingSnapshot,
+    hasFormattingChanged,
+    MIN_VIEW_COLS,
+    MIN_VIEW_ROWS,
+} from "./excel_meta.ts";
 import { detectCsvEncoding } from "./csvEncoding.ts";
 import { loadSheets } from "./excel_reader.ts";
-import { export_xlsx, exportSaveAs, buildFormattingSnapshot, hasFormattingChanged } from "./excel_writer.ts";
 import Spreadsheet from './x-spreadsheet/index';
 import FindReplacePanel, { type FindReplacePanelHandle } from './FindReplacePanel';
 import { parseSpreadsheetLink } from './excel_hyperlink';
@@ -21,6 +26,13 @@ type EmbeddedReadOnlyReason = 'macro-preservation' | 'file-permissions';
 type ExcelViewState = { ri: number; ci: number; sheetIndex: number };
 
 const EXCEL_VIEW_STATE_SUFFIX = '-excel-view';
+
+let excelWriterPromise: Promise<typeof import('./excel_writer.ts')> | undefined;
+
+function loadExcelWriter() {
+    excelWriterPromise ??= import('./excel_writer.ts');
+    return excelWriterPromise;
+}
 
 function getViewStateKey(documentCacheId: string): string {
     return `${documentCacheId}${EXCEL_VIEW_STATE_SUFFIX}`;
@@ -163,6 +175,7 @@ function ExcelViewer() {
             return;
         }
 
+        const { export_xlsx } = await loadExcelWriter();
         const ext = extRef.current.replace(/^\./, '').toLowerCase();
         const sheets = spreadSheet.getData();
         const csvEncoding = csvEncodingRef.current;
@@ -251,6 +264,7 @@ function ExcelViewer() {
         }
         setSaveAsVisible(false);
         try {
+            const { exportSaveAs } = await loadExcelWriter();
             await exportSaveAs(spreadSheet, fmt, csvEncodingRef.current, csvDelimiterRef.current);
             if (!readOnlyRef.current) {
                 spreadSheet.setSaveEnabled(false);
@@ -415,7 +429,10 @@ function ExcelViewer() {
                     requestAnimationFrame(() => { restoreViewState(spreadSheet, savedView); });
                 });
             }
-            initialFormattingRef.current = buildFormattingSnapshot(spreadSheet.getData());
+            const normalizedExt = (payload.ext ?? '').replace(/^\./, '').toLowerCase();
+            initialFormattingRef.current = normalizedExt !== 'xlsx' && normalizedExt !== 'xlsm'
+                ? buildFormattingSnapshot(spreadSheet.getData())
+                : '';
         };
 
         handler.on("open", (payload) => {
@@ -579,8 +596,10 @@ function ExcelViewer() {
 
 export default function Excel() {
     return (
-        <App className="excel-app" message={{ top: 16 }}>
-            <ExcelViewer />
-        </App>
+        <ConfigProvider componentSize='small' theme={antThemeConfig}>
+            <App className="excel-app" message={{ top: 16 }}>
+                <ExcelViewer />
+            </App>
+        </ConfigProvider>
     );
 }
