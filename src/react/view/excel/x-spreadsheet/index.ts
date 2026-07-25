@@ -408,8 +408,54 @@ export class Spreadsheet {
         return this;
     }
 
+    resize(): this {
+        this.sheet.reload();
+        return this;
+    }
+
     setSaveEnabled(enabled: boolean): this {
         (this.sheet as any).toolbar.setSaveEnabled(enabled);
+        return this;
+    }
+
+    executeCommand(type: string, value?: unknown): this {
+        (this.sheet as any).toolbar.change(type, value);
+        return this;
+    }
+
+    toggleCommand(type: string): this {
+        const toolbar = (this.sheet as any).toolbar;
+        const style = this.data.getSelectedCellStyle();
+        if (type === 'font-bold') {
+            toolbar.change(type, !style.font.bold);
+        } else if (type === 'font-italic') {
+            toolbar.change(type, !style.font.italic);
+        } else if (type === 'underline' || type === 'strike' || type === 'textwrap') {
+            toolbar.change(type, !style[type]);
+        } else if (type === 'merge') {
+            toolbar.change(type, !this.data.canUnmerge());
+        } else if (type === 'freeze') {
+            toolbar.change(type, !this.data.freezeIsActive());
+        } else if (type === 'autofilter') {
+            toolbar.change(type);
+        } else if (type === 'paintformat') {
+            toolbar.trigger(type);
+        } else {
+            toolbar.change(type);
+        }
+        return this;
+    }
+
+    executeContextCommand(type: string): this {
+        (this.sheet as any).contextMenu.itemClick(type);
+        return this;
+    }
+
+    setGridVisible(visible: boolean): this {
+        for (const data of this.datas) {
+            data.settings.showGrid = visible;
+        }
+        this.sheet.table.render();
         return this;
     }
 

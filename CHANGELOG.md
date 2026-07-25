@@ -6,6 +6,12 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ## [0.1.1] - 2026-07-24
 
+### Added
+
+- Added a responsive Excel-style ribbon with File, Home, Insert, Page Layout, Formulas, Data, Review, View, and AI & VBA tabs.
+- Connected supported ribbon actions to the embedded spreadsheet engine, including formatting, formulas, filters, freeze panes, clipboard, row/column operations, validation, printing, and find/replace.
+- Added direct ribbon actions for native Excel, the VBA editor, workbook-context export, and VBA source export.
+
 ### Documentation
 
 - Rebuilt the public README with installation instructions, a format support matrix, architecture, security boundaries, settings, roadmap, and support links.

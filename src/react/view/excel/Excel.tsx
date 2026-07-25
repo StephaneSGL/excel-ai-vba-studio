@@ -13,6 +13,7 @@ import Spreadsheet from './x-spreadsheet/index';
 import FindReplacePanel, { type FindReplacePanelHandle } from './FindReplacePanel';
 import { parseSpreadsheetLink } from './excel_hyperlink';
 import { initExcelLocale, t } from './excel_i18n';
+import ExcelRibbon from './ExcelRibbon';
 
 initExcelLocale();
 
@@ -407,32 +408,17 @@ function ExcelViewer() {
             const spreadSheet = new Spreadsheet(container, {
                 mode: fileReadOnly ? 'read' : 'edit',
                 allowSaveAs: !preserveMacros,
-                showToolbar: true,
-                extendToolbar: {
-                    right: [
-                        {
-                            tip: `${t('viewer.autoFitColumns')} (${navigator.platform.includes('Mac') ? 'Cmd+Alt+0' : 'Ctrl+Alt+0'})`,
-                            el: (() => {
-                                const button = document.createElement('span');
-                                button.textContent = 'AF';
-                                button.className = 'excel-autofit-badge';
-                                return button;
-                            })(),
-                            onClick: () => {
-                                handleAutoFitColumns();
-                            },
-                        },
-                    ],
-                },
+                showToolbar: false,
                 showEditInVSCode: isCsvLikeExt(payload.ext ?? ''),
                 row: { len: viewRowLen, height: 30 },
                 col: { len: viewColLen },
-                view: { height: () => window.innerHeight - 2 },
+                view: { height: () => Math.max(180, container.clientHeight || window.innerHeight - 130) },
             });
             spreadSheetRef.current = spreadSheet;
             setActiveSpreadsheet(spreadSheet);
-            setLoading(false);
             spreadSheet.loadData(sheets);
+            setLoading(false);
+            requestAnimationFrame(() => spreadSheet.resize());
             if (!fileReadOnly) {
                 spreadSheet.on('save', () => void handleSave());
             }
@@ -536,6 +522,17 @@ function ExcelViewer() {
     return (
         <div className='excel-viewer'>
             <Spin spinning={loading} fullscreen={true} />
+            <ExcelRibbon
+                spreadsheet={activeSpreadsheet}
+                readOnly={readOnly}
+                allowSaveAs={readOnlyReason !== 'macro-preservation'}
+                showEditInVscode={isCsvLikeExt(extRef.current)}
+                onAutoFitColumns={handleAutoFitColumns}
+                onOpenNativeExcel={() => handler.emit('openNativeExcel')}
+                onOpenVbaDeveloper={() => handler.emit('openVbaDeveloper')}
+                onExportWorkbookContext={() => handler.emit('exportWorkbookContext')}
+                onOpenVbaExplorer={() => handler.emit('openVbaExplorer')}
+            />
             {loadError && !loading && (
                 <div className="excel-load-error">
                     <div className="excel-load-error-panel">
@@ -636,6 +633,7 @@ function ExcelViewer() {
                 type="button"
                 className="dark-mode-toggle"
                 title={adaptiveColorMode ? t('viewer.switchToLightMode') : t('viewer.switchToDarkMode')}
+                aria-label={adaptiveColorMode ? t('viewer.switchToLightMode') : t('viewer.switchToDarkMode')}
                 onClick={toggleColorMode}
             >
                 {adaptiveColorMode ? <SunOutlined /> : <MoonOutlined />}

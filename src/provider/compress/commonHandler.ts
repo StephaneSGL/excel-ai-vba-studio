@@ -161,6 +161,18 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
                 uri
             )
         )
+        .on('exportWorkbookContext', () =>
+            vscode.commands.executeCommand(
+                'excelAiVbaStudio.exportWorkbook',
+                uri
+            )
+        )
+        .on('openVbaExplorer', () =>
+            vscode.commands.executeCommand(
+                'excelAiVbaStudio.openVbaExplorer',
+                uri
+            )
+        )
         .on('openExternal', (url: string) => {
             const externalUri = parseSafeExternalUri(url);
             if (externalUri) {

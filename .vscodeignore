@@ -3,7 +3,10 @@
 .github/**
 .vscode/**
 .vscode-test/**
+.serena/**
+.playwright-cli/**
 .idea/**
+output/**
 tools/**
 test/**
 docs/**
