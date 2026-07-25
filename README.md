@@ -37,6 +37,7 @@ Visualisez et modifiez les formats sûrs dans VS Code, inspectez les valeurs et 
 - Explorateur **Projet Excel & VBA** inspiré du VBE, avec **Microsoft Excel Objects**, **UserForms**, **Modules**, **Modules de classe** et **Références**.
 - Panneau **Propriétés VBA** synchronisé avec la sélection.
 - Onglet **VBA Studio** complet dans l’éditeur VS Code : explorateur de projet, propriétés, code, procédures et création de composants dans une seule interface.
+- Thèmes clair, sombre et contraste élevé synchronisés automatiquement avec le thème actif de VS Code.
 - Fichiers `.bas`, `.cls` et `.frm` ouverts dans l’éditeur VS Code, avec aperçu interne des UserForms exportés.
 - Dossier VBA ajouté comme racine de l’espace de travail et instructions `.github/copilot-instructions.md` générées pour que GitHub Copilot puisse indexer les sources.
 - Export local borné en Markdown et JSON : valeurs, formules, formats, tableaux, graphiques, noms, liens, validations, commentaires, connexions et métadonnées VBA autorisées.

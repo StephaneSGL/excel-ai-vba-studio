@@ -1,4 +1,3 @@
-import { MoonOutlined, SunOutlined } from "@ant-design/icons";
 import { App, Button, Modal, Radio, Spin } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handler, vscodeApi } from "../../util/vscode.ts";
@@ -17,42 +16,7 @@ import ExcelRibbon from './ExcelRibbon';
 
 initExcelLocale();
 
-type ExcelColorMode = 'adaptive' | 'light';
 type EmbeddedReadOnlyReason = 'macro-preservation' | 'file-permissions';
-
-const EXCEL_COLOR_MODE_KEY = 'office-excel-color-mode';
-const LEGACY_DARK_MODE_KEY = 'office-dark-mode';
-
-function loadExcelColorMode(): ExcelColorMode {
-    const state = vscodeApi?.getState?.() as { excelColorMode?: ExcelColorMode } | undefined;
-    if (state?.excelColorMode === 'light' || state?.excelColorMode === 'adaptive') {
-        return state.excelColorMode;
-    }
-    try {
-        const saved = localStorage.getItem(EXCEL_COLOR_MODE_KEY);
-        if (saved === 'light' || saved === 'adaptive') {
-            return saved;
-        }
-        const legacy = localStorage.getItem(LEGACY_DARK_MODE_KEY);
-        if (legacy === '1') {
-            return 'adaptive';
-        }
-        if (legacy === '0') {
-            return 'light';
-        }
-    } catch { }
-    return 'light';
-}
-
-function saveExcelColorMode(mode: ExcelColorMode) {
-    try {
-        localStorage.setItem(EXCEL_COLOR_MODE_KEY, mode);
-    } catch { }
-    if (vscodeApi?.setState) {
-        const prev = (vscodeApi.getState?.() ?? {}) as Record<string, unknown>;
-        vscodeApi.setState({ ...prev, excelColorMode: mode });
-    }
-}
 
 type ExcelViewState = { ri: number; ci: number; sheetIndex: number };
 
@@ -107,7 +71,6 @@ function isFindPanelTarget(target: EventTarget | null): boolean {
 function ExcelViewer() {
     const { message, modal } = App.useApp();
     const [loading, setLoading] = useState(true)
-    const [colorMode, setColorMode] = useState(loadExcelColorMode)
     const [vscodeDark, setVscodeDark] = useState(isVscodeEditorDark)
     const [readOnly, setReadOnly] = useState(false)
     const [readOnlyReason, setReadOnlyReason] = useState<EmbeddedReadOnlyReason | null>(null)
@@ -145,42 +108,29 @@ function ExcelViewer() {
         findPanelRef.current = findPanel;
     }, [findPanel]);
 
-    const adaptiveColorMode = colorMode === 'adaptive';
-    const themedDark = adaptiveColorMode && vscodeDark;
+    const themedDark = vscodeDark;
 
     useEffect(() => {
-        if (!adaptiveColorMode) {
-            return;
-        }
         return observeVscodeThemeChange(() => {
             setVscodeDark(isVscodeEditorDark());
             requestAnimationFrame(() => spreadSheetRef.current?.reRender());
         });
-    }, [adaptiveColorMode]);
+    }, []);
 
     useEffect(() => {
-        document.body.classList.toggle('office-adaptive', adaptiveColorMode)
+        document.body.classList.add('office-adaptive')
         document.body.classList.toggle('office-dark', themedDark)
+        document.documentElement.style.colorScheme = themedDark ? 'dark' : 'light'
         return () => {
             document.body.classList.remove('office-adaptive')
             document.body.classList.remove('office-dark')
+            document.documentElement.style.removeProperty('color-scheme')
         }
-    }, [adaptiveColorMode, themedDark])
-
-    const toggleColorMode = () => {
-        setColorMode(prev => {
-            const next: ExcelColorMode = prev === 'adaptive' ? 'light' : 'adaptive';
-            saveExcelColorMode(next);
-            if (next === 'adaptive') {
-                setVscodeDark(isVscodeEditorDark());
-            }
-            return next;
-        })
-    }
+    }, [themedDark])
 
     useEffect(() => {
         spreadSheetRef.current?.reRender()
-    }, [adaptiveColorMode, themedDark])
+    }, [themedDark])
 
     const handleAutoFitColumns = useCallback(() => {
         const spreadSheet = spreadSheetRef.current;
@@ -623,15 +573,6 @@ function ExcelViewer() {
                 </div>
             </Modal>
             <div id='container'></div>
-            <button
-                type="button"
-                className="dark-mode-toggle"
-                title={adaptiveColorMode ? t('viewer.switchToLightMode') : t('viewer.switchToDarkMode')}
-                aria-label={adaptiveColorMode ? t('viewer.switchToLightMode') : t('viewer.switchToDarkMode')}
-                onClick={toggleColorMode}
-            >
-                {adaptiveColorMode ? <SunOutlined /> : <MoonOutlined />}
-            </button>
         </div>
     )
 }

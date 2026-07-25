@@ -727,54 +727,91 @@ export class VbaStudioPanel implements vscode.Disposable {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 <title>VBA Studio</title>
 <style nonce="${nonce}">
-:root{color-scheme:light dark}
+:root{color-scheme:light}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;overflow:hidden;font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-foreground);background:var(--vscode-editor-background)}
+body{
+  --studio-bg:var(--vscode-editor-background,#ffffff);
+  --studio-fg:var(--vscode-editor-foreground,var(--vscode-foreground,#1f2328));
+  --studio-muted:var(--vscode-descriptionForeground,#61666d);
+  --studio-surface:var(--vscode-sideBar-background,var(--vscode-editor-background,#ffffff));
+  --studio-toolbar:var(--vscode-editorGroupHeader-tabsBackground,var(--vscode-sideBar-background,#f3f3f3));
+  --studio-section:var(--vscode-sideBarSectionHeader-background,var(--studio-toolbar));
+  --studio-border:var(--vscode-panel-border,var(--vscode-editorWidget-border,#d0d7de));
+  --studio-hover:var(--vscode-list-hoverBackground,rgba(0,0,0,.06));
+  --studio-hover-fg:var(--vscode-list-hoverForeground,var(--studio-fg));
+  --studio-selected:var(--vscode-list-activeSelectionBackground,#0969da);
+  --studio-selected-fg:var(--vscode-list-activeSelectionForeground,#ffffff);
+  --studio-focus:var(--vscode-focusBorder,#0969da);
+  --studio-brand:#107c41;
+  --studio-brand-fg:#ffffff;
+}
+body.vscode-light,body.vscode-high-contrast-light{color-scheme:light}
+body.vscode-dark,body.vscode-high-contrast{
+  color-scheme:dark;
+  --studio-bg:var(--vscode-editor-background,#1e1e1e);
+  --studio-fg:var(--vscode-editor-foreground,var(--vscode-foreground,#cccccc));
+  --studio-muted:var(--vscode-descriptionForeground,#9b9b9b);
+  --studio-surface:var(--vscode-sideBar-background,var(--vscode-editor-background,#1e1e1e));
+  --studio-toolbar:var(--vscode-editorGroupHeader-tabsBackground,var(--vscode-sideBar-background,#252526));
+  --studio-border:var(--vscode-panel-border,var(--vscode-editorWidget-border,#454545));
+  --studio-hover:var(--vscode-list-hoverBackground,rgba(255,255,255,.08));
+  --studio-selected:var(--vscode-list-activeSelectionBackground,#094771);
+  --studio-selected-fg:var(--vscode-list-activeSelectionForeground,#ffffff);
+  --studio-focus:var(--vscode-focusBorder,#007fd4);
+  --studio-brand:var(--vscode-charts-green,#16825d);
+}
+body.vscode-high-contrast,body.vscode-high-contrast-light{
+  --studio-border:var(--vscode-contrastBorder,var(--vscode-panel-border,#6fc3df));
+  --studio-focus:var(--vscode-focusBorder,var(--vscode-contrastActiveBorder,#f38518));
+}
+html,body{height:100%;margin:0;overflow:hidden;font-family:var(--vscode-font-family);font-size:13px;color:var(--studio-fg);background:var(--studio-bg)}
 button,select,textarea{font:inherit}
+button,select,textarea{color:inherit}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px solid var(--studio-focus);outline-offset:-1px}
 .app{height:100%;display:grid;grid-template-rows:38px 1fr 24px}
-.toolbar{display:flex;align-items:center;gap:4px;padding:4px 7px;border-bottom:1px solid var(--vscode-panel-border);background:var(--vscode-editorGroupHeader-tabsBackground)}
+.toolbar{display:flex;align-items:center;gap:4px;padding:4px 7px;border-bottom:1px solid var(--studio-border);background:var(--studio-toolbar)}
 .brand{display:flex;align-items:center;gap:7px;font-weight:650;margin-right:8px;white-space:nowrap}
-.brand-icon{width:22px;height:22px;display:grid;place-items:center;color:white;background:#107c41;border-radius:3px}
-.tool{height:27px;padding:0 9px;border:1px solid transparent;color:var(--vscode-foreground);background:transparent;border-radius:3px;cursor:pointer}
-.tool:hover{background:var(--vscode-toolbar-hoverBackground);border-color:var(--vscode-panel-border)}
+.brand-icon{width:22px;height:22px;display:grid;place-items:center;color:var(--studio-brand-fg);background:var(--studio-brand);border-radius:3px}
+.tool{height:27px;padding:0 9px;border:1px solid transparent;color:var(--studio-fg);background:transparent;border-radius:3px;cursor:pointer}
+.tool:hover{color:var(--studio-hover-fg);background:var(--vscode-toolbar-hoverBackground,var(--studio-hover));border-color:var(--studio-border)}
 .tool:disabled{opacity:.45;cursor:default}
-.separator{height:20px;border-left:1px solid var(--vscode-panel-border);margin:0 3px}
+.separator{height:20px;border-left:1px solid var(--studio-border);margin:0 3px}
 .spacer{flex:1}
-.ai{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border-color:var(--vscode-button-border,transparent)}
-.ai:hover{background:var(--vscode-button-hoverBackground)}
+.ai{color:var(--vscode-button-foreground,#ffffff);background:var(--vscode-button-background,#0e639c);border-color:var(--vscode-button-border,transparent)}
+.ai:hover{color:var(--vscode-button-foreground,#ffffff);background:var(--vscode-button-hoverBackground,#1177bb)}
 .workspace{min-height:0;display:grid;grid-template-columns:minmax(260px,32%) 1fr}
-.left{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(180px,58%) minmax(130px,42%);border-right:1px solid var(--vscode-panel-border)}
+.left{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(180px,58%) minmax(130px,42%);border-right:1px solid var(--studio-border);background:var(--studio-surface)}
 .pane{min-height:0;display:flex;flex-direction:column}
-.pane+.pane{border-top:1px solid var(--vscode-panel-border)}
-.pane-title{height:27px;display:flex;align-items:center;padding:0 8px;font-weight:650;background:var(--vscode-sideBarSectionHeader-background);border-bottom:1px solid var(--vscode-panel-border)}
+.pane+.pane{border-top:1px solid var(--studio-border)}
+.pane-title{height:27px;display:flex;align-items:center;padding:0 8px;font-weight:650;background:var(--studio-section);border-bottom:1px solid var(--studio-border)}
 .pane-body{min-height:0;overflow:auto;padding:4px 0}
 .project-root,.category,.component{display:flex;align-items:center;height:23px;gap:5px;white-space:nowrap;cursor:default}
 .project-root{padding-left:7px;font-weight:600}
 .category{padding-left:20px}
 .component{padding-left:42px}
-.component:hover,.component.selected{background:var(--vscode-list-hoverBackground);color:var(--vscode-list-activeSelectionForeground)}
-.component.selected{background:var(--vscode-list-activeSelectionBackground)}
+.component:hover{color:var(--studio-hover-fg);background:var(--studio-hover)}
+.component.selected{color:var(--studio-selected-fg);background:var(--studio-selected)}
 .twisty{width:12px;text-align:center;opacity:.8}
 .node-icon{width:17px;text-align:center;color:var(--vscode-symbolIcon-methodForeground,#b180d7)}
 .node-name{overflow:hidden;text-overflow:ellipsis}
 .count{margin-left:auto;padding-right:8px;opacity:.55}
 .props{width:100%;border-collapse:collapse;font-size:12px}
-.props td{padding:4px 6px;border-bottom:1px solid var(--vscode-panel-border);vertical-align:top}
-.props td:first-child{width:38%;font-weight:600;background:var(--vscode-editorWidget-background)}
+.props td{padding:4px 6px;border-bottom:1px solid var(--studio-border);vertical-align:top}
+.props td:first-child{width:38%;font-weight:600;background:var(--vscode-editorWidget-background,var(--studio-toolbar))}
 .props td:last-child{word-break:break-word}
 .editor-area{min-width:0;min-height:0;display:grid;grid-template-rows:30px auto 1fr}
-.editor-head{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--vscode-panel-border);background:var(--vscode-editorGroupHeader-tabsBackground)}
-.editor-head select{min-width:0;border:0;border-right:1px solid var(--vscode-panel-border);padding:0 8px;color:var(--vscode-dropdown-foreground);background:var(--vscode-dropdown-background)}
-.notice{display:none;padding:6px 10px;border-bottom:1px solid var(--vscode-panel-border);background:var(--vscode-inputValidation-warningBackground);color:var(--vscode-inputValidation-warningForeground)}
+.editor-head{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--studio-border);background:var(--studio-toolbar)}
+.editor-head select{min-width:0;border:0;border-right:1px solid var(--studio-border);padding:0 8px;color:var(--vscode-dropdown-foreground,var(--studio-fg));background:var(--vscode-dropdown-background,var(--studio-toolbar))}
+.notice{display:none;padding:6px 10px;border-bottom:1px solid var(--vscode-inputValidation-warningBorder,var(--studio-border));background:var(--vscode-inputValidation-warningBackground,#fff4ce);color:var(--vscode-inputValidation-warningForeground,#5f4500)}
 .notice.visible{display:block}
-.code-wrap{min-height:0;position:relative;display:grid;grid-template-columns:48px 1fr;background:var(--vscode-editor-background)}
-.lines{margin:0;padding:10px 8px 10px 0;overflow:hidden;text-align:right;white-space:pre;color:var(--vscode-editorLineNumber-foreground);background:var(--vscode-editorGutter-background);border-right:1px solid var(--vscode-panel-border);font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size);line-height:var(--vscode-editor-line-height)}
-.code{width:100%;height:100%;resize:none;border:0;outline:0;padding:10px 12px;tab-size:4;white-space:pre;overflow:auto;color:var(--vscode-editor-foreground);background:var(--vscode-editor-background);font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size);line-height:var(--vscode-editor-line-height)}
+.code-wrap{min-height:0;position:relative;display:grid;grid-template-columns:48px 1fr;background:var(--studio-bg)}
+.lines{margin:0;padding:10px 8px 10px 0;overflow:hidden;text-align:right;white-space:pre;color:var(--vscode-editorLineNumber-foreground,var(--studio-muted));background:var(--vscode-editorGutter-background,var(--studio-bg));border-right:1px solid var(--studio-border);font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size);line-height:var(--vscode-editor-line-height)}
+.code{width:100%;height:100%;resize:none;border:0;outline:0;padding:10px 12px;tab-size:4;white-space:pre;overflow:auto;color:var(--studio-fg);background:var(--studio-bg);caret-color:var(--studio-fg);font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size);line-height:var(--vscode-editor-line-height)}
 .code:disabled{opacity:.72}
-.statusbar{display:flex;align-items:center;gap:16px;padding:0 8px;color:var(--vscode-statusBar-foreground);background:var(--vscode-statusBar-background)}
+.statusbar{display:flex;align-items:center;gap:16px;padding:0 8px;color:var(--vscode-statusBar-foreground,#ffffff);background:var(--vscode-statusBar-background,#007acc);border-top:1px solid var(--vscode-statusBar-border,transparent)}
 .statusbar .right{margin-left:auto}
-.status-ok{color:var(--vscode-testing-iconPassed)}
-.status-error{color:var(--vscode-errorForeground)}
+.status-ok{color:var(--vscode-testing-iconPassed,#73c991)}
+.status-error{color:var(--vscode-errorForeground,#f14c4c)}
 @media(max-width:760px){.workspace{grid-template-columns:230px 1fr}.tool .label{display:none}}
 </style>
 </head>

@@ -4,6 +4,14 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.1.5] - 2026-07-25
+
+### Changed
+
+- The spreadsheet and VBA Studio now follow the active VS Code light, dark, or high-contrast color theme automatically.
+- Removed the saved light-mode override that could conflict with the theme selected by the user in VS Code.
+- Improved VBA Studio surfaces, selections, controls, focus rings, warnings, and status colors in light and dark themes.
+
 ## [0.1.4] - 2026-07-25
 
 ### Added
