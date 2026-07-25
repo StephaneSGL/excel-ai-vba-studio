@@ -31,6 +31,10 @@ assert.match(
   /createWebviewPanel\(\s*'excelAiVbaStudio\.vbaStudio'/,
   'the integrated VBA Studio webview is missing',
 );
+assert.ok(
+  panel.indexOf('webview.onDidReceiveMessage') < panel.indexOf('webview.html ='),
+  'the webview message receiver must be registered before HTML can post ready',
+);
 assert.match(panel, /workspace\.applyEdit/, 'VBA Studio saves must update real VS Code documents');
 assert.match(panel, /workbench\.action\.chat\.open/, 'VBA Studio must expose a Copilot action');
 assert.match(panel, /copilot-instructions\.md|#excelVbaWorkbook/, 'Copilot context is missing');

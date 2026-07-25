@@ -232,7 +232,6 @@ export class VbaStudioPanel implements vscode.Disposable {
 					localResourceRoots: []
 				}
 			);
-			this.panel.webview.html = this.getHtml(this.panel.webview);
 			this.panel.onDidDispose(
 				() => {
 					this.panel = undefined;
@@ -242,11 +241,14 @@ export class VbaStudioPanel implements vscode.Disposable {
 				undefined,
 				this.disposables
 			);
+			// Register the receiver before loading HTML: the webview posts `ready`
+			// immediately and fast machines could otherwise lose that first message.
 			this.panel.webview.onDidReceiveMessage(
 				message => this.handleMessage(message as WebviewMessage),
 				undefined,
 				this.disposables
 			);
+			this.panel.webview.html = this.getHtml(this.panel.webview);
 		} else {
 			this.panel.title = `VBA Studio · ${path.basename(
 				context.workbookUri.fsPath
