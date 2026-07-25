@@ -58,7 +58,7 @@ const saveHandler = commonHandler.match(
   /\.on\('save',[\s\S]+?\.on\('saveAs'/
 )?.[0] ?? '';
 const saveAsHandler = commonHandler.match(
-  /\.on\('saveAs',[\s\S]+?\.on\('openNativeExcel'/
+  /\.on\('saveAs',[\s\S]+?\.on\('openVbaDeveloper'/
 )?.[0] ?? '';
 assert.match(
   saveHandler,
@@ -72,13 +72,13 @@ assert.match(
 );
 assert.match(
   commonHandler,
-  /excelAiVbaStudio\.openFullExcel/,
-  'native Excel action must remain available'
+  /excelAiVbaStudio\.openVbaDeveloper/,
+  'the internal VBA Studio action must remain available'
 );
 assert.match(
   commonHandler,
-  /excelAiVbaStudio\.openVbaDeveloper/,
-  'native VBA/VBE action must remain available'
+  /excelAiVbaStudio\.openVbaExplorer/,
+  'the VBA source explorer action must remain available'
 );
 
 assert.match(
@@ -98,13 +98,8 @@ assert.match(
 );
 assert.match(
   excelUi,
-  /openNativeExcel/,
-  'the protected-format banner must retain an Open in Excel action'
-);
-assert.match(
-  excelUi,
   /openVbaDeveloper/,
-  'the protected-format banner must retain an Open VBA/VBE action'
+  'the protected-format banner must retain an internal VBA Studio action'
 );
 
 assert.match(

@@ -15,26 +15,29 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-7a2f8f" alt="PolyForm Noncommercial"></a>
 </p>
 
-Visualisez et modifiez les formats sûrs dans VS Code, inspectez à la demande les valeurs, formules et métadonnées d’un classeur, puis ouvrez le véritable Microsoft Excel ou le VBE lorsque vous avez besoin du ruban complet, de Power Query, des compléments, des macros ou des outils Développeur.
+Visualisez et modifiez les formats sûrs dans VS Code, inspectez les valeurs et formules, puis ouvrez un projet VBA structuré — objets Excel, modules, classes et UserForms — sans quitter VS Code.
 
-*View and edit safe spreadsheet formats in VS Code, expose bounded workbook context to AI on demand, and hand advanced operations off to native Microsoft Excel or the Visual Basic Editor.*
+*View safe spreadsheet formats and work with Excel objects, VBA modules, classes, UserForms, and bounded AI context directly in VS Code.*
 
 > [!IMPORTANT]
-> La grille intégrée n’est pas une réimplémentation complète de Microsoft Excel. Le ruban Excel, Power Query, les compléments, les outils de données avancés, les macros et le VBE restent fournis par l’application Microsoft Excel installée.
+> La grille et le studio VBA sont intégrés à VS Code. Certaines fonctions avancées du ruban restent en cours d’implémentation et sont signalées comme telles ; elles n’ouvrent plus automatiquement une fenêtre Excel.
 
 ## Fonctionnalités actuelles
 
-| Format | Dans VS Code | Excel natif | Contexte IA |
+| Format | Grille VS Code | Projet VBA VS Code | Contexte IA |
 | --- | --- | --- | --- |
-| `.xlsx` | Lecture et édition | Oui | Oui |
-| `.csv`, `.tsv` | Lecture et édition | Oui | Oui |
-| `.xlsm`, `.xls` | Lecture seule protégée | Édition, ruban et VBA | Oui |
-| `.xlsb` | Pas de rendu intégré | Oui | Oui |
+| `.xlsx` | Lecture et édition | Si présent | Oui |
+| `.csv`, `.tsv` | Lecture et édition | Non applicable | Oui |
+| `.xlsm`, `.xls` | Lecture seule protégée | Oui, si la stratégie Excel l’autorise | Oui |
+| `.xlsb` | Pas de rendu intégré | Oui, si la stratégie Excel l’autorise | Oui |
 
 - Grille de classeur directement dans un onglet VS Code.
-- Explorateur **Excel & VBA** dans la barre latérale.
-- Ouverture du fichier actif dans Microsoft Excel avec son interface complète.
-- Accès direct au mode Développeur et au Visual Basic Editor.
+- Couleurs de thème, mise en forme conditionnelle, commentaires et protection de feuille préservés dans les classeurs `.xlsx`.
+- Aperçu d’impression A4 intégré, avec indicateurs conditionnels et résultats de formules structurées.
+- Explorateur **Projet Excel & VBA** inspiré du VBE, avec **Microsoft Excel Objects**, **UserForms**, **Modules**, **Modules de classe** et **Références**.
+- Panneau **Propriétés VBA** synchronisé avec la sélection.
+- Fichiers `.bas`, `.cls` et `.frm` ouverts dans l’éditeur VS Code, avec aperçu interne des UserForms exportés.
+- Dossier VBA ajouté comme racine de l’espace de travail et instructions `.github/copilot-instructions.md` générées pour que GitHub Copilot puisse indexer les sources.
 - Export local borné en Markdown et JSON : valeurs, formules, formats, tableaux, graphiques, noms, liens, validations, commentaires, connexions et métadonnées VBA autorisées.
 - Outil IA référençable `#excelVbaWorkbook`, exécuté uniquement à la demande.
 - Aucune télémétrie de l’extension et aucune clé API gérée par l’extension.
@@ -71,23 +74,22 @@ Le Marketplace Visual Studio n’est pas encore publié. Le dépôt GitHub publi
 2. Utilisez la grille intégrée ou l’explorateur **Excel & VBA**.
 3. Exportez un contexte local si vous souhaitez l’inspecter.
 4. Dans un chat IA compatible avec les outils de modèle VS Code, référencez explicitement `#excelVbaWorkbook`.
-5. Basculez vers Microsoft Excel ou le VBE pour les fonctions natives avancées.
+5. Utilisez **Ouvrir le studio VBA dans VS Code** pour afficher le projet et ses fichiers réels.
 
 ### Commandes principales
 
 | Commande | Fonction |
 | --- | --- |
-| `Excel AI & VBA Studio : Ouvrir dans Microsoft Excel` | Ouvre le classeur actif dans Excel natif. |
-| `Excel AI & VBA Studio : Ouvrir Excel en mode Développeur / VBA` | Ouvre Excel et affiche l’environnement Développeur/VBE. |
+| `Excel AI & VBA Studio : Ouvrir le studio VBA dans VS Code` | Extrait et affiche le projet VBA dans l’Explorateur VS Code. |
 | `Excel AI & VBA Studio : Exporter le contexte du classeur` | Produit les exports Markdown et JSON locaux. |
 | `Excel AI & VBA Studio : Exporter et copier le contexte` | Exporte puis copie un contexte borné. |
-| `Excel AI & VBA Studio : Exporter et révéler les sources VBA` | Révèle les fichiers VBA quand la stratégie Excel l’autorise. |
+| `Excel AI & VBA Studio : Ouvrir le projet VBA dans VS Code` | Ouvre les fichiers `.bas`, `.cls` et `.frm` et les expose à Copilot. |
+| `Excel AI & VBA Studio : Analyser le classeur et le VBA avec Copilot` | Prépare Copilot Chat avec `#excelVbaWorkbook` et le classeur actif. |
 | `Excel AI & VBA Studio : Nettoyer les exports générés` | Supprime les exports contrôlés par l’extension. |
 
 Raccourcis :
 
-- `Ctrl+Alt+E` : ouvrir dans Microsoft Excel ;
-- `Ctrl+Alt+F11` : ouvrir le mode Développeur / VBA.
+- `Ctrl+Alt+F11` : ouvrir le studio VBA dans VS Code.
 
 ### Paramètres
 
@@ -107,9 +109,10 @@ flowchart LR
   Tool["#excelVbaWorkbook"] --> Host
   Host --> Bridge["Bridge PowerShell sécurisé"]
   Bridge --> Excel["Instance Excel COM contrôlée"]
-  Excel --> Export["Exports locaux bornés"]
-  Export --> Tool
-  Host --> Native["Excel / VBE natif"]
+  Excel --> Export["Projet VBA et contexte local borné"]
+  Export --> Workspace["Racine VBA de l’espace VS Code"]
+  Workspace --> Explorer
+  Workspace --> Tool
   Tool -. "partage explicite" .-> AI["Fournisseur IA choisi dans VS Code"]
 ```
 
@@ -132,10 +135,10 @@ Consultez [SECURITY.md](SECURITY.md) et [PRIVACY.md](PRIVACY.md) avant d’utili
 ## Limites de la Preview
 
 - Windows x64 uniquement.
-- Microsoft Excel desktop est requis pour Excel natif, COM, VBA et les anciens formats.
+- Microsoft Excel desktop est actuellement requis en arrière-plan pour l’extraction COM du VBA et des anciens formats, mais aucune fenêtre Excel n’est ouverte par le studio VBA.
 - Les classeurs protégés, corrompus ou restreints par une politique d’entreprise peuvent ne fournir qu’un contexte partiel.
 - L’accès au code source VBA dépend de la politique du Centre de gestion de la confidentialité Excel.
-- Le ruban Excel complet n’est pas reproduit dans VS Code ; il est ouvert dans Excel natif.
+- Les changements effectués dans les fichiers VBA extraits ne sont pas encore réinjectés automatiquement dans le classeur.
 
 ## Feuille de route
 

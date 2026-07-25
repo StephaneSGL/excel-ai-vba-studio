@@ -5,7 +5,14 @@ import { inferSchema, initParser } from 'udsv';
 import { decodeCsvBuffer } from './csvEncoding';
 import { DEFAULT_ROW_HEIGHT_PX, excelFreezeToExpr, excelRowHeightToPx, readAutofilterRef } from './excel_meta';
 import { readWorksheetSortStateXml } from './excel_sort_state';
-import { excelJsCellToStyle, StyleRegistry } from './excel_styles';
+import {
+    createExcelColorResolver,
+    excelJsCellToStyle,
+    excelJsStyleToCellStyle,
+    hexToArgb,
+    type ExcelColorResolver,
+    StyleRegistry,
+} from './excel_styles';
 import { mergeHyperlinkMaps, readCellHyperlink } from './excel_hyperlink';
 import { readWorksheetBackgroundImage, readWorksheetImages } from './excel_images';
 import { readWorksheetValidations } from './excel_validation';
@@ -14,7 +21,12 @@ import {
     readCellEditableFromExcel,
     readWorksheetProtection,
 } from './excel_protection';
-import type { CellData, SheetData } from './x-spreadsheet/index';
+import type {
+    CellData,
+    SheetCommentData,
+    SheetConditionalFormatting,
+    SheetData,
+} from './x-spreadsheet/index';
 
 type RowMap = NonNullable<SheetData['rows']>;
 
@@ -25,6 +37,85 @@ type ExcelJsWorksheetWithMerges = ExcelJS.Worksheet & {
         merges?: string[];
     };
 };
+
+type ExcelJsWorksheetExtras = ExcelJS.Worksheet & {
+    conditionalFormattings?: ExcelJS.ConditionalFormattingOptions[];
+};
+
+function cloneJson<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalizeConditionalColors(value: unknown, resolveColor: ExcelColorResolver): unknown {
+    if (Array.isArray(value)) {
+        return value.map(item => normalizeConditionalColors(item, resolveColor));
+    }
+    if (!value || typeof value !== 'object') return value;
+    const record = value as Record<string, unknown>;
+    const isColor = ['argb', 'theme', 'indexed', 'tint', 'auto']
+        .some(key => Object.prototype.hasOwnProperty.call(record, key));
+    if (isColor) {
+        const color = resolveColor(record as Partial<ExcelJS.Color>);
+        const argb = hexToArgb(color);
+        return argb ? { argb } : cloneJson(record);
+    }
+    return Object.fromEntries(
+        Object.entries(record).map(([key, item]) => [
+            key,
+            normalizeConditionalColors(item, resolveColor),
+        ]),
+    );
+}
+
+function readConditionalFormattings(
+    worksheet: ExcelJS.Worksheet,
+    resolveColor: ExcelColorResolver,
+): SheetConditionalFormatting[] {
+    const source = (worksheet as ExcelJsWorksheetExtras).conditionalFormattings ?? [];
+    return source
+        .filter(item => typeof item?.ref === 'string' && Array.isArray(item.rules))
+        .map(item => {
+            const normalized = normalizeConditionalColors(item, resolveColor) as ExcelJS.ConditionalFormattingOptions;
+            return {
+                ref: normalized.ref,
+                rules: normalized.rules.map(rule => {
+                    const displayStyle = excelJsStyleToCellStyle(
+                        rule.style as Partial<ExcelJS.Style> | undefined,
+                        resolveColor,
+                    );
+                    return {
+                        ...rule,
+                        ...(displayStyle ? { displayStyle } : {}),
+                    };
+                }),
+            } as SheetConditionalFormatting;
+        });
+}
+
+function noteToComment(note: ExcelJS.Cell['note']): SheetCommentData | undefined {
+    if (!note) return undefined;
+    if (typeof note === 'string') return { text: note };
+    if (Array.isArray(note)) {
+        const text = note.map(part => part?.text ?? '').join('');
+        return text ? { text } : undefined;
+    }
+    const noteValue = note as {
+        texts?: { text?: string }[];
+        author?: string;
+    };
+    const text = noteValue.texts?.map(part => part.text ?? '').join('') ?? '';
+    return text ? { text, ...(noteValue.author ? { author: noteValue.author } : {}) } : undefined;
+}
+
+function formulaResult(cell: ExcelJS.Cell): CellData['formulaResult'] | undefined {
+    const result = cell.result;
+    if (result == null) return undefined;
+    if (result instanceof Date) return result.toISOString();
+    if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') {
+        return result;
+    }
+    return undefined;
+}
 
 export interface ExcelData {
     sheets: SheetData[];
@@ -192,10 +283,20 @@ const readWorkbookSortStateXml = async (buffer: ArrayBuffer) => {
     return entries;
 };
 
-const convertExcelJsWorksheet = (worksheet: ExcelJS.Worksheet, workbook: ExcelJS.Workbook): Pick<SheetData, 'rows' | 'cols' | 'styles' | 'merges' | 'freeze' | 'autofilter' | 'hyperlinks' | 'validations' | 'sheetProtection' | 'images' | 'backgroundImage'> => {
+const convertExcelJsWorksheet = (
+    worksheet: ExcelJS.Worksheet,
+    workbook: ExcelJS.Workbook,
+): Pick<
+    SheetData,
+    'rows' | 'cols' | 'styles' | 'merges' | 'freeze' | 'autofilter' | 'hyperlinks'
+    | 'validations' | 'sheetProtection' | 'images' | 'backgroundImage' | 'comments'
+    | 'conditionalFormattings' | 'pageSetup'
+> => {
     const rows: RowMap = {};
     const styleRegistry = new StyleRegistry();
     const hyperlinkParts: Record<string, { link: string; tooltip?: string }>[] = [];
+    const comments: Record<string, SheetCommentData> = {};
+    const resolveColor = createExcelColorResolver(workbook);
     const sheetProtected = isWorksheetProtected(worksheet);
     const sheetProtection = readWorksheetProtection(worksheet);
     let maxCols = 0;
@@ -210,15 +311,19 @@ const convertExcelJsWorksheet = (worksheet: ExcelJS.Worksheet, workbook: ExcelJS
 
             const ci = colNumber - 1;
             const text = formatCellText(cell);
-            const cellStyle = excelJsCellToStyle(cell);
+            const cellStyle = excelJsCellToStyle(cell, resolveColor);
             const editable = readCellEditableFromExcel(cell, sheetProtected);
             const hl = readCellHyperlink(cell, ri, ci);
-            if (!text && !cellStyle && editable === undefined && !Object.keys(hl).length) return;
+            const comment = noteToComment(cell.note);
+            if (comment) comments[cell.address] = comment;
+            if (!text && !cellStyle && editable === undefined && !Object.keys(hl).length && !comment) return;
 
             const styleIndex = styleRegistry.add(cellStyle);
             const cellData: CellData = { text };
             if (styleIndex != null) cellData.style = styleIndex;
             if (editable !== undefined) cellData.editable = editable;
+            const cachedResult = formulaResult(cell);
+            if (cachedResult !== undefined) cellData.formulaResult = cachedResult;
             cells[ci] = cellData;
             if (ci + 1 > maxCols) maxCols = ci + 1;
             if (ri + 1 > maxRow) maxRow = ri + 1;
@@ -253,6 +358,8 @@ const convertExcelJsWorksheet = (worksheet: ExcelJS.Worksheet, workbook: ExcelJS
     const validations = readWorksheetValidations(worksheet);
     const images = readWorksheetImages(worksheet, workbook);
     const backgroundImage = readWorksheetBackgroundImage(worksheet, workbook);
+    const conditionalFormattings = readConditionalFormattings(worksheet, resolveColor);
+    const pageSetup = cloneJson(worksheet.pageSetup ?? {});
 
     return {
         rows: { len: maxRow, ...rows },
@@ -264,6 +371,9 @@ const convertExcelJsWorksheet = (worksheet: ExcelJS.Worksheet, workbook: ExcelJS
         ...(sheetProtection ? { sheetProtection } : {}),
         ...(images.length ? { images } : {}),
         ...(backgroundImage ? { backgroundImage } : {}),
+        ...(Object.keys(comments).length ? { comments } : {}),
+        ...(conditionalFormattings.length ? { conditionalFormattings } : {}),
+        ...(Object.keys(pageSetup).length ? { pageSetup } : {}),
         ...sheetExtras,
     };
 };
@@ -301,6 +411,11 @@ const convertExcelJsWorkbook = (
             ...(converted.sheetProtection ? { sheetProtection: converted.sheetProtection } : {}),
             ...(converted.images ? { images: converted.images } : {}),
             ...(converted.backgroundImage ? { backgroundImage: converted.backgroundImage } : {}),
+            ...(converted.comments ? { comments: converted.comments } : {}),
+            ...(converted.conditionalFormattings
+                ? { conditionalFormattings: converted.conditionalFormattings }
+                : {}),
+            ...(converted.pageSetup ? { pageSetup: converted.pageSetup } : {}),
         });
     });
 

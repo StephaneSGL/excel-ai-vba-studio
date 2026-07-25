@@ -239,6 +239,7 @@
 }
 
 .excel-ribbon-button {
+    position: relative;
     min-width: 47px;
     height: 34px;
     display: inline-flex;
@@ -311,6 +312,25 @@
             white-space: nowrap;
         }
     }
+}
+
+.excel-ribbon-native-badge {
+    position: absolute;
+    top: 1px;
+    right: 2px;
+    padding: 1px 3px;
+    border-radius: 6px;
+    color: #fff;
+    background: #107c41;
+    font-size: 7px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+}
+
+.excel-ribbon-button.is-compact .excel-ribbon-native-badge {
+    display: none;
 }
 
 .excel-ribbon-button-icon {

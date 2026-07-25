@@ -149,12 +149,6 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
                 'excelAiVbaStudio.officeViewer'
             );
         })
-        .on('openNativeExcel', () =>
-            vscode.commands.executeCommand(
-                'excelAiVbaStudio.openFullExcel',
-                uri
-            )
-        )
         .on('openVbaDeveloper', () =>
             vscode.commands.executeCommand(
                 'excelAiVbaStudio.openVbaDeveloper',
@@ -170,6 +164,12 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
         .on('openVbaExplorer', () =>
             vscode.commands.executeCommand(
                 'excelAiVbaStudio.openVbaExplorer',
+                uri
+            )
+        )
+        .on('askCopilotAboutWorkbook', () =>
+            vscode.commands.executeCommand(
+                'excelAiVbaStudio.askCopilotAboutWorkbook',
                 uri
             )
         )

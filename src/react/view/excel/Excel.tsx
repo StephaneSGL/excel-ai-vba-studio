@@ -528,10 +528,10 @@ function ExcelViewer() {
                 allowSaveAs={readOnlyReason !== 'macro-preservation'}
                 showEditInVscode={isCsvLikeExt(extRef.current)}
                 onAutoFitColumns={handleAutoFitColumns}
-                onOpenNativeExcel={() => handler.emit('openNativeExcel')}
                 onOpenVbaDeveloper={() => handler.emit('openVbaDeveloper')}
                 onExportWorkbookContext={() => handler.emit('exportWorkbookContext')}
                 onOpenVbaExplorer={() => handler.emit('openVbaExplorer')}
+                onAskCopilotAboutWorkbook={() => handler.emit('askCopilotAboutWorkbook')}
             />
             {loadError && !loading && (
                 <div className="excel-load-error">
@@ -559,12 +559,6 @@ function ExcelViewer() {
                     </span>
                     {readOnlyReason === 'macro-preservation' && (
                         <span className="excel-readonly-actions">
-                            <Button
-                                size="small"
-                                onClick={() => handler.emit('openNativeExcel')}
-                            >
-                                {t('viewer.openNativeExcel')}
-                            </Button>
                             <Button
                                 size="small"
                                 onClick={() => handler.emit('openVbaDeveloper')}

@@ -50,9 +50,9 @@ const expectedCommands = sorted([
   'excelAiVbaStudio.copyWorkbookContext',
   'excelAiVbaStudio.openWorkbookContext',
   'excelAiVbaStudio.copyGeneratedContext',
-  'excelAiVbaStudio.openFullExcel',
   'excelAiVbaStudio.openVbaDeveloper',
   'excelAiVbaStudio.openVbaExplorer',
+  'excelAiVbaStudio.askCopilotAboutWorkbook',
   'excelAiVbaStudio.refreshExplorer',
   'excelAiVbaStudio.cleanExports',
 ]);
@@ -87,7 +87,12 @@ expect(
 );
 
 const explorerViews = manifest.contributes?.views?.explorer ?? [];
-expect(explorerViews.length === 1 && explorerViews[0]?.id === 'excelAiVbaExplorer', 'Excel & VBA explorer view is missing');
+expect(
+  explorerViews.length === 2
+    && explorerViews.some(({ id }) => id === 'excelAiVbaExplorer')
+    && explorerViews.some(({ id }) => id === 'excelAiVbaProperties'),
+  'Excel & VBA explorer and properties views are required',
+);
 
 const tools = manifest.contributes?.languageModelTools ?? [];
 expect(tools.length === 1, 'exactly one language-model tool must be declared');

@@ -17,6 +17,7 @@ import { CellRange } from './cell_range';
 import { expr2xy, xy2expr } from './alphabet';
 import { t } from '../locale/locale';
 import { baseFonts } from './font';
+import { evaluateConditionalFormatting } from './conditional_format';
 
 // private methods
 /*
@@ -442,6 +443,8 @@ export default class DataProxy {
     this.backgroundImage = null;
     this.sheetProtection = null;
     this.comments = {};
+    this.conditionalFormattings = [];
+    this.pageSetup = {};
     // save data end
 
     // don't save object
@@ -1380,6 +1383,25 @@ export default class DataProxy {
     return null;
   }
 
+  getConditionalFormatting(ri, ci) {
+    return evaluateConditionalFormatting(this, getDataRowIndex(this, ri), ci);
+  }
+
+  getComment(ri, ci) {
+    return this.comments?.[xy2expr(ci, getDataRowIndex(this, ri))] || null;
+  }
+
+  setComment(ri, ci, comment) {
+    const key = xy2expr(ci, getDataRowIndex(this, ri));
+    this.changeData(() => {
+      if (!comment?.text) {
+        delete this.comments[key];
+      } else {
+        this.comments[key] = comment;
+      }
+    });
+  }
+
   getCellStyleOrDefault(ri, ci) {
     const { styles, rows } = this;
     const cell = rows.getCell(getDataRowIndex(this, ri), ci);
@@ -1721,7 +1743,7 @@ export default class DataProxy {
   getData() {
     const {
       name, freeze, styles, merges, rows, cols, validations, autoFilter, hyperlinks, sheetProtection,
-      images, backgroundImage,
+      images, backgroundImage, comments, conditionalFormattings, pageSetup,
     } = this;
     const data = {
       name,
@@ -1744,6 +1766,15 @@ export default class DataProxy {
     }
     if (sheetProtection) {
       data.sheetProtection = sheetProtection;
+    }
+    if (comments && Object.keys(comments).length > 0) {
+      data.comments = comments;
+    }
+    if (conditionalFormattings && conditionalFormattings.length > 0) {
+      data.conditionalFormattings = conditionalFormattings;
+    }
+    if (pageSetup && Object.keys(pageSetup).length > 0) {
+      data.pageSetup = pageSetup;
     }
     return data;
   }

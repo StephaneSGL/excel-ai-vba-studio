@@ -42,6 +42,18 @@ function getDrawBox(data, rindex, cindex, yoffset = 0) {
   } = data.cellRect(rindex, cindex);
   return new DrawBox(left, top + yoffset, width, height, cellPaddingWidth);
 }
+
+function mergeCellStyle(baseStyle, conditionalStyle) {
+  if (!conditionalStyle) return baseStyle;
+  return {
+    ...baseStyle,
+    ...conditionalStyle,
+    font: {
+      ...(baseStyle.font || {}),
+      ...(conditionalStyle.font || {}),
+    },
+  };
+}
 /*
 function renderCellBorders(bboxes, translateFunc) {
   const { draw } = this;
@@ -77,7 +89,11 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     return;
   }
 
-  const style = data.getCellStyleOrDefault(rindex, cindex);
+  const conditional = data.getConditionalFormatting(rindex, cindex);
+  const style = mergeCellStyle(
+    data.getCellStyleOrDefault(rindex, cindex),
+    conditional?.style,
+  );
   const defaultStyle = data.defaultStyle();
 
   const dbox = getDrawBox(data, rindex, cindex, yoffset);
@@ -92,6 +108,20 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     }
   }
   draw.rect(dbox, () => {
+    if (conditional?.dataBar) {
+      draw.save();
+      draw.attr({
+        fillStyle: conditional.dataBar.color,
+        globalAlpha: 0.36,
+      });
+      draw.fillRect(
+        dbox.x + 1,
+        dbox.y + 1,
+        Math.max(0, (dbox.width - 2) * conditional.dataBar.ratio),
+        Math.max(0, dbox.height - 2),
+      );
+      draw.restore();
+    }
     // render text
     let cellText = '';
     if (!data.settings.evalPaused) {
@@ -102,9 +132,24 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     } else {
       cellText = cell.text || '';
     }
+    if (
+      cell.formulaResult !== undefined
+      && `${cell.text || ''}`.startsWith('=')
+      && (
+        cellText === cell.text
+        || /[\[\]@]/.test(cell.text)
+        || cellText == null
+        || `${cellText}`.includes('#NAME?')
+      )
+    ) {
+      cellText = cell.formulaResult;
+    }
     const formatter = style.format ? formatm[style.format] : undefined;
     if (formatter) {
       cellText = formatter.render(cellText);
+    }
+    if (conditional?.icon) {
+      cellText = `${conditional.icon} ${cellText}`;
     }
     const font = Object.assign({}, style.font);
     if (!font.name) {
@@ -126,6 +171,9 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     if (error) {
       // console.log('error:', rindex, cindex, error);
       draw.error(dbox);
+    }
+    if (data.getComment(rindex, cindex)) {
+      draw.comment(dbox);
     }
     if (isLocked) {
       draw.frozen(dbox, lockedColor);

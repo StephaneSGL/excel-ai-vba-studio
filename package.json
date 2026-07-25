@@ -1,8 +1,8 @@
 {
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
-  "description": "View and edit safe spreadsheet formats in VS Code, inspect bounded workbook context with AI, and open native Excel or VBA tools.",
-  "version": "0.1.1",
+  "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
+  "version": "0.1.3",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -52,11 +52,11 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "Opening native Excel and exporting workbook or VBA context executes local automation and therefore requires a trusted workspace."
+      "description": "Exporting workbook or VBA context uses local Office automation and therefore requires a trusted workspace."
     },
     "virtualWorkspaces": {
       "supported": false,
-      "description": "Native Excel and VBA integration requires local Windows files."
+      "description": "Excel and VBA project extraction requires local Windows files."
     }
   },
   "activationEvents": [
@@ -90,21 +90,21 @@
         "icon": "$(clippy)"
       },
       {
-        "command": "excelAiVbaStudio.openFullExcel",
-        "title": "Excel AI & VBA Studio : Ouvrir dans Microsoft Excel",
-        "icon": "$(window)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
-      },
-      {
         "command": "excelAiVbaStudio.openVbaDeveloper",
-        "title": "Excel AI & VBA Studio : Ouvrir Excel en mode Développeur / VBA",
+        "title": "Excel AI & VBA Studio : Ouvrir le studio VBA dans VS Code",
         "icon": "$(code)",
         "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
       },
       {
         "command": "excelAiVbaStudio.openVbaExplorer",
-        "title": "Excel AI & VBA Studio : Exporter et révéler les sources VBA",
+        "title": "Excel AI & VBA Studio : Ouvrir le projet VBA dans VS Code",
         "icon": "$(folder-opened)",
+        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+      },
+      {
+        "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
+        "title": "Excel AI & VBA Studio : Analyser le classeur et le VBA avec Copilot",
+        "icon": "$(copilot)",
         "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
       },
       {
@@ -154,11 +154,6 @@
     ],
     "keybindings": [
       {
-        "command": "excelAiVbaStudio.openFullExcel",
-        "key": "ctrl+alt+e",
-        "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
-      },
-      {
         "command": "excelAiVbaStudio.openVbaDeveloper",
         "key": "ctrl+alt+f11",
         "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
@@ -172,12 +167,12 @@
           "when": "view == excelAiVbaExplorer"
         },
         {
-          "command": "excelAiVbaStudio.openFullExcel",
+          "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "navigation@2",
           "when": "view == excelAiVbaExplorer"
         },
         {
-          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "navigation@3",
           "when": "view == excelAiVbaExplorer"
         },
@@ -189,50 +184,40 @@
       ],
       "editor/title": [
         {
-          "command": "excelAiVbaStudio.openFullExcel",
+          "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "navigation@1",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "navigation@2",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaExplorer",
-          "group": "navigation@3",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
-        },
-        {
           "command": "excelAiVbaStudio.exportWorkbook",
-          "group": "navigation@4",
+          "group": "navigation@3",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
         }
       ],
       "explorer/context": [
         {
-          "command": "excelAiVbaStudio.openFullExcel",
+          "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "excelAiVbaStudio@1",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "excelAiVbaStudio@2",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaExplorer",
-          "group": "excelAiVbaStudio@3",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
-        },
-        {
           "command": "excelAiVbaStudio.exportWorkbook",
-          "group": "excelAiVbaStudio@4",
+          "group": "excelAiVbaStudio@3",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
         },
         {
           "command": "excelAiVbaStudio.copyWorkbookContext",
-          "group": "excelAiVbaStudio@5",
+          "group": "excelAiVbaStudio@4",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
         }
       ]
@@ -241,7 +226,12 @@
       "explorer": [
         {
           "id": "excelAiVbaExplorer",
-          "name": "Excel & VBA",
+          "name": "Projet Excel & VBA",
+          "visibility": "visible"
+        },
+        {
+          "id": "excelAiVbaProperties",
+          "name": "Propriétés VBA",
           "visibility": "visible"
         }
       ]

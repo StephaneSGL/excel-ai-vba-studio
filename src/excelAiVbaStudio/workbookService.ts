@@ -23,6 +23,7 @@ import {
 	ProcessResult,
 	ToolInput
 } from './types';
+import { showUserFormPreview } from './userFormPreview';
 
 const DEFAULT_MAX_ROWS = 200;
 const DEFAULT_MAX_COLUMNS = 50;
@@ -312,18 +313,39 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			await assertOwnedDirectory(this.exportsRoot, this.storageRoot);
 			return { storageRoot: this.storageRoot, exportsRoot: this.exportsRoot };
 		}
-		if (
-			this.extensionContext.globalStorageUri.scheme !== 'file' ||
-			this.extensionContext.globalStorageUri.authority
-		) {
+
+		const storageUri = this.extensionContext.globalStorageUri;
+		let storagePath =
+			storageUri.scheme === 'file' && !storageUri.authority
+				? storageUri.fsPath
+				: undefined;
+		if (!storagePath && path.isAbsolute(this.extensionContext.globalStoragePath)) {
+			storagePath = this.extensionContext.globalStoragePath;
+			this.outputChannel.appendLine(
+				`[stockage] URI ${storageUri.scheme} remplacée par le chemin local fourni par VS Code.`
+			);
+		}
+		if (!storagePath) {
+			const localAppData =
+				process.env.LOCALAPPDATA?.trim() || process.env.APPDATA?.trim();
+			if (localAppData) {
+				storagePath = path.join(
+					localAppData,
+					'ExcelAiVbaStudio',
+					'extension-storage'
+				);
+				this.outputChannel.appendLine(
+					`[stockage] Repli local utilisé : ${storagePath}`
+				);
+			}
+		}
+		if (!storagePath) {
 			throw new Error(
-				'Le stockage global de l’extension doit être un dossier local.'
+				'VS Code ne fournit aucun dossier de stockage local utilisable.'
 			);
 		}
 
-		this.storageRoot = await ensureLocalDirectory(
-			this.extensionContext.globalStorageUri.fsPath
-		);
+		this.storageRoot = await ensureLocalDirectory(storagePath);
 		this.exportsRoot = await ensureOwnedDirectory(
 			path.join(this.storageRoot, 'workbook-exports'),
 			this.storageRoot
@@ -332,6 +354,123 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			throw new Error('Le dossier d’export sort du stockage global de l’extension.');
 		}
 		return { storageRoot: this.storageRoot, exportsRoot: this.exportsRoot };
+	}
+
+	private async listVbaSourceUris(
+		context: ExportContext
+	): Promise<vscode.Uri[]> {
+		await assertOwnedDirectory(
+			context.paths.vbaDirectory,
+			context.paths.outputDirectory
+		);
+		const entries = await fs.promises.readdir(context.paths.vbaDirectory, {
+			withFileTypes: true
+		});
+		return entries
+			.filter(
+				entry =>
+					entry.isFile() &&
+					['.bas', '.cls', '.frm', '.txt'].includes(
+						path.extname(entry.name).toLocaleLowerCase('en-US')
+					)
+			)
+			.sort((left, right) => left.name.localeCompare(right.name))
+			.map(entry =>
+				vscode.Uri.file(path.join(context.paths.vbaDirectory, entry.name))
+			);
+	}
+
+	private async writeCopilotWorkspaceFiles(
+		context: ExportContext
+	): Promise<vscode.Uri> {
+		await assertOwnedDirectory(
+			context.paths.vbaDirectory,
+			context.paths.outputDirectory
+		);
+		const sourceUris = await this.listVbaSourceUris(context);
+		const githubDirectory = await ensureOwnedDirectory(
+			path.join(context.paths.vbaDirectory, '.github'),
+			context.paths.vbaDirectory
+		);
+		const instructionsPath = path.join(
+			githubDirectory,
+			'copilot-instructions.md'
+		);
+		const projectPath = path.join(context.paths.vbaDirectory, 'VBA-PROJECT.md');
+		await assertNoReparsePointChain(instructionsPath, githubDirectory);
+		await assertNoReparsePointChain(projectPath, context.paths.vbaDirectory);
+
+		const moduleList = sourceUris.length
+			? sourceUris
+					.map(
+						uri =>
+							`- [${path.basename(uri.fsPath)}](./${path.basename(uri.fsPath)})`
+					)
+					.join('\n')
+			: '- Aucun module n’a pu être extrait.';
+		const commonInstructions = [
+			'Ce dossier est un projet VBA extrait localement par Excel AI & VBA Studio.',
+			'Les fichiers .bas, .cls et .frm sont les sources à analyser et modifier.',
+			'Ne jamais exécuter une macro. Proposer les changements dans les fichiers source uniquement.',
+			'Préserver les déclarations Attribute, les signatures Public/Private et les événements Excel.',
+			'Pour relire les données du classeur, utiliser l’outil #excelVbaWorkbook avec includeVba: true.',
+			`Classeur source : ${context.workbookUri.fsPath}`,
+			'Les modifications de ce dossier sont une copie de travail et ne sont pas réinjectées automatiquement dans le classeur.'
+		];
+		await fs.promises.writeFile(
+			instructionsPath,
+			`${commonInstructions.join('\n')}\n`,
+			'utf8'
+		);
+		await fs.promises.writeFile(
+			projectPath,
+			[
+				`# VBAProject (${path.basename(context.workbookUri.fsPath)})`,
+				'',
+				'Ce dossier est ouvert comme une racine VS Code afin que GitHub Copilot puisse indexer les modules, classes, objets Excel et UserForms.',
+				'',
+				`- Classeur source : \`${context.workbookUri.fsPath}\``,
+				'- Macros exécutées pendant l’extraction : **non**',
+				'- Outil Copilot : `#excelVbaWorkbook`',
+				'',
+				'## Composants',
+				'',
+				moduleList,
+				'',
+				'> Les modifications portent sur la copie de travail. Une réinjection automatique dans le classeur n’est pas encore effectuée.'
+			].join('\n'),
+			'utf8'
+		);
+		return vscode.Uri.file(projectPath);
+	}
+
+	private async exposeVbaFolderToWorkspace(
+		context: ExportContext
+	): Promise<void> {
+		const vbaUri = context.paths.vbaDirectoryUri;
+		const alreadyVisible = (vscode.workspace.workspaceFolders || []).some(
+			folder =>
+				folder.uri.scheme === 'file' &&
+				!folder.uri.authority &&
+				(pathIsInside(vbaUri.fsPath, folder.uri.fsPath) ||
+					sameFile(folder.uri.fsPath, vbaUri.fsPath))
+		);
+		if (alreadyVisible) {
+			return;
+		}
+		const added = vscode.workspace.updateWorkspaceFolders(
+			vscode.workspace.workspaceFolders?.length || 0,
+			0,
+			{
+				uri: vbaUri,
+				name: `VBA · ${context.paths.baseName}`
+			}
+		);
+		if (!added) {
+			this.outputChannel.appendLine(
+				`[vba] Le dossier n’a pas pu être ajouté à l’espace de travail : ${vbaUri.fsPath}`
+			);
+		}
 	}
 
 	async getContextPaths(canonicalWorkbookUri: vscode.Uri): Promise<ExportPaths> {
@@ -977,32 +1116,106 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		if (!result) {
 			return;
 		}
+		let projectUri: vscode.Uri | undefined;
 		try {
-			const readmePath = path.join(result.paths.vbaDirectory, 'README.md');
-			await assertOwnedDirectory(
-				result.paths.vbaDirectory,
-				result.paths.outputDirectory
+			projectUri = await this.writeCopilotWorkspaceFiles(result);
+			await this.exposeVbaFolderToWorkspace(result);
+			const sources = await this.listVbaSourceUris(result);
+			if (sources.length) {
+				await this.openVbaComponent(sources[0]);
+			} else {
+				const document = await vscode.workspace.openTextDocument(projectUri);
+				await vscode.window.showTextDocument(document, {
+					preview: false,
+					preserveFocus: false,
+					viewColumn: vscode.ViewColumn.Active
+				});
+			}
+		} catch (error) {
+			this.outputChannel.appendLine(
+				`[vba] Préparation de l’espace VS Code incomplète : ${(error as Error).message}`
 			);
-			await assertNoReparsePointChain(
-				readmePath,
-				result.paths.vbaDirectory
-			);
-			const stat = await fs.promises.stat(readmePath);
-			if (stat.isFile()) {
-				const document = await vscode.workspace.openTextDocument(readmePath);
+			if (projectUri) {
+				const document = await vscode.workspace.openTextDocument(projectUri);
 				await vscode.window.showTextDocument(document, {
 					preview: false,
 					preserveFocus: false
 				});
 			}
-		} catch {
-			// The dedicated tree view still exposes modules if no README exists.
 		}
 		await vscode.commands.executeCommand('workbench.view.explorer');
 		try {
 			await vscode.commands.executeCommand('excelAiVbaExplorer.focus');
 		} catch {
 			// The view contribution may not be visible in older VS Code builds.
+		}
+	}
+
+	async openVbaComponent(candidate?: unknown): Promise<void> {
+		const uri = isUri(candidate)
+			? candidate
+			: this.candidateUri(candidate);
+		const context = this.lastContext;
+		if (!uri || uri.scheme !== 'file' || uri.authority || !context) {
+			return;
+		}
+		await assertOwnedDirectory(
+			context.paths.vbaDirectory,
+			context.paths.outputDirectory
+		);
+		await assertNoReparsePointChain(uri.fsPath, context.paths.vbaDirectory);
+		if (!pathIsInside(uri.fsPath, context.paths.vbaDirectory)) {
+			throw new Error('Le composant VBA demandé sort du projet extrait.');
+		}
+		const document = await vscode.workspace.openTextDocument(uri);
+		await vscode.window.showTextDocument(document, {
+			preview: false,
+			preserveFocus: false,
+			viewColumn: vscode.ViewColumn.Active
+		});
+		if (
+			path.extname(uri.fsPath).toLocaleLowerCase('en-US') === '.frm'
+		) {
+			await showUserFormPreview(uri, document.getText());
+		}
+	}
+
+	async askCopilotAboutWorkbook(candidate?: unknown): Promise<void> {
+		const workbookUri = await this.resolveWorkbookUri(candidate);
+		if (!workbookUri) {
+			await vscode.window.showWarningMessage(
+				'Aucun classeur Excel local actif n’a été trouvé.'
+			);
+			return;
+		}
+		const result = await this.exportWorkbook(workbookUri, {
+			open: false,
+			includeVba: true
+		});
+		if (!result) {
+			return;
+		}
+		await this.writeCopilotWorkspaceFiles(result);
+		await this.exposeVbaFolderToWorkspace(result);
+		const prompt = [
+			'Utilise #excelVbaWorkbook pour analyser ce classeur local.',
+			`workbookPath: ${workbookUri.fsPath}`,
+			'includeVba: true',
+			`Le projet VBA est aussi disponible comme dossier VS Code : ${result.paths.vbaDirectory}`,
+			'Lis les fichiers .bas, .cls et .frm du dossier VBA avant de proposer des modifications.',
+			'Commence par résumer les objets Excel, les modules, les classes et les UserForms.',
+			'N’exécute aucune macro : analyse uniquement le code et les données.'
+		].join('\n');
+		try {
+			await vscode.commands.executeCommand('workbench.action.chat.open', {
+				query: prompt
+			});
+		} catch {
+			await vscode.env.clipboard.writeText(prompt);
+			await vscode.commands.executeCommand('workbench.action.chat.open');
+			await vscode.window.showInformationMessage(
+				'La demande Excel/VBA a été copiée. Collez-la dans Copilot Chat.'
+			);
 		}
 	}
 

@@ -4,6 +4,26 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.1.3] - 2026-07-25
+
+### Added
+
+- Added theme, indexed-colour, and tint resolution so workbook colours survive embedded viewing and `.xlsx` saves.
+- Added conditional-format rendering and round-trip support for cell rules, colour scales, data bars, and icon sets.
+- Added comments, workbook statistics, sheet protection, safe regional sorting, and conditional-format creation to the ribbon.
+- Added a direct Copilot action backed by `#excelVbaWorkbook`, plus a dedicated action to export and open VBA sources in VS Code.
+- Added a VBE-style VS Code project tree for Excel objects, UserForms, standard modules, class modules, and references.
+- Added a synchronized VBA properties view and an internal UserForm preview.
+- Added a Copilot-indexable VBA workspace root with generated repository instructions.
+- Added native VBComponent export so UserForm `.frm` layout metadata and `.frx` resources are preserved when available.
+- Kept unfinished ribbon commands inside VS Code instead of opening Microsoft Excel.
+
+### Fixed
+
+- Fixed blank print previews caused by formatted empty rows and corrected A4 portrait pagination.
+- Preserved cached results for structured formulas that the embedded calculation engine cannot evaluate.
+- Fixed VBA extraction when VS Code exposes global extension storage through a non-file URI.
+
 ## [0.1.1] - 2026-07-24
 
 ### Added

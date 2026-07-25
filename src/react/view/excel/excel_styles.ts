@@ -1,6 +1,121 @@
 import type * as ExcelJS from '@cweijan/exceljs';
 import type { CellStyle } from './x-spreadsheet/index';
 
+type ExcelColorValue = Partial<ExcelJS.Color> & {
+    indexed?: number;
+    tint?: number;
+    auto?: boolean;
+};
+
+export type ExcelColorResolver = (color?: ExcelColorValue) => string | undefined;
+
+// ECMA-376 indexed colour palette used by legacy and compatibility styles.
+// Indexes 64 and 65 are automatic foreground/background colours.
+const INDEXED_COLORS = [
+    '000000', 'ffffff', 'ff0000', '00ff00', '0000ff', 'ffff00', 'ff00ff', '00ffff',
+    '000000', 'ffffff', 'ff0000', '00ff00', '0000ff', 'ffff00', 'ff00ff', '00ffff',
+    '800000', '008000', '000080', '808000', '800080', '008080', 'c0c0c0', '808080',
+    '9999ff', '993366', 'ffffcc', 'ccffff', '660066', 'ff8080', '0066cc', 'ccccff',
+    '000080', 'ff00ff', 'ffff00', '00ffff', '800080', '800000', '008080', '0000ff',
+    '00ccff', 'ccffff', 'ccffcc', 'ffff99', '99ccff', 'ff99cc', 'cc99ff', 'ffcc99',
+    '3366ff', '33cccc', '99cc00', 'ffcc00', 'ff9900', 'ff6600', '666699', '969696',
+    '003366', '339966', '003300', '333300', '993300', '993366', '333399', '333333',
+] as const;
+
+const THEME_COLOR_KEYS = [
+    'dk1', 'lt1', 'dk2', 'lt2',
+    'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6',
+    'hlink', 'folHlink',
+] as const;
+
+function normalizeRgb(value?: string): string | undefined {
+    const normalized = value?.replace(/^#/, '').trim();
+    if (!normalized) return undefined;
+    if (/^[0-9a-f]{8}$/i.test(normalized)) return normalized.slice(2).toLowerCase();
+    if (/^[0-9a-f]{6}$/i.test(normalized)) return normalized.toLowerCase();
+    return undefined;
+}
+
+function rgbToHsl(rgb: string): [number, number, number] {
+    const values = [0, 2, 4].map(index => parseInt(rgb.slice(index, index + 2), 16) / 255);
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const lightness = (max + min) / 2;
+    if (max === min) return [0, 0, lightness];
+    const delta = max - min;
+    const saturation = lightness > 0.5
+        ? delta / (2 - max - min)
+        : delta / (max + min);
+    let hue = 0;
+    if (max === values[0]) hue = (values[1] - values[2]) / delta + (values[1] < values[2] ? 6 : 0);
+    else if (max === values[1]) hue = (values[2] - values[0]) / delta + 2;
+    else hue = (values[0] - values[1]) / delta + 4;
+    return [hue / 6, saturation, lightness];
+}
+
+function hslToRgb(hue: number, saturation: number, lightness: number): string {
+    const hueToRgb = (p: number, q: number, value: number) => {
+        let t = value;
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+    };
+    const values = saturation === 0
+        ? [lightness, lightness, lightness]
+        : (() => {
+            const q = lightness < 0.5
+                ? lightness * (1 + saturation)
+                : lightness + saturation - lightness * saturation;
+            const p = 2 * lightness - q;
+            return [
+                hueToRgb(p, q, hue + 1 / 3),
+                hueToRgb(p, q, hue),
+                hueToRgb(p, q, hue - 1 / 3),
+            ];
+        })();
+    return values
+        .map(value => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, '0'))
+        .join('');
+}
+
+function applyTint(rgb: string, tint?: number): string {
+    if (tint == null || tint === 0) return rgb;
+    const [hue, saturation, lightness] = rgbToHsl(rgb);
+    const nextLightness = tint < 0
+        ? lightness * (1 + tint)
+        : lightness * (1 - tint) + tint;
+    return hslToRgb(hue, saturation, Math.max(0, Math.min(1, nextLightness)));
+}
+
+function workbookThemeColors(workbook: ExcelJS.Workbook): string[] {
+    const themes = (workbook as unknown as {
+        themes?: Record<string, string> | string[];
+    }).themes;
+    const themeXml = Array.isArray(themes)
+        ? themes.find(value => typeof value === 'string')
+        : themes?.theme1 ?? Object.values(themes ?? {}).find(value => typeof value === 'string');
+    if (!themeXml) return [];
+    return THEME_COLOR_KEYS.map(key => {
+        const block = themeXml.match(new RegExp(
+            `<(?:[\\w-]+:)?${key}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${key}>`,
+            'i',
+        ))?.[1];
+        if (!block) return '';
+        const srgb = block.match(/<(?:[\w-]+:)?srgbClr\b[^>]*\bval="([^"]+)"/i)?.[1];
+        const system = block.match(/<(?:[\w-]+:)?sysClr\b[^>]*\blastClr="([^"]+)"/i)?.[1]
+            ?? block.match(/<(?:[\w-]+:)?sysClr\b[^>]*\bval="([^"]+)"/i)?.[1];
+        return normalizeRgb(srgb ?? system) ?? '';
+    });
+}
+
+export function createExcelColorResolver(workbook: ExcelJS.Workbook): ExcelColorResolver {
+    const themeColors = workbookThemeColors(workbook);
+    return color => colorToHex(color, themeColors);
+}
+
 const BORDER_FROM_EXCEL: Record<string, string> = {
     thin: 'thin',
     hair: 'dotted',
@@ -83,11 +198,20 @@ function spreadsheetFormatToNumFmt(format?: string): string | undefined {
     return FORMAT_TO_NUMFMT[format];
 }
 
-export function colorToHex(color?: Partial<ExcelJS.Color>): string | undefined {
-    if (!color?.argb) return undefined;
-    const argb = color.argb.replace(/^#/, '');
-    if (argb.length === 8) return `#${argb.slice(2).toLowerCase()}`;
-    if (argb.length === 6) return `#${argb.toLowerCase()}`;
+export function colorToHex(
+    color?: ExcelColorValue,
+    themeColors: string[] = [],
+): string | undefined {
+    if (!color) return undefined;
+    const direct = normalizeRgb(color.argb);
+    if (direct) return `#${applyTint(direct, color.tint)}`;
+    if (color.theme != null) {
+        const themed = themeColors[color.theme];
+        if (themed) return `#${applyTint(themed, color.tint)}`;
+    }
+    if (color.indexed != null && color.indexed >= 0 && color.indexed < INDEXED_COLORS.length) {
+        return `#${applyTint(INDEXED_COLORS[color.indexed], color.tint)}`;
+    }
     return undefined;
 }
 
@@ -99,20 +223,26 @@ export function hexToArgb(hex?: string): string | undefined {
     return undefined;
 }
 
-function borderSideToSpreadsheet(side?: Partial<ExcelJS.Border>): string[] | undefined {
+function borderSideToSpreadsheet(
+    side?: Partial<ExcelJS.Border>,
+    resolveColor: ExcelColorResolver = colorToHex,
+): string[] | undefined {
     if (!side?.style) return undefined;
     const style = BORDER_FROM_EXCEL[side.style] ?? 'thin';
-    const color = colorToHex(side.color) ?? '#000000';
+    const color = resolveColor(side.color) ?? '#000000';
     return [style, color];
 }
 
-function bordersToSpreadsheet(borders?: Partial<ExcelJS.Borders>): CellStyle['border'] | undefined {
+function bordersToSpreadsheet(
+    borders?: Partial<ExcelJS.Borders>,
+    resolveColor: ExcelColorResolver = colorToHex,
+): CellStyle['border'] | undefined {
     if (!borders) return undefined;
     const border: CellStyle['border'] = {};
-    const top = borderSideToSpreadsheet(borders.top);
-    const right = borderSideToSpreadsheet(borders.right);
-    const bottom = borderSideToSpreadsheet(borders.bottom);
-    const left = borderSideToSpreadsheet(borders.left);
+    const top = borderSideToSpreadsheet(borders.top, resolveColor);
+    const right = borderSideToSpreadsheet(borders.right, resolveColor);
+    const bottom = borderSideToSpreadsheet(borders.bottom, resolveColor);
+    const left = borderSideToSpreadsheet(borders.left, resolveColor);
     if (top) border.top = top;
     if (right) border.right = right;
     if (bottom) border.bottom = bottom;
@@ -144,7 +274,10 @@ function bordersToExcelJs(border?: CellStyle['border']): Partial<ExcelJS.Borders
     return Object.keys(borders).length > 0 ? borders : undefined;
 }
 
-export function excelJsCellToStyle(cell: ExcelJS.Cell): CellStyle | null {
+export function excelJsCellToStyle(
+    cell: ExcelJS.Cell,
+    resolveColor: ExcelColorResolver = colorToHex,
+): CellStyle | null {
     const style: CellStyle = {};
     let hasStyle = false;
 
@@ -172,7 +305,7 @@ export function excelJsCellToStyle(cell: ExcelJS.Cell): CellStyle | null {
             style.font = fontStyle;
             hasStyle = true;
         }
-        const color = colorToHex(font.color);
+        const color = resolveColor(font.color);
         if (color) {
             style.color = color;
             hasStyle = true;
@@ -206,7 +339,7 @@ export function excelJsCellToStyle(cell: ExcelJS.Cell): CellStyle | null {
 
     const fill = cell.fill;
     if (fill && fill.type === 'pattern') {
-        const bgcolor = colorToHex(fill.fgColor) ?? colorToHex(fill.bgColor);
+        const bgcolor = resolveColor(fill.fgColor) ?? resolveColor(fill.bgColor);
         if (bgcolor && bgcolor !== '#ffffff') {
             style.bgcolor = bgcolor;
             hasStyle = true;
@@ -214,7 +347,7 @@ export function excelJsCellToStyle(cell: ExcelJS.Cell): CellStyle | null {
     }
 
     if (cell.border) {
-        const border = bordersToSpreadsheet(cell.border);
+        const border = bordersToSpreadsheet(cell.border, resolveColor);
         if (border) {
             style.border = border;
             hasStyle = true;
@@ -229,6 +362,14 @@ export function excelJsCellToStyle(cell: ExcelJS.Cell): CellStyle | null {
     }
 
     return hasStyle ? style : null;
+}
+
+export function excelJsStyleToCellStyle(
+    style?: Partial<ExcelJS.Style>,
+    resolveColor: ExcelColorResolver = colorToHex,
+): CellStyle | null {
+    if (!style) return null;
+    return excelJsCellToStyle(style as unknown as ExcelJS.Cell, resolveColor);
 }
 
 export function applySpreadsheetStyle(cell: ExcelJS.Cell, style: CellStyle) {

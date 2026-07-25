@@ -19,6 +19,7 @@ import {
 import { parseSpreadsheetLink } from '../excel_hyperlink';
 import { expr2xy } from './core/alphabet';
 import { getFontSizePxByPt } from './core/font';
+import CellRange from './core/cell_range';
 
 export interface ExtendToolbarOption {
     tip?: string;
@@ -92,6 +93,8 @@ export interface CellData {
     text: string;
     style?: number;
     merge?: CellMerge;
+    /** Cached Excel result used when the embedded formula engine cannot evaluate a formula. */
+    formulaResult?: string | number | boolean;
     /** false 表示不可编辑（对应 Excel 锁定单元格） */
     editable?: boolean;
 }
@@ -152,6 +155,24 @@ export interface SheetBackgroundImage {
     base64: string;
 }
 
+export interface SheetCommentData {
+    text: string;
+    author?: string;
+}
+
+export interface SheetConditionalFormattingRule extends Record<string, unknown> {
+    type?: string;
+    priority?: number;
+    style?: Record<string, unknown>;
+    /** Spreadsheet-native style used only by the canvas renderer. */
+    displayStyle?: CellStyle;
+}
+
+export interface SheetConditionalFormatting {
+    ref: string;
+    rules: SheetConditionalFormattingRule[];
+}
+
 export interface SheetData {
     name?: string;
     freeze?: string;
@@ -162,6 +183,9 @@ export interface SheetData {
     sheetProtection?: Record<string, unknown>;
     images?: SheetImage[];
     backgroundImage?: SheetBackgroundImage;
+    comments?: Record<string, SheetCommentData>;
+    conditionalFormattings?: SheetConditionalFormatting[];
+    pageSetup?: Record<string, unknown>;
     styles?: CellStyle[];
     merges?: string[];
     cols?: {
@@ -174,6 +198,14 @@ export interface SheetData {
 export interface SpreadsheetData {
     name?: string;
     [index: number]: SheetData;
+}
+
+export interface WorkbookStatistics {
+    sheets: number;
+    populatedCells: number;
+    formulas: number;
+    comments: number;
+    conditionalFormattingRules: number;
 }
 
 export interface CellStyle {
@@ -413,6 +445,13 @@ export class Spreadsheet {
         return this;
     }
 
+    setZoom(scale: number): this {
+        if (this.data.setZoomScale(scale)) {
+            this.sheet.reload();
+        }
+        return this;
+    }
+
     setSaveEnabled(enabled: boolean): this {
         (this.sheet as any).toolbar.setSaveEnabled(enabled);
         return this;
@@ -497,6 +536,132 @@ export class Spreadsheet {
     getSelection(): { ri: number; ci: number; sheetIndex: number } {
         const { ri = 0, ci = 0 } = this.data.selector ?? {};
         return { ri, ci, sheetIndex: this.getActiveSheetIndex() };
+    }
+
+    getSelectedComment(): SheetCommentData | undefined {
+        const { ri, ci } = this.getSelection();
+        return this.data.getComment(ri, ci) ?? undefined;
+    }
+
+    setSelectedComment(text: string, author?: string): this {
+        const { ri, ci } = this.getSelection();
+        this.data.setComment(ri, ci, {
+            text: text.trim(),
+            ...(author ? { author } : {}),
+        });
+        this.reRender();
+        return this;
+    }
+
+    listComments(): Array<SheetCommentData & { sheet: string; address: string }> {
+        return this.datas.flatMap((data: any) => Object.entries(data.comments ?? {}).map(
+            ([address, comment]) => ({
+                ...(comment as SheetCommentData),
+                address,
+                sheet: data.name,
+            }),
+        ));
+    }
+
+    getWorkbookStatistics(): WorkbookStatistics {
+        let populatedCells = 0;
+        let formulas = 0;
+        let comments = 0;
+        let conditionalFormattingRules = 0;
+        this.datas.forEach((data: any) => {
+            data.rows.each((_ri: number, row: RowData) => {
+                Object.values(row?.cells ?? {}).forEach(cell => {
+                    if (cell?.text != null && `${cell.text}` !== '') populatedCells += 1;
+                    if (`${cell?.text ?? ''}`.startsWith('=')) formulas += 1;
+                });
+            });
+            comments += Object.keys(data.comments ?? {}).length;
+            conditionalFormattingRules += (data.conditionalFormattings ?? [])
+                .reduce((total: number, item: SheetConditionalFormatting) => (
+                    total + (item.rules?.length ?? 0)
+                ), 0);
+        });
+        return {
+            sheets: this.datas.length,
+            populatedCells,
+            formulas,
+            comments,
+            conditionalFormattingRules,
+        };
+    }
+
+    isSheetProtected(): boolean {
+        return !!this.data.sheetProtection;
+    }
+
+    toggleSheetProtection(): boolean {
+        this.data.changeData(() => {
+            this.data.sheetProtection = this.data.sheetProtection
+                ? null
+                : { sheet: true };
+        });
+        this.reRender();
+        return this.isSheetProtected();
+    }
+
+    addConditionalFormatting(rule: SheetConditionalFormattingRule): this {
+        const ref = this.data.selector.range.toString();
+        this.data.changeData(() => {
+            this.data.conditionalFormattings = this.data.conditionalFormattings ?? [];
+            const nextPriority = this.data.conditionalFormattings
+                .flatMap((item: SheetConditionalFormatting) => item.rules ?? [])
+                .reduce((highest: number, item: SheetConditionalFormattingRule) => (
+                    Math.max(highest, Number(item.priority) || 0)
+                ), 0) + 1;
+            this.data.conditionalFormattings.push({
+                ref,
+                rules: [{
+                    ...rule,
+                    priority: rule.priority ?? nextPriority,
+                }],
+            });
+        });
+        this.reRender();
+        return this;
+    }
+
+    sortSelection(order: 'asc' | 'desc'): this {
+        const { ri, ci } = this.getSelection();
+        if (!this.data.autoFilter.active()) {
+            const content = this.data.contentRange();
+            const hasValue = (row: number, col: number) => {
+                const cell = this.data.getCell(row, col);
+                return cell != null && `${cell.text ?? ''}`.trim() !== '';
+            };
+            let sri = ri;
+            let eri = ri;
+            while (sri > 0 && hasValue(sri - 1, ci)) sri -= 1;
+            while (eri < content.eri && hasValue(eri + 1, ci)) eri += 1;
+            if (sri === eri) return this;
+
+            const columnHasValue = (col: number) => {
+                for (let row = sri; row <= eri; row += 1) {
+                    if (hasValue(row, col)) return true;
+                }
+                return false;
+            };
+            let sci = ci;
+            let eci = ci;
+            while (sci > 0 && columnHasValue(sci - 1)) sci -= 1;
+            while (eci < content.eci && columnHasValue(eci + 1)) eci += 1;
+            this.data.changeData(() => {
+                this.data.autoFilter.ref = new CellRange(sri, sci, eri, eci).toString();
+            });
+        }
+        const filterRange = this.data.autoFilter.range();
+        if (ci < filterRange.sci || ci > filterRange.eci) return this;
+        const items = this.data.autoFilter.items(
+            ci,
+            (ri: number, columnIndex: number) => this.data.rows.getCell(ri, columnIndex),
+        );
+        this.data.setAutoFilter(ci, order, 'in', Object.keys(items));
+        this.reRender();
+        return this;
     }
 
     autoFitColumns(sheetIndex = this.getActiveSheetIndex()): this {

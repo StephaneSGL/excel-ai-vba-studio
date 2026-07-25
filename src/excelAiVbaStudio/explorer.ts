@@ -100,15 +100,20 @@ function createTreeItem(
 		command?: string;
 		arguments?: unknown[];
 		resourceUri?: vscode.Uri;
+		expanded?: boolean;
+		properties?: ExplorerTreeItem['properties'];
 	} = {}
 ): ExplorerTreeItem {
 	const item = new vscode.TreeItem(
 		label,
 		options.children?.length
-			? vscode.TreeItemCollapsibleState.Collapsed
+			? options.expanded
+				? vscode.TreeItemCollapsibleState.Expanded
+				: vscode.TreeItemCollapsibleState.Collapsed
 			: vscode.TreeItemCollapsibleState.None
 	) as ExplorerTreeItem;
 	item.children = options.children;
+	item.properties = options.properties;
 	item.description = options.description;
 	item.tooltip = options.tooltip;
 	item.contextValue = options.contextValue;
@@ -181,6 +186,96 @@ function moduleFileForRecord(
 	);
 }
 
+function propertyList(
+	record: unknown,
+	extra: Array<{ name: string; value?: unknown }> = []
+): ExplorerTreeItem['properties'] {
+	const properties: NonNullable<ExplorerTreeItem['properties']> = [];
+	const candidate =
+		record && typeof record === 'object'
+			? (record as UnknownRecord)
+			: undefined;
+	for (const [name, keys] of [
+		['(Name)', ['name', 'Name', 'sheetName', 'moduleName']],
+		['Type', ['type', 'kind', 'moduleType']],
+		['Lignes', ['lineCount']],
+		['Plage utilisée', ['range', 'address', 'dimensions']],
+		['Description', ['description', 'message']]
+	] as Array<[string, string[]]>) {
+		const value = candidate
+			? recordDescription(candidate, keys)
+			: undefined;
+		if (value) {
+			properties.push({ name, value });
+		}
+	}
+	for (const property of extra) {
+		if (
+			property.value !== undefined &&
+			property.value !== null &&
+			String(property.value).trim()
+		) {
+			properties.push({
+				name: property.name,
+				value: String(property.value)
+			});
+		}
+	}
+	return properties;
+}
+
+function normalizedModuleType(record: unknown, sourcePath?: string): string {
+	const declared = recordDescription(record, ['type', 'kind', 'moduleType']);
+	if (declared) {
+		return declared.toLocaleLowerCase('en-US');
+	}
+	switch (path.extname(sourcePath || '').toLocaleLowerCase('en-US')) {
+		case '.bas':
+			return 'standard module';
+		case '.frm':
+			return 'userform';
+		case '.cls':
+			return 'class module';
+		default:
+			return 'module';
+	}
+}
+
+function componentTreeItem(
+	module: unknown,
+	index: number,
+	sourceFiles: string[]
+): ExplorerTreeItem {
+	const modulePath = moduleFileForRecord(module, sourceFiles);
+	const type = normalizedModuleType(module, modulePath);
+	const isForm = type.includes('userform');
+	const isDocument = type.includes('document');
+	const isClass = type.includes('class');
+	return createTreeItem(recordLabel(module, `Module ${index + 1}`), {
+		description: recordDescription(module, ['type', 'kind', 'moduleType']),
+		icon: isForm
+			? 'browser'
+			: isDocument
+				? 'file-code'
+				: isClass
+					? 'symbol-class'
+					: 'symbol-method',
+		contextValue: modulePath
+			? isForm
+				? 'excelAiVbaUserFormFile'
+				: 'excelAiVbaModuleFile'
+			: 'excelAiVbaModule',
+		command: modulePath ? EXCEL_AI_COMMANDS.openVbaComponent : undefined,
+		arguments: modulePath ? [vscode.Uri.file(modulePath)] : undefined,
+		resourceUri: modulePath ? vscode.Uri.file(modulePath) : undefined,
+		tooltip: modulePath,
+		properties: propertyList(module, [
+			{ name: 'Fichier', value: modulePath && path.basename(modulePath) },
+			{ name: 'Chemin', value: modulePath }
+		])
+	});
+}
+
 function section(
 	label: string,
 	icon: string,
@@ -205,6 +300,30 @@ async function workbookSections(
 		data.workbook && typeof data.workbook === 'object'
 			? (data.workbook as UnknownRecord)
 			: data;
+	const sourceFiles = await findVbaSourceFiles(context);
+	const modules = toRecordList(
+		firstDefined(data, [
+			['workbook', 'vba', 'modules'],
+			['workbook', 'VBA', 'modules'],
+			['vba', 'modules'],
+			['VBA', 'modules'],
+			['vbaModules'],
+			['modules']
+		])
+	);
+	const effectiveModules = modules.length
+		? modules
+		: sourceFiles.map(sourcePath => ({
+				name: path.basename(sourcePath, path.extname(sourcePath))
+		  }));
+	const components = effectiveModules.map((module, index) => {
+		const sourcePath = moduleFileForRecord(module, sourceFiles);
+		return {
+			record: module,
+			type: normalizedModuleType(module, sourcePath),
+			item: componentTreeItem(module, index, sourceFiles)
+		};
+	});
 	const sheets = toRecordList(
 		firstDefined(data, [['worksheets'], ['sheets'], ['Worksheets']]) ||
 			firstDefined(workbook, [['worksheets'], ['sheets'], ['Worksheets']])
@@ -212,24 +331,33 @@ async function workbookSections(
 
 	sections.push(
 		section(
-			'Feuilles',
+			'Microsoft Excel Objects',
 			'layers',
-			sheets.map((sheet, index) => {
-				const usedRange =
-					sheet &&
-					typeof sheet === 'object' &&
-					(sheet as UnknownRecord).usedRange &&
-					typeof (sheet as UnknownRecord).usedRange === 'object'
-						? ((sheet as UnknownRecord).usedRange as UnknownRecord)
-						: undefined;
-				return createTreeItem(recordLabel(sheet, `Feuille ${index + 1}`), {
-					description:
+			[
+				...components
+					.filter(component => component.type.includes('document'))
+					.map(component => component.item),
+				...sheets.map((sheet, index) => {
+					const usedRange =
+						sheet &&
+							typeof sheet === 'object' &&
+							(sheet as UnknownRecord).usedRange &&
+							typeof (sheet as UnknownRecord).usedRange === 'object'
+								? ((sheet as UnknownRecord).usedRange as UnknownRecord)
+								: undefined;
+					const usedAddress =
 						recordDescription(sheet, ['range', 'address', 'dimensions']) ||
-						recordDescription(usedRange, ['address']),
-					icon: 'table',
-					contextValue: 'excelAiVbaSheet'
-				});
-			})
+						recordDescription(usedRange, ['address']);
+					return createTreeItem(recordLabel(sheet, `Feuille ${index + 1}`), {
+						description: usedAddress,
+						icon: 'table',
+						contextValue: 'excelAiVbaSheet',
+						properties: propertyList(sheet, [
+							{ name: 'Plage utilisée', value: usedAddress }
+						])
+					});
+				})
+			]
 		)
 	);
 
@@ -323,44 +451,46 @@ async function workbookSections(
 		)
 	);
 
-	const sourceFiles = await findVbaSourceFiles(context);
-	const modules = toRecordList(
-		firstDefined(data, [
-			['workbook', 'vba', 'modules'],
-			['workbook', 'VBA', 'modules'],
-			['vba', 'modules'],
-			['VBA', 'modules'],
-			['vbaModules'],
-			['modules']
-		])
-	);
-	const effectiveModules = modules.length
-		? modules
-		: sourceFiles.map(sourcePath => ({
-				name: path.basename(sourcePath, path.extname(sourcePath))
-		  }));
 	sections.push(
 		section(
-			'Modules VBA',
+			'UserForms',
+			'browser',
+			components
+				.filter(component => component.type.includes('userform'))
+				.map(component => component.item)
+		)
+	);
+	sections.push(
+		section(
+			'Modules',
+			'symbol-method',
+			components
+				.filter(component => component.type.includes('standard'))
+				.map(component => component.item)
+		)
+	);
+	sections.push(
+		section(
+			'Modules de classe',
 			'symbol-class',
-			effectiveModules.map((module, index) => {
-				const modulePath = moduleFileForRecord(module, sourceFiles);
-				return createTreeItem(recordLabel(module, `Module ${index + 1}`), {
-					description: recordDescription(module, [
-						'type',
-						'kind',
-						'moduleType'
-					]),
-					icon: 'symbol-method',
-					contextValue: modulePath
-						? 'excelAiVbaModuleFile'
-						: 'excelAiVbaModule',
-					command: modulePath ? 'vscode.open' : undefined,
-					arguments: modulePath ? [vscode.Uri.file(modulePath)] : undefined,
-					resourceUri: modulePath ? vscode.Uri.file(modulePath) : undefined,
-					tooltip: modulePath
-				});
-			})
+			components
+				.filter(component => component.type.includes('class'))
+				.map(component => component.item)
+		)
+	);
+	sections.push(
+		section(
+			'Autres composants VBA',
+			'code',
+			components
+				.filter(
+					component =>
+						!component.type.includes('document') &&
+						!component.type.includes('userform') &&
+						!component.type.includes('standard') &&
+						!component.type.includes('class')
+				)
+				.map(component => component.item)
 		)
 	);
 
@@ -456,27 +586,21 @@ export class ExcelAiVbaExplorerProvider
 		const workbookUri = await this.service.resolveWorkbookUri();
 		const actions = [
 			actionItem(
-				'Exporter le contexte IA',
-				EXCEL_AI_COMMANDS.exportWorkbook,
-				'sparkle-filled',
-				workbookUri
-			),
-			actionItem(
-				'Ouvrir dans Microsoft Excel',
-				EXCEL_AI_COMMANDS.openFullExcel,
-				'window',
-				workbookUri
-			),
-			actionItem(
-				'Ouvrir l’éditeur VBA',
-				EXCEL_AI_COMMANDS.openVbaDeveloper,
+				'Ouvrir le studio VBA dans VS Code',
+				EXCEL_AI_COMMANDS.openVbaExplorer,
 				'code',
 				workbookUri
 			),
 			actionItem(
-				'Extraire et révéler les sources VBA',
-				EXCEL_AI_COMMANDS.openVbaExplorer,
-				'folder-opened',
+				'Analyser avec GitHub Copilot',
+				EXCEL_AI_COMMANDS.askCopilotAboutWorkbook,
+				'copilot',
+				workbookUri
+			),
+			actionItem(
+				'Actualiser les données et sources VBA',
+				EXCEL_AI_COMMANDS.exportWorkbook,
+				'refresh',
 				workbookUri
 			),
 			actionItem(
@@ -485,12 +609,7 @@ export class ExcelAiVbaExplorerProvider
 				'trash'
 			)
 		];
-		const rootItems = [
-			createTreeItem('Actions', {
-				children: actions,
-				icon: 'tools'
-			})
-		];
+		const rootItems: ExplorerTreeItem[] = [];
 
 		if (!workbookUri) {
 			rootItems.push(
@@ -501,16 +620,6 @@ export class ExcelAiVbaExplorerProvider
 			);
 			return rootItems;
 		}
-
-		rootItems.unshift(
-			createTreeItem(path.basename(workbookUri.fsPath), {
-				description: 'classeur actif',
-				tooltip: workbookUri.fsPath,
-				icon: 'file',
-				resourceUri: workbookUri,
-				contextValue: 'excelAiVbaWorkbook'
-			})
-		);
 
 		const context = this.service.getLastContext();
 		if (
@@ -525,6 +634,12 @@ export class ExcelAiVbaExplorerProvider
 					contextValue: 'excelAiVbaInfo'
 				})
 			);
+			rootItems.push(
+				createTreeItem('Actions', {
+					children: actions,
+					icon: 'tools'
+				})
+			);
 			return rootItems;
 		}
 
@@ -533,17 +648,30 @@ export class ExcelAiVbaExplorerProvider
 			const data = JSON.parse(jsonText) as UnknownRecord;
 			const sections = await workbookSections(data, context);
 			rootItems.push(
-				...(sections.length
-					? sections
-					: [
-							createTreeItem(
-								'Le contexte exporté ne contient aucun index détaillé',
-								{
-									icon: 'info',
-									contextValue: 'excelAiVbaInfo'
-								}
-							)
-					  ])
+				createTreeItem(`VBAProject (${path.basename(workbookUri.fsPath)})`, {
+					description: 'projet actif',
+					tooltip: workbookUri.fsPath,
+					icon: 'project',
+					resourceUri: workbookUri,
+					contextValue: 'excelAiVbaWorkbook',
+					children: sections.length
+						? sections
+						: [
+								createTreeItem(
+									'Le contexte exporté ne contient aucun index détaillé',
+									{
+										icon: 'info',
+										contextValue: 'excelAiVbaInfo'
+									}
+								)
+						  ],
+					expanded: true,
+					properties: [
+						{ name: '(Name)', value: path.basename(workbookUri.fsPath) },
+						{ name: 'Chemin', value: workbookUri.fsPath },
+						{ name: 'Projet VBA', value: context.includeVba ? 'extrait' : 'non extrait' }
+					]
+				})
 			);
 		} catch {
 			rootItems.push(
@@ -555,7 +683,59 @@ export class ExcelAiVbaExplorerProvider
 				})
 			);
 		}
+		rootItems.push(
+			createTreeItem('Actions', {
+				children: actions,
+				icon: 'tools'
+			})
+		);
 		return rootItems;
+	}
+}
+
+export class ExcelAiVbaPropertiesProvider
+	implements vscode.TreeDataProvider<ExplorerTreeItem>, vscode.Disposable
+{
+	private readonly changeEmitter = new vscode.EventEmitter<
+		ExplorerTreeItem | undefined
+	>();
+	private selected: ExplorerTreeItem | undefined;
+	readonly onDidChangeTreeData = this.changeEmitter.event;
+
+	setSelected(item: ExplorerTreeItem | undefined): void {
+		this.selected = item;
+		this.changeEmitter.fire(undefined);
+	}
+
+	dispose(): void {
+		this.changeEmitter.dispose();
+	}
+
+	getTreeItem(element: ExplorerTreeItem): vscode.TreeItem {
+		return element;
+	}
+
+	getChildren(element?: ExplorerTreeItem): ExplorerTreeItem[] {
+		if (element) {
+			return [];
+		}
+		const properties = this.selected?.properties || [];
+		if (!properties.length) {
+			return [
+				createTreeItem('Sélectionnez un composant VBA', {
+					icon: 'info',
+					contextValue: 'excelAiVbaInfo'
+				})
+			];
+		}
+		return properties.map(property =>
+			createTreeItem(property.name, {
+				description: property.value,
+				tooltip: `${property.name}: ${property.value}`,
+				icon: property.name === '(Name)' ? 'symbol-property' : undefined,
+				contextValue: 'excelAiVbaProperty'
+			})
+		);
 	}
 }
 
