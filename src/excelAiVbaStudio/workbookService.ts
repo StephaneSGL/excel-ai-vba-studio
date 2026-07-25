@@ -25,6 +25,10 @@ import {
 } from './types';
 import { showUserFormPreview } from './userFormPreview';
 import { VbaStudioPanel } from './vbaStudioPanel';
+import {
+	VbaWritebackResult,
+	VbaWritebackService
+} from './vbaWritebackService';
 
 const DEFAULT_MAX_ROWS = 200;
 const DEFAULT_MAX_COLUMNS = 50;
@@ -199,6 +203,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 	private readonly contextChangeEmitter = new vscode.EventEmitter<void>();
 	private readonly runningExports = new Map<string, Promise<ExportContext | undefined>>();
 	private readonly vbaStudioPanel: VbaStudioPanel;
+	private readonly vbaWritebackService: VbaWritebackService;
 	private lastContext: ExportContext | undefined;
 	private storageRoot: string | undefined;
 	private exportsRoot: string | undefined;
@@ -206,11 +211,19 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 	readonly onDidChangeContext = this.contextChangeEmitter.event;
 
 	constructor(private readonly extensionContext: vscode.ExtensionContext) {
-		this.vbaStudioPanel = new VbaStudioPanel(this.outputChannel);
+		this.vbaWritebackService = new VbaWritebackService(
+			this.extensionContext,
+			this.outputChannel
+		);
+		this.vbaStudioPanel = new VbaStudioPanel(
+			this.outputChannel,
+			this.vbaWritebackService
+		);
 	}
 
 	dispose(): void {
 		this.vbaStudioPanel.dispose();
+		this.vbaWritebackService.dispose();
 		this.contextChangeEmitter.dispose();
 		this.outputChannel.dispose();
 	}
@@ -221,6 +234,55 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 
 	getOutputChannel(): vscode.OutputChannel {
 		return this.outputChannel;
+	}
+
+	async applyVbaSource(
+		context: ExportContext,
+		file: string,
+		source: string,
+		persistSourceFile = false
+	): Promise<VbaWritebackResult> {
+		const sourcePath = path.join(context.paths.vbaDirectory, path.basename(file));
+		if (
+			path.basename(file) !== file ||
+			!pathIsInside(sourcePath, context.paths.vbaDirectory)
+		) {
+			throw new Error('Le composant demandé sort du projet VBA.');
+		}
+		await assertNoReparsePointChain(
+			sourcePath,
+			context.paths.vbaDirectory
+		);
+		const sourceExists = await fs.promises
+			.lstat(sourcePath)
+			.then(stat => stat.isFile() && !stat.isSymbolicLink())
+			.catch(error => {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+					return false;
+				}
+				throw error;
+			});
+		if (persistSourceFile && !sourceExists) {
+			if (path.extname(file).toLocaleLowerCase('en-US') === '.frm') {
+				throw new Error(
+					'La création automatique d’un nouveau UserForm est refusée sans designer .frx sûr.'
+				);
+			}
+			await fs.promises.writeFile(sourcePath, source, {
+				encoding: 'utf8',
+				flag: 'wx'
+			});
+			await this.vbaWritebackService.prepare(context);
+		}
+		const result = await this.vbaWritebackService.applySource(
+			context,
+			file,
+			source
+		);
+		if (persistSourceFile && sourceExists) {
+			await fs.promises.writeFile(sourcePath, source, 'utf8');
+		}
+		return result;
 	}
 
 	getSettings(): ExcelAiSettings {

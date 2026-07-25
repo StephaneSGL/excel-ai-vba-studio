@@ -40,8 +40,11 @@ Visualisez et modifiez les formats sûrs dans VS Code, inspectez les valeurs et 
 - Thèmes clair, sombre et contraste élevé synchronisés automatiquement avec le thème actif de VS Code.
 - Fichiers `.bas`, `.cls` et `.frm` ouverts dans l’éditeur VS Code, avec aperçu interne des UserForms exportés.
 - Dossier VBA ajouté comme racine de l’espace de travail et instructions `.github/copilot-instructions.md` générées pour que GitHub Copilot puisse indexer les sources.
+- Réinjection automatique et transactionnelle des `.bas`, `.cls` et du code des `.frm` existants à chaque sauvegarde VS Code.
+- Création de modules standards et de classes depuis le studio VBA ou GitHub Copilot.
 - Export local borné en Markdown et JSON : valeurs, formules, formats, tableaux, graphiques, noms, liens, validations, commentaires, connexions et métadonnées VBA autorisées.
 - Outil IA référençable `#excelVbaWorkbook`, exécuté uniquement à la demande.
+- Outil IA référençable `#excelVbaWriteModule`, avec sauvegarde, contrôle de concurrence et validation après écriture.
 - Aucune télémétrie de l’extension et aucune clé API gérée par l’extension.
 
 ## Installation
@@ -77,6 +80,7 @@ Le Marketplace Visual Studio n’est pas encore publié. Le dépôt GitHub publi
 3. Exportez un contexte local si vous souhaitez l’inspecter.
 4. Dans un chat IA compatible avec les outils de modèle VS Code, référencez explicitement `#excelVbaWorkbook`.
 5. Utilisez **Ouvrir le studio VBA dans VS Code** pour afficher le projet et ses fichiers réels.
+6. Modifiez puis enregistrez un `.bas`, `.cls` ou `.frm` existant : l’extension réinjecte le code dans le classeur et conserve une sauvegarde vérifiée.
 
 ### Commandes principales
 
@@ -109,12 +113,16 @@ flowchart LR
   File --> Host["Extension host"]
   Explorer["Explorateur Excel & VBA"] --> Host
   Tool["#excelVbaWorkbook"] --> Host
+  WriteTool["#excelVbaWriteModule"] --> Host
   Host --> Bridge["Bridge PowerShell sécurisé"]
   Bridge --> Excel["Instance Excel COM contrôlée"]
   Excel --> Export["Projet VBA et contexte local borné"]
   Export --> Workspace["Racine VBA de l’espace VS Code"]
   Workspace --> Explorer
   Workspace --> Tool
+  Workspace --> WriteTool
+  WriteTool --> Writer["Moteur VBA transactionnel local"]
+  Writer --> File
   Tool -. "partage explicite" .-> AI["Fournisseur IA choisi dans VS Code"]
 ```
 
@@ -126,6 +134,9 @@ Le bundle publié démarre dans `src/extension.ts` et n’enregistre que les sur
 - Les événements, la mise à jour des liens et le calcul automatique sont désactivés pendant l’analyse contrôlée.
 - L’extension ne modifie jamais le paramètre **Trust access to the VBA project object model** du Centre de gestion de la confidentialité Excel.
 - `.xlsm` et `.xls` ne sont jamais réécrits par la grille intégrée.
+- La réinjection VBA travaille sur une copie, valide le hash du classeur et des sources, crée une sauvegarde dans `.excel-ai-vba-backups`, puis remplace le fichier atomiquement.
+- La réinjection refuse les projets VBA signés ou protégés, les chemins réseau et points de réanalyse, ainsi que toute modification du designer d’un UserForm.
+- Le moteur de réinjection ne démarre pas Excel et n’exécute jamais une macro.
 - Les exports sont locaux, limités en taille et supprimables.
 - Le contenu du classeur est traité comme une donnée non fiable, pas comme une instruction pour l’IA.
 - Aucun classeur n’est transmis automatiquement à un fournisseur IA.
@@ -140,7 +151,8 @@ Consultez [SECURITY.md](SECURITY.md) et [PRIVACY.md](PRIVACY.md) avant d’utili
 - Microsoft Excel desktop est actuellement requis en arrière-plan pour l’extraction COM du VBA et des anciens formats, mais aucune fenêtre Excel n’est ouverte par le studio VBA.
 - Les classeurs protégés, corrompus ou restreints par une politique d’entreprise peuvent ne fournir qu’un contexte partiel.
 - L’accès au code source VBA dépend de la politique du Centre de gestion de la confidentialité Excel.
-- Les changements effectués dans les fichiers VBA extraits ne sont pas encore réinjectés automatiquement dans le classeur.
+- Le code d’un UserForm existant peut être réinjecté ; la création ou la modification de son designer et de son `.frx` reste volontairement refusée.
+- La grille `.xlsm` reste en lecture seule pendant que le pipeline d’édition native des cellules est stabilisé séparément.
 
 ## Feuille de route
 

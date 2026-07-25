@@ -26,7 +26,7 @@ canonique ni être poussés vers son remote.
 
 ## Chantiers
 
-- Exposer à GitHub Copilot un outil transactionnel d’écriture VBA.
+- Étendre l’outil transactionnel d’écriture VBA livré en `0.2.0` à la création sûre de designers UserForm.
 - Réintégrer le pipeline d’édition native XLSM dans la version `0.1.7+`.
 - Choisir les composants utiles du pont C# sans maintenir deux extensions
   concurrentes.

@@ -4,6 +4,26 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.2.0] - 2026-07-26
+
+### Added
+
+- Added transactional VBA source write-back for local `.xlsm` and `.xlam` workbooks.
+- Added the prompt-referenceable `#excelVbaWriteModule` tool for GitHub Copilot.
+- Added automatic reinjection when an exported `.bas`, `.cls`, or existing `.frm` source is saved in VS Code.
+- Added safe creation of standard and class modules from the VBA Studio or Copilot.
+- Bundled a self-contained Windows x64 pyOpenVBA helper and a real UserForm regression fixture.
+
+### Security
+
+- Every changed workbook receives a verified timestamped backup before atomic replacement.
+- Stale workbooks, signed or password-protected VBA projects, reparse points, network paths, oversized requests, and UserForm designer changes are refused.
+- The write-back engine never starts Excel, executes macros, edits the Office registry, or changes AccessVBOM.
+
+### Tests
+
+- Added round-trip coverage for standard modules, new modules, existing UserForm code-behind, unchanged designer streams, stale-write rejection, OOXML preservation, and absence of new Excel processes.
+
 ## [0.1.7] - 2026-07-25
 
 ### Added

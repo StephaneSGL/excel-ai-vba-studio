@@ -8,6 +8,7 @@ import {
 	pathIsInside
 } from './security';
 import { ExportContext } from './types';
+import { VbaWritebackService } from './vbaWritebackService';
 
 type ComponentKind =
 	| 'document'
@@ -176,10 +177,16 @@ export class VbaStudioPanel implements vscode.Disposable {
 	private componentFiles = new Map<string, string>();
 	private savingFile: string | undefined;
 
-	constructor(private readonly outputChannel: vscode.OutputChannel) {
+	constructor(
+		private readonly outputChannel: vscode.OutputChannel,
+		private readonly writebackService: VbaWritebackService
+	) {
 		this.disposables.push(
 			vscode.workspace.onDidChangeTextDocument(event => {
 				void this.handleExternalDocumentChange(event.document);
+			}),
+			vscode.workspace.onDidSaveTextDocument(document => {
+				void this.handleExternalDocumentSave(document);
 			})
 		);
 	}
@@ -217,6 +224,7 @@ export class VbaStudioPanel implements vscode.Disposable {
 				}
 			);
 		}
+		await this.writebackService.prepare(context);
 	}
 
 	async open(context: ExportContext): Promise<void> {
@@ -595,7 +603,31 @@ export class VbaStudioPanel implements vscode.Disposable {
 			if (!applied || !(await document.save())) {
 				throw new Error('VS Code a refusé l’enregistrement du module.');
 			}
-			await this.postStatus('saved', `${file} enregistré — Copilot voit ce fichier.`);
+		} catch (error) {
+			await this.postStatus(
+				'error',
+				`Enregistrement du fichier refusé : ${(error as Error).message}`
+			);
+			this.savingFile = undefined;
+			return;
+		}
+		try {
+			const result = await this.writebackService.applySource(
+				this.currentContext,
+				file,
+				source
+			);
+			await this.postStatus(
+				'saved',
+				result.changed
+					? `${file} enregistré et réinjecté dans le classeur.`
+					: `${file} déjà synchronisé avec le classeur.`
+			);
+		} catch (error) {
+			await this.postStatus(
+				'error',
+				`Fichier enregistré, mais réinjection refusée : ${(error as Error).message}`
+			);
 		} finally {
 			this.savingFile = undefined;
 		}
@@ -610,6 +642,13 @@ export class VbaStudioPanel implements vscode.Disposable {
 			kindValue === 'class' || kindValue === 'userform'
 				? kindValue
 				: 'module';
+		if (kind === 'userform') {
+			await this.postStatus(
+				'error',
+				'Création UserForm refusée : la v1 préserve et modifie le code des formulaires existants, mais ne fabrique pas encore un designer .frx sûr.'
+			);
+			return;
+		}
 		const settings: Record<
 			'module' | 'class' | 'userform',
 			{ prefix: string; extension: string }
@@ -642,8 +681,24 @@ export class VbaStudioPanel implements vscode.Disposable {
 				flag: 'wx'
 			}
 		);
-		await this.postProject(file);
-		await this.postStatus('saved', `${file} créé — accessible à Copilot.`);
+		try {
+			await this.writebackService.prepare(context);
+			const source = await fs.promises.readFile(sourcePath, 'utf8');
+			const result = await this.writebackService.applySource(context, file, source);
+			await this.postProject(file);
+			await this.postStatus(
+				'saved',
+				result.changed
+					? `${file} créé et réinjecté dans le classeur.`
+					: `${file} créé — déjà synchronisé.`
+			);
+		} catch (error) {
+			await this.postProject(file);
+			await this.postStatus(
+				'error',
+				`${file} créé dans VS Code, mais non réinjecté : ${(error as Error).message}`
+			);
+		}
 	}
 
 	private async openSourceFile(fileValue: unknown): Promise<void> {
@@ -704,6 +759,58 @@ export class VbaStudioPanel implements vscode.Disposable {
 			file,
 			source: document.getText()
 		});
+	}
+
+	private async handleExternalDocumentSave(
+		document: vscode.TextDocument
+	): Promise<void> {
+		const context = this.currentContext;
+		if (
+			!this.panel ||
+			!context ||
+			document.uri.scheme !== 'file' ||
+			!pathIsInside(document.uri.fsPath, context.paths.vbaDirectory)
+		) {
+			return;
+		}
+		const file = path.basename(document.uri.fsPath);
+		const extension = path.extname(file).toLocaleLowerCase('en-US');
+		if (
+			this.savingFile === file ||
+			!SOURCE_EXTENSIONS.has(extension) ||
+			extension === '.txt'
+		) {
+			return;
+		}
+		try {
+			if (!this.componentFiles.has(file)) {
+				if (extension === '.frm') {
+					throw new Error(
+						'Un nouveau UserForm exige un designer .frx ; utilisez un formulaire modèle existant.'
+					);
+				}
+				await this.writebackService.prepare(context);
+			}
+			const result = await this.writebackService.applySource(
+				context,
+				file,
+				document.getText()
+			);
+			if (!this.componentFiles.has(file)) {
+				await this.postProject(file);
+			}
+			await this.postStatus(
+				'saved',
+				result.changed
+					? `${file} réinjecté automatiquement dans le classeur.`
+					: `${file} déjà synchronisé avec le classeur.`
+			);
+		} catch (error) {
+			await this.postStatus(
+				'error',
+				`Réinjection automatique refusée : ${(error as Error).message}`
+			);
+		}
 	}
 
 	private async postStatus(

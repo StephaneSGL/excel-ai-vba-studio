@@ -2,7 +2,7 @@
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
   "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -62,7 +62,8 @@
   "activationEvents": [
     "onCustomEditor:excelAiVbaStudio.officeViewer",
     "onView:excelAiVbaExplorer",
-    "onLanguageModelTool:excel_ai_vba_readWorkbook"
+    "onLanguageModelTool:excel_ai_vba_readWorkbook",
+    "onLanguageModelTool:excel_ai_vba_writeModule"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -148,6 +149,37 @@
               "description": "Format du contexte retourné au modèle."
             }
           },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "excel_ai_vba_writeModule",
+        "displayName": "Réinjecter un module VBA",
+        "toolReferenceName": "excelVbaWriteModule",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(save)",
+        "userDescription": "Réinjecte transactionnellement un composant VBA dans un classeur XLSM/XLAM, avec sauvegarde et validation.",
+        "modelDescription": "Utilise cet outil après avoir lu ou créé un fichier VBA dans le projet exporté par Excel AI & VBA Studio. Il met à jour les composants existants et peut ajouter un module .bas ou .cls. Il crée une sauvegarde, refuse les projets signés ou protégés, ne lance aucune macro et ne modifie jamais AccessVBOM. Pour un UserForm existant, seul le code est modifiable ; le designer et le .frx doivent rester identiques. La création d’un nouveau UserForm est refusée sans designer sûr.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "workbookPath": {
+              "type": "string",
+              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code. Omettre pour utiliser le classeur actif."
+            },
+            "componentFile": {
+              "type": "string",
+              "description": "Nom sans chemin du composant .bas, .cls ou .frm. Un nouveau .bas ou .cls peut être créé."
+            },
+            "source": {
+              "type": "string",
+              "description": "Source complet du composant. Limite : 2 000 000 de caractères."
+            }
+          },
+          "required": [
+            "componentFile",
+            "source"
+          ],
           "additionalProperties": false
         }
       }
@@ -293,12 +325,14 @@
     "validate:workbook-access": "node tools/validate-noninteractive-workbook-access.mjs",
     "validate:macro-readonly": "node tools/validate-macro-readonly.mjs",
     "validate:vba-studio": "node tools/validate-vba-studio.mjs",
+    "validate:vba-writeback": "node tools/validate-vba-writeback.mjs",
+    "test:vba-writeback": "node test/vba-writeback-regression.mjs",
     "validate:theme-sync": "node tools/validate-theme-sync.mjs",
     "validate:integrated-features": "node tools/validate-integrated-features.mjs",
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:vba-studio && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:vba-studio && npm run validate:vba-writeback && npm run test:vba-writeback && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

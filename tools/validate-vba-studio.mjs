@@ -15,6 +15,10 @@ const exporter = readFileSync(
   resolve(root, 'scripts/office-ai-export.ps1'),
   'utf8',
 );
+const writeback = readFileSync(
+  resolve(root, 'src/excelAiVbaStudio/vbaWritebackService.ts'),
+  'utf8',
+);
 
 assert.doesNotMatch(
   workbookService,
@@ -36,6 +40,11 @@ assert.ok(
   'the webview message receiver must be registered before HTML can post ready',
 );
 assert.match(panel, /workspace\.applyEdit/, 'VBA Studio saves must update real VS Code documents');
+assert.match(
+  panel,
+  /onDidSaveTextDocument[\s\S]+?writebackService\.applySource/,
+  'saved Copilot edits must trigger automatic workbook reinjection',
+);
 assert.match(panel, /workbench\.action\.chat\.open/, 'VBA Studio must expose a Copilot action');
 assert.match(panel, /copilot-instructions\.md|#excelVbaWorkbook/, 'Copilot context is missing');
 for (const extension of ['.bas', '.cls', '.frm']) {
@@ -43,6 +52,9 @@ for (const extension of ['.bas', '.cls', '.frm']) {
 }
 assert.match(panel, /Content-Security-Policy/, 'the VBA Studio webview needs a CSP');
 assert.match(panel, /MAX_SOURCE_CHARACTERS/, 'VBA source writes must remain bounded');
+assert.match(writeback, /expectedWorkbookSha256/, 'write-back must reject stale workbook baselines');
+assert.match(writeback, /excel-ai-vba-writeback\.exe/, 'the bundled binary write-back helper is missing');
+assert.match(writeback, /designerSha256/, 'UserForm designer changes must be detected');
 assert.match(
   exporter,
   /previous exporter manifest[\s\S]+?managedNames/,

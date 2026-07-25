@@ -35,6 +35,9 @@ const required = [
   'LICENSES/POLYFORM-NONCOMMERCIAL-1.0.0.md',
   'LICENSES/OFFICE-VIEWER-MIT.txt',
   'LICENSES/X-DATA-SPREADSHEET-MIT.txt',
+  'LICENSES/PYOPENVBA-MIT.txt',
+  'LICENSES/PYINSTALLER-GPL2-EXCEPTION.txt',
+  'LICENSES/PYTHON-3.11-PSF.txt',
   'PRIVACY.md',
   'NOTICE.md',
   'THIRD_PARTY_NOTICES.md',
@@ -44,6 +47,7 @@ const required = [
   'out/webview/index.html',
   'scripts/office-ai-export.ps1',
   'scripts/open-excel-developer.ps1',
+  'bin/win32-x64/excel-ai-vba-writeback.exe',
 ];
 for (const file of required) {
   if (!files.includes(file)) {
@@ -57,6 +61,7 @@ const forbiddenPrefixes = [
   '.vscode/',
   'docs/',
   'icons/',
+  'native/',
   'node_modules/',
   'src/',
   'syntaxes/',

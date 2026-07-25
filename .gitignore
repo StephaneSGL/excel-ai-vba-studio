@@ -10,3 +10,6 @@ yarn.lock
 pnpm-lock.yaml
 pnpm-workspace.yaml
 test/output
+.tmp-vba-smoke/
+__pycache__/
+*.pyc

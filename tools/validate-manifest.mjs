@@ -95,10 +95,19 @@ expect(
 );
 
 const tools = manifest.contributes?.languageModelTools ?? [];
-expect(tools.length === 1, 'exactly one language-model tool must be declared');
-expect(tools[0]?.name === 'excel_ai_vba_readWorkbook', 'unexpected language-model tool name');
-expect(tools[0]?.toolReferenceName === 'excelVbaWorkbook', 'unexpected language-model tool reference');
-expect(tools[0]?.canBeReferencedInPrompt === true, 'language-model tool must be prompt-referenceable');
+expect(tools.length === 2, 'exactly two language-model tools must be declared');
+const readTool = tools.find(({ name }) => name === 'excel_ai_vba_readWorkbook');
+const writeTool = tools.find(({ name }) => name === 'excel_ai_vba_writeModule');
+expect(readTool?.toolReferenceName === 'excelVbaWorkbook', 'unexpected workbook read tool reference');
+expect(writeTool?.toolReferenceName === 'excelVbaWriteModule', 'unexpected VBA write tool reference');
+expect(
+  tools.every(({ canBeReferencedInPrompt }) => canBeReferencedInPrompt === true),
+  'language-model tools must be prompt-referenceable',
+);
+expect(
+  JSON.stringify(writeTool?.inputSchema?.required) === JSON.stringify(['componentFile', 'source']),
+  'VBA write tool must require componentFile and source',
+);
 
 const settings = manifest.contributes?.configuration?.properties ?? {};
 expect(settings['excelAiVbaStudio.maxRows']?.default === 200, 'maxRows default must be 200');
