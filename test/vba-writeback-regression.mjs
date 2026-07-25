@@ -12,6 +12,11 @@ import { spawnSync } from 'node:child_process';
 import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
+if (process.platform !== 'win32') {
+  console.log('VBA write-back integration skipped: bundled helper targets Windows x64.');
+  process.exit(0);
+}
+
 const root = resolve(import.meta.dirname, '..');
 const helper = resolve(root, 'bin/win32-x64/excel-ai-vba-writeback.exe');
 const fixture = resolve(root, 'test/fixtures/DemoExcelUserForm.xlsm');
