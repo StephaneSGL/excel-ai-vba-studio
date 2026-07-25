@@ -36,6 +36,7 @@ Visualisez et modifiez les formats sûrs dans VS Code, inspectez les valeurs et 
 - Aperçu d’impression A4 intégré, avec indicateurs conditionnels et résultats de formules structurées.
 - Explorateur **Projet Excel & VBA** inspiré du VBE, avec **Microsoft Excel Objects**, **UserForms**, **Modules**, **Modules de classe** et **Références**.
 - Panneau **Propriétés VBA** synchronisé avec la sélection.
+- Onglet **VBA Studio** complet dans l’éditeur VS Code : explorateur de projet, propriétés, code, procédures et création de composants dans une seule interface.
 - Fichiers `.bas`, `.cls` et `.frm` ouverts dans l’éditeur VS Code, avec aperçu interne des UserForms exportés.
 - Dossier VBA ajouté comme racine de l’espace de travail et instructions `.github/copilot-instructions.md` générées pour que GitHub Copilot puisse indexer les sources.
 - Export local borné en Markdown et JSON : valeurs, formules, formats, tableaux, graphiques, noms, liens, validations, commentaires, connexions et métadonnées VBA autorisées.
@@ -80,7 +81,7 @@ Le Marketplace Visual Studio n’est pas encore publié. Le dépôt GitHub publi
 
 | Commande | Fonction |
 | --- | --- |
-| `Excel AI & VBA Studio : Ouvrir le studio VBA dans VS Code` | Extrait et affiche le projet VBA dans l’Explorateur VS Code. |
+| `Excel AI & VBA Studio : Ouvrir le studio VBA dans VS Code` | Ouvre l’interface VBE intégrée et ses sources VBA réelles dans VS Code. |
 | `Excel AI & VBA Studio : Exporter le contexte du classeur` | Produit les exports Markdown et JSON locaux. |
 | `Excel AI & VBA Studio : Exporter et copier le contexte` | Exporte puis copie un contexte borné. |
 | `Excel AI & VBA Studio : Ouvrir le projet VBA dans VS Code` | Ouvre les fichiers `.bas`, `.cls` et `.frm` et les expose à Copilot. |

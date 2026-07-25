@@ -4,6 +4,19 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.1.4] - 2026-07-25
+
+### Added
+
+- Added a complete VBE-style editor tab inside VS Code with project tree, properties, module/procedure selectors, line numbers, source editing, and module/class/UserForm creation.
+- Connected the integrated editor to real `.bas`, `.cls`, and `.frm` workspace files so GitHub Copilot and the native VS Code editor share the same sources.
+- Added an in-studio Copilot action backed by the generated workspace instructions and `#excelVbaWorkbook`.
+- Added a starter `Module1.bas` for `.xlsx` workbooks that do not yet contain an embedded VBA project.
+
+### Fixed
+
+- Kept the Copilot-indexed VBA directory stable during refresh, fixing Windows `EBUSY: resource busy or locked, rmdir ...\\vba`.
+
 ## [0.1.3] - 2026-07-25
 
 ### Added

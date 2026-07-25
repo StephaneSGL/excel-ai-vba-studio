@@ -24,6 +24,7 @@ import {
 	ToolInput
 } from './types';
 import { showUserFormPreview } from './userFormPreview';
+import { VbaStudioPanel } from './vbaStudioPanel';
 
 const DEFAULT_MAX_ROWS = 200;
 const DEFAULT_MAX_COLUMNS = 50;
@@ -197,15 +198,19 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 	private readonly outputChannel = vscode.window.createOutputChannel('Excel AI & VBA Studio');
 	private readonly contextChangeEmitter = new vscode.EventEmitter<void>();
 	private readonly runningExports = new Map<string, Promise<ExportContext | undefined>>();
+	private readonly vbaStudioPanel: VbaStudioPanel;
 	private lastContext: ExportContext | undefined;
 	private storageRoot: string | undefined;
 	private exportsRoot: string | undefined;
 
 	readonly onDidChangeContext = this.contextChangeEmitter.event;
 
-	constructor(private readonly extensionContext: vscode.ExtensionContext) {}
+	constructor(private readonly extensionContext: vscode.ExtensionContext) {
+		this.vbaStudioPanel = new VbaStudioPanel(this.outputChannel);
+	}
 
 	dispose(): void {
+		this.vbaStudioPanel.dispose();
 		this.contextChangeEmitter.dispose();
 		this.outputChannel.dispose();
 	}
@@ -816,13 +821,8 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			runningExport = (async () => {
 				const { exportsRoot } = await this.ensureStorage();
 				await ensureOwnedDirectory(paths.outputDirectory, exportsRoot);
-				// Never expose stale VBA artifacts from a prior authorized export.
-				if (await pathExists(paths.vbaDirectory)) {
-					await removeOwnedDirectory(
-						paths.vbaDirectory,
-						paths.outputDirectory
-					);
-				}
+				// Keep this directory stable once VS Code/Copilot indexes it.
+				// The exporter replaces only its managed artifacts in place.
 				await ensureOwnedDirectory(paths.vbaDirectory, paths.outputDirectory);
 				const settings = this.getSettings();
 				await vscode.window.withProgress(
@@ -1118,19 +1118,10 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		}
 		let projectUri: vscode.Uri | undefined;
 		try {
+			await this.vbaStudioPanel.prepare(result);
 			projectUri = await this.writeCopilotWorkspaceFiles(result);
 			await this.exposeVbaFolderToWorkspace(result);
-			const sources = await this.listVbaSourceUris(result);
-			if (sources.length) {
-				await this.openVbaComponent(sources[0]);
-			} else {
-				const document = await vscode.workspace.openTextDocument(projectUri);
-				await vscode.window.showTextDocument(document, {
-					preview: false,
-					preserveFocus: false,
-					viewColumn: vscode.ViewColumn.Active
-				});
-			}
+			await this.vbaStudioPanel.open(result);
 		} catch (error) {
 			this.outputChannel.appendLine(
 				`[vba] Préparation de l’espace VS Code incomplète : ${(error as Error).message}`
@@ -1142,12 +1133,6 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 					preserveFocus: false
 				});
 			}
-		}
-		await vscode.commands.executeCommand('workbench.view.explorer');
-		try {
-			await vscode.commands.executeCommand('excelAiVbaExplorer.focus');
-		} catch {
-			// The view contribution may not be visible in older VS Code builds.
 		}
 	}
 
@@ -1195,6 +1180,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		if (!result) {
 			return;
 		}
+		await this.vbaStudioPanel.prepare(result);
 		await this.writeCopilotWorkspaceFiles(result);
 		await this.exposeVbaFolderToWorkspace(result);
 		const prompt = [

@@ -2012,27 +2012,87 @@ function Write-VbaArtifacts {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $validatedTargetDirectory = [IO.Path]::GetFullPath($TargetDirectory).TrimEnd($separatorCharacters)
-    foreach ($managedPattern in @('*.bas', '*.cls', '*.frm', '*.frx', '*.txt', 'manifest.json', 'README.md')) {
-        foreach ($managedFile in [IO.Directory]::GetFiles($validatedTargetDirectory, $managedPattern, [IO.SearchOption]::TopDirectoryOnly)) {
-            $managedFullPath = Assert-SafeManagedFile `
-                -FilePath $managedFile `
+    # Remove only files recorded by the previous exporter manifest. Files created
+    # in VBA Studio are working sources for VS Code/Copilot and must survive a
+    # workbook refresh when they are not embedded in the source workbook.
+    $managedNames = @{
+        'manifest.json' = $true
+        'README.md' = $true
+    }
+    $previousManifestPath = [IO.Path]::Combine(
+        $validatedTargetDirectory,
+        'manifest.json'
+    )
+    if ([IO.File]::Exists($previousManifestPath)) {
+        try {
+            $previousManifestPath = Assert-SafeManagedFile `
+                -FilePath $previousManifestPath `
                 -OwnedDirectory $validatedTargetDirectory `
-                -Label 'Managed VBA artifact'
-            $managedParent = [IO.Path]::GetDirectoryName($managedFullPath).TrimEnd($separatorCharacters)
-            if (-not [string]::Equals($managedParent, $validatedTargetDirectory, [StringComparison]::OrdinalIgnoreCase)) {
-                throw "Refusing to remove a managed VBA artifact outside the validated target directory: $managedFullPath"
+                -Label 'Previous VBA manifest'
+            $previousManifest = [IO.File]::ReadAllText($previousManifestPath) |
+                ConvertFrom-Json
+            foreach ($previousModule in @($previousManifest.modules)) {
+                foreach ($propertyName in @('file', 'resourceFile')) {
+                    $property = $previousModule.PSObject.Properties[$propertyName]
+                    if (
+                        $null -eq $property -or
+                        [string]::IsNullOrWhiteSpace([string]$property.Value)
+                    ) {
+                        continue
+                    }
+                    $recordedName = [string]$property.Value
+                    $leafName = [IO.Path]::GetFileName($recordedName)
+                    $extension = [IO.Path]::GetExtension($leafName).ToLowerInvariant()
+                    if (
+                        [string]::Equals($recordedName, $leafName, [StringComparison]::Ordinal) -and
+                        $extension -in @('.bas', '.cls', '.frm', '.frx', '.txt')
+                    ) {
+                        $managedNames[$leafName] = $true
+                    }
+                }
             }
-            # Revalidate immediately before deletion to reject a swapped junction.
-            [void](Assert-SafeManagedFile `
-                -FilePath $managedFullPath `
-                -OwnedDirectory $validatedTargetDirectory `
-                -Label 'Managed VBA artifact')
-            [IO.File]::Delete($managedFullPath)
         }
+        catch {
+            Add-ExportWarning $Warnings $null 'workbook.vba.artifacts' (
+                'The previous VBA manifest could not be used for selective cleanup: ' +
+                $_.Exception.Message
+            )
+        }
+    }
+    foreach ($managedName in @($managedNames.Keys)) {
+        $managedFile = [IO.Path]::Combine(
+            $validatedTargetDirectory,
+            [string]$managedName
+        )
+        if (-not [IO.File]::Exists($managedFile)) {
+            continue
+        }
+        $managedFullPath = Assert-SafeManagedFile `
+            -FilePath $managedFile `
+            -OwnedDirectory $validatedTargetDirectory `
+            -Label 'Managed VBA artifact'
+        $managedParent = [IO.Path]::GetDirectoryName($managedFullPath).TrimEnd($separatorCharacters)
+        if (-not [string]::Equals($managedParent, $validatedTargetDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove a managed VBA artifact outside the validated target directory: $managedFullPath"
+        }
+        [void](Assert-SafeManagedFile `
+            -FilePath $managedFullPath `
+            -OwnedDirectory $validatedTargetDirectory `
+            -Label 'Managed VBA artifact')
+        [IO.File]::Delete($managedFullPath)
     }
 
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
     $usedFileNames = @{}
+    foreach ($existingPattern in @('*.bas', '*.cls', '*.frm', '*.txt')) {
+        foreach ($existingFile in [IO.Directory]::GetFiles(
+            $validatedTargetDirectory,
+            $existingPattern,
+            [IO.SearchOption]::TopDirectoryOnly
+        )) {
+            $usedFileNames[[IO.Path]::GetFileName($existingFile).ToLowerInvariant()] = $true
+        }
+    }
     $manifestModules = New-Object 'System.Collections.Generic.List[object]'
     $moduleIndex = 0
     foreach ($module in @($VbaData.modules)) {

@@ -300,7 +300,9 @@ async function workbookSections(
 		data.workbook && typeof data.workbook === 'object'
 			? (data.workbook as UnknownRecord)
 			: data;
-	const sourceFiles = await findVbaSourceFiles(context);
+	const sourceFiles = context.includeVba
+		? await findVbaSourceFiles(context)
+		: [];
 	const modules = toRecordList(
 		firstDefined(data, [
 			['workbook', 'vba', 'modules'],
