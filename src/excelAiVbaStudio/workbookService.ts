@@ -4,10 +4,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
-	authorizeWorkbookRead,
 	assertNoReparsePointChain,
 	assertOwnedDirectory,
 	assertLocalPath,
+	canonicalizeWorkbookUri,
 	ensureLocalDirectory,
 	ensureOwnedDirectory,
 	pathIsInside,
@@ -798,7 +798,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 
 		let canonicalUri: vscode.Uri | undefined;
 		try {
-			canonicalUri = await authorizeWorkbookRead(requestedUri, { includeVba });
+			canonicalUri = await canonicalizeWorkbookUri(requestedUri);
 		} catch (error) {
 			if (options.requestedByTool) {
 				throw error;
@@ -943,12 +943,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			return false;
 		}
 
-		const authorized = await authorizeWorkbookRead(context.workbookUri, {
-			includeVba: context.includeVba
-		});
-		if (!authorized) {
-			return false;
-		}
+		await canonicalizeWorkbookUri(context.workbookUri);
 		const { exportsRoot } = await this.ensureStorage();
 		await assertOwnedDirectory(context.paths.outputDirectory, exportsRoot);
 		await assertNoReparsePointChain(
@@ -999,14 +994,9 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			requestedUri &&
 			sameFile(requestedUri.fsPath, this.lastContext.workbookUri.fsPath)
 		) {
-			const authorized = await authorizeWorkbookRead(this.lastContext.workbookUri, {
-				includeVba: this.lastContext.includeVba
-			});
-			if (authorized) {
-				await this.validateContextOutputs(this.lastContext.paths);
-				await this.openMarkdown(this.lastContext.markdownUri);
-				return;
-			}
+			await canonicalizeWorkbookUri(this.lastContext.workbookUri);
+			await this.validateContextOutputs(this.lastContext.paths);
+			await this.openMarkdown(this.lastContext.markdownUri);
 			return;
 		}
 		await this.exportWorkbook(requestedUri, { open: true, includeVba: false });
@@ -1041,9 +1031,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 
 		let canonicalUri: vscode.Uri | undefined;
 		try {
-			canonicalUri = await authorizeWorkbookRead(requestedUri, {
-				includeVba: false
-			});
+			canonicalUri = await canonicalizeWorkbookUri(requestedUri);
 		} catch (error) {
 			await vscode.window.showErrorMessage((error as Error).message);
 			return false;

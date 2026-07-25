@@ -290,6 +290,7 @@
     "build": "vite build --mode=production",
     "vscode:prepublish": "npm run build",
     "validate:manifest": "node tools/validate-manifest.mjs",
+    "validate:workbook-access": "node tools/validate-noninteractive-workbook-access.mjs",
     "validate:macro-readonly": "node tools/validate-macro-readonly.mjs",
     "validate:vba-studio": "node tools/validate-vba-studio.mjs",
     "validate:theme-sync": "node tools/validate-theme-sync.mjs",
@@ -297,8 +298,8 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:macro-readonly && npm run validate:vba-studio && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
-    "package": "vsce package --target win32-x64 --no-dependencies",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:vba-studio && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"
   },
