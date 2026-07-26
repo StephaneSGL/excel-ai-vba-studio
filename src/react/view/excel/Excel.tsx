@@ -13,15 +13,19 @@ import {
 } from "./excel_meta.ts";
 import { detectCsvEncoding } from "./csvEncoding.ts";
 import { loadSheets } from "./excel_reader.ts";
-import Spreadsheet from './x-spreadsheet/index';
+import Spreadsheet, { type SheetData } from './x-spreadsheet/index';
 import FindReplacePanel, { type FindReplacePanelHandle } from './FindReplacePanel';
 import { parseSpreadsheetLink } from './excel_hyperlink';
 import { initExcelLocale, t } from './excel_i18n';
 import ExcelRibbon from './ExcelRibbon';
+import { buildNativeExcelEditPlan } from './native_edit_diff';
 
 initExcelLocale();
 
-type EmbeddedReadOnlyReason = 'macro-preservation' | 'file-permissions';
+type EmbeddedReadOnlyReason =
+    | 'macro-preservation'
+    | 'native-excel-editing'
+    | 'file-permissions';
 
 type ExcelViewState = { ri: number; ci: number; sheetIndex: number };
 
@@ -80,6 +84,10 @@ function isFindPanelTarget(target: EventTarget | null): boolean {
     return target instanceof Element && Boolean(target.closest('.frp-panel'));
 }
 
+function cloneSheets(sheets: SheetData[]): SheetData[] {
+    return JSON.parse(JSON.stringify(sheets)) as SheetData[];
+}
+
 function ExcelViewer() {
     const { message, modal } = App.useApp();
     const [loading, setLoading] = useState(true)
@@ -101,6 +109,8 @@ function ExcelViewer() {
     const csvEncodingRef = useRef<'utf8' | 'gbk'>('utf8')
     const csvDelimiterRef = useRef(',')
     const initialFormattingRef = useRef('')
+    const initialSheetsRef = useRef<SheetData[]>([])
+    const nativeSavePendingRef = useRef(false)
     const lastMacroBlockedNoticeRef = useRef(0)
 
     const notifyMacroWriteBlocked = useCallback(() => {
@@ -156,7 +166,10 @@ function ExcelViewer() {
     }, [message]);
 
     const handleSaveAs = useCallback(() => {
-        if (readOnlyReasonRef.current === 'macro-preservation') {
+        if (
+            readOnlyReasonRef.current === 'macro-preservation'
+            || readOnlyReasonRef.current === 'native-excel-editing'
+        ) {
             notifyMacroWriteBlocked();
             return;
         }
@@ -175,9 +188,38 @@ function ExcelViewer() {
             return;
         }
 
-        const { export_xlsx } = await loadExcelWriter();
         const ext = extRef.current.replace(/^\./, '').toLowerCase();
         const sheets = spreadSheet.getData();
+        if (readOnlyReasonRef.current === 'native-excel-editing') {
+            if (nativeSavePendingRef.current) {
+                return;
+            }
+            const plan = buildNativeExcelEditPlan(
+                initialSheetsRef.current,
+                sheets
+            );
+            if (plan.unsupportedChanges.length > 0) {
+                message.warning({
+                    duration: 6,
+                    content: t(
+                        'viewer.nativeUnsupportedChange',
+                        plan.unsupportedChanges.slice(0, 3).join(', ')
+                    ),
+                    className: 'excel-validation-error-message',
+                });
+                spreadSheet.setSaveEnabled(true);
+                return;
+            }
+            if (plan.operations.length === 0) {
+                spreadSheet.setSaveEnabled(false);
+                return;
+            }
+            nativeSavePendingRef.current = true;
+            handler.emit('saveNative', plan.operations);
+            return;
+        }
+
+        const { export_xlsx } = await loadExcelWriter();
         const csvEncoding = csvEncodingRef.current;
         const csvDelimiter = csvDelimiterRef.current;
 
@@ -252,12 +294,15 @@ function ExcelViewer() {
         } catch (error) {
             console.error(`Failed to save Excel file: ${(error as Error).message}`);
         }
-    }, [modal, handleSaveAs, notifyMacroWriteBlocked]);
+    }, [message, modal, handleSaveAs, notifyMacroWriteBlocked]);
 
     const confirmSaveAs = useCallback(async (fmt: string) => {
         const spreadSheet = spreadSheetRef.current;
         if (!spreadSheet) return;
-        if (readOnlyReasonRef.current === 'macro-preservation') {
+        if (
+            readOnlyReasonRef.current === 'macro-preservation'
+            || readOnlyReasonRef.current === 'native-excel-editing'
+        ) {
             setSaveAsVisible(false);
             notifyMacroWriteBlocked();
             return;
@@ -358,7 +403,9 @@ function ExcelViewer() {
 
         const initSpreadsheet = async (buffer: ArrayBuffer, payload: any) => {
             const fileReadOnly = payload.readOnly === true;
-            const preserveMacros = payload.readOnlyReason === 'macro-preservation';
+            const preserveMacros =
+                payload.readOnlyReason === 'macro-preservation'
+                || payload.readOnlyReason === 'native-excel-editing';
             if (payload.ext?.match(/csv/i)) {
                 csvEncodingRef.current = detectCsvEncoding(buffer);
             }
@@ -381,6 +428,8 @@ function ExcelViewer() {
             spreadSheetRef.current = spreadSheet;
             setActiveSpreadsheet(spreadSheet);
             spreadSheet.loadData(sheets);
+            initialSheetsRef.current = cloneSheets(sheets);
+            nativeSavePendingRef.current = false;
             setLoading(false);
             requestAnimationFrame(() => spreadSheet.resize());
             if (!fileReadOnly) {
@@ -440,6 +489,7 @@ function ExcelViewer() {
             documentCacheIdRef.current = payload.documentCacheId ?? '';
             const fileReadOnly = payload.readOnly === true;
             const reason = payload.readOnlyReason === 'macro-preservation'
+                || payload.readOnlyReason === 'native-excel-editing'
                 || payload.readOnlyReason === 'file-permissions'
                 ? payload.readOnlyReason as EmbeddedReadOnlyReason
                 : null;
@@ -463,7 +513,20 @@ function ExcelViewer() {
                 setLoading(false);
             });
         }).on("saveDone", () => {
+            nativeSavePendingRef.current = false;
+            const spreadSheet = spreadSheetRef.current;
+            if (spreadSheet) {
+                initialSheetsRef.current = cloneSheets(spreadSheet.getData());
+                spreadSheet.setSaveEnabled(false);
+            }
+            message.success({
+                duration: 2,
+                content: t('viewer.saveSuccess'),
+                className: 'excel-save-success-message',
+            });
         }).on("writeBlocked", (payload) => {
+            nativeSavePendingRef.current = false;
+            spreadSheetRef.current?.setSaveEnabled(true);
             message.warning({
                 duration: 4,
                 content: payload?.message || t('viewer.macroWriteBlocked'),
@@ -492,7 +555,10 @@ function ExcelViewer() {
             <ExcelRibbon
                 spreadsheet={activeSpreadsheet}
                 readOnly={readOnly}
-                allowSaveAs={readOnlyReason !== 'macro-preservation'}
+                allowSaveAs={
+                    readOnlyReason !== 'macro-preservation'
+                    && readOnlyReason !== 'native-excel-editing'
+                }
                 showEditInVscode={isCsvLikeExt(extRef.current)}
                 onAutoFitColumns={handleAutoFitColumns}
                 onOpenVbaDeveloper={() => handler.emit('openVbaDeveloper')}

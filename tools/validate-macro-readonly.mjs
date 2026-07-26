@@ -33,7 +33,7 @@ const protectedExtensions = [
 assert.deepEqual(
   protectedExtensions,
   ['.xls', '.xlsm'],
-  'only .xlsm and .xls should be forced into macro-preservation mode'
+  'only .xlsm and .xls should require a macro-safe write path'
 );
 
 for (const editable of ['.xlsx', '.csv', '.tsv']) {
@@ -46,7 +46,17 @@ for (const editable of ['.xlsx', '.csv', '.tsv']) {
 assert.match(
   officeContent,
   /readOnlyReason:\s*'macro-preservation'/,
-  'open payload must explain macro-preservation read-only mode'
+  'legacy .xls payloads must explain macro-preservation read-only mode'
+);
+assert.match(
+  officeContent,
+  /supportsNativeMacroEditing[\s\S]+?=== '\.xlsm'/,
+  '.xlsm must use the targeted native editing mode'
+);
+assert.match(
+  officeContent,
+  /readOnly:\s*false,\s*readOnlyReason:\s*'native-excel-editing'/,
+  'writable .xlsm files must open in editable native mode'
 );
 assert.match(
   officeContent,
@@ -66,9 +76,24 @@ assert.match(
   'direct save must reject macro-preservation documents in the extension host'
 );
 assert.match(
+  saveHandler,
+  /readOnlyReason === 'native-excel-editing'/,
+  'direct binary save must reject native-editing XLSM documents'
+);
+assert.match(
   saveAsHandler,
   /readOnlyReason === 'macro-preservation'/,
   'Save As must reject macro-preservation documents in the extension host'
+);
+assert.match(
+  saveAsHandler,
+  /readOnlyReason === 'native-excel-editing'/,
+  'Save As must reject native-editing XLSM documents'
+);
+assert.match(
+  commonHandler,
+  /\.on\('saveNative'[\s\S]+?applyNativeExcelEdits/,
+  'XLSM save must use targeted native Excel operations'
 );
 assert.match(
   commonHandler,
@@ -84,7 +109,7 @@ assert.match(
 assert.match(
   excelUi,
   /allowSaveAs:\s*!preserveMacros/,
-  'macro-preservation documents must suppress Save As in the grid'
+  'macro-preserving modes must suppress Save As in the grid'
 );
 assert.match(
   excelUi,
@@ -95,6 +120,16 @@ assert.match(
   excelUi,
   /viewer\.macroWriteBlocked/,
   'the webview must show an explicit blocked-write message'
+);
+assert.match(
+  excelUi,
+  /buildNativeExcelEditPlan/,
+  'the webview must diff XLSM edits before saving'
+);
+assert.match(
+  excelUi,
+  /handler\.emit\('saveNative', plan\.operations\)/,
+  'supported XLSM edits must be sent to the native save handler'
 );
 assert.match(
   excelUi,
@@ -119,5 +154,5 @@ assert.match(
 );
 
 console.log(
-  'Macro safety validation passed: .xlsm/.xls are view-only; .xlsx/.csv/.tsv remain editable.'
+  'Macro safety validation passed: .xlsm uses native editing, .xls remains protected, and .xlsx/.csv/.tsv remain editable.'
 );

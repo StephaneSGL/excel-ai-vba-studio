@@ -1,11 +1,14 @@
 import { Handler } from '@/common/handler';
+import type { NativeExcelCellEdit } from '@/common/nativeExcelEdits';
 import { parseSafeExternalUri } from '@/common/webviewUri';
+import { applyNativeExcelEdits } from '@/provider/nativeExcelBridge';
 import {
     emitFileOfficeOpen,
     emitVirtualOfficeOpen,
     getEmbeddedSpreadsheetReadOnlyState,
     isVirtualUri,
     requiresNativeExcelForEditing,
+    supportsNativeMacroEditing,
     type EmbeddedSpreadsheetReadOnlyReason,
 } from '@/provider/handlers/officeContent';
 import { basename, join, parse } from 'path';
@@ -16,6 +19,8 @@ const fileSaveTimes: Record<string, number> = {};
 const INTERNAL_SAVE_CHANGE_WINDOW_MS = 1500;
 const MACRO_WRITE_BLOCKED_MESSAGE =
     'Protection VBA : les fichiers .xlsm et .xls sont en lecture seule dans l’éditeur intégré afin de préserver leurs macros et données héritées. Ouvrez le fichier dans Microsoft Excel pour le modifier.';
+const NATIVE_BINARY_WRITE_BLOCKED_MESSAGE =
+    'La sauvegarde XLSM complète est bloquée pour préserver le projet VBA. Utilisez la sauvegarde native ciblée de l’extension.';
 const SAVE_FORMATS: Record<string, { label: string; exts: string[] }> = {
     xlsx: { label: 'Excel Workbook', exts: ['xlsx'] },
     xlsm: { label: 'Excel Macro-Enabled Workbook', exts: ['xlsm'] },
@@ -59,9 +64,21 @@ function notifyMacroWriteBlocked(handler: Handler): void {
     void vscode.window.showWarningMessage(MACRO_WRITE_BLOCKED_MESSAGE);
 }
 
+function notifyNativeBinaryWriteBlocked(handler: Handler): void {
+    handler.emit('writeBlocked', {
+        reason: 'native-excel-editing',
+        message: NATIVE_BINARY_WRITE_BLOCKED_MESSAGE,
+    });
+    void vscode.window.showWarningMessage(NATIVE_BINARY_WRITE_BLOCKED_MESSAGE);
+}
+
 export function handleCommonEvent(uri: Uri, handler: Handler): void {
     let readOnlyReason: EmbeddedSpreadsheetReadOnlyReason | undefined =
-        requiresNativeExcelForEditing(uri) ? 'macro-preservation' : undefined;
+        supportsNativeMacroEditing(uri)
+            ? 'native-excel-editing'
+            : requiresNativeExcelForEditing(uri)
+              ? 'macro-preservation'
+              : undefined;
 
     const refreshReadOnlyState = async () => {
         const state = await getEmbeddedSpreadsheetReadOnlyState(uri);
@@ -69,8 +86,8 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
         return state;
     };
 
-    const send = async (): Promise<void> => {
-        if (shouldSkipFileChange(uri)) {
+    const send = async (force = false): Promise<void> => {
+        if (!force && shouldSkipFileChange(uri)) {
             return;
         }
         await refreshReadOnlyState();
@@ -101,6 +118,10 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
                 notifyMacroWriteBlocked(handler);
                 return;
             }
+            if (state.readOnlyReason === 'native-excel-editing') {
+                notifyNativeBinaryWriteBlocked(handler);
+                return;
+            }
             const bytes = toBytes(content);
             if (state.readOnly) {
                 handler.emit('saveAs', { content: [...bytes] });
@@ -116,6 +137,10 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
             const state = await refreshReadOnlyState();
             if (state.readOnlyReason === 'macro-preservation') {
                 notifyMacroWriteBlocked(handler);
+                return;
+            }
+            if (state.readOnlyReason === 'native-excel-editing') {
+                notifyNativeBinaryWriteBlocked(handler);
                 return;
             }
             const ext = (payload?.ext ?? 'xlsx').toLowerCase();
@@ -148,6 +173,36 @@ export function handleCommonEvent(uri: Uri, handler: Handler): void {
                 target,
                 'excelAiVbaStudio.officeViewer'
             );
+        })
+        .on('saveNative', async (operations: NativeExcelCellEdit[]) => {
+            try {
+                const state = await refreshReadOnlyState();
+                if (
+                    state.readOnly ||
+                    state.readOnlyReason !== 'native-excel-editing' ||
+                    uri.scheme !== 'file'
+                ) {
+                    notifyNativeBinaryWriteBlocked(handler);
+                    return;
+                }
+
+                fileSaveTimes[uri.toString()] = Date.now();
+                await applyNativeExcelEdits(uri.fsPath, operations);
+                fileSaveTimes[uri.toString()] = Date.now();
+                setDirty(handler, uri, false);
+                handler.emit('saveDone');
+                await send(true);
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : 'La sauvegarde native XLSM a échoué.';
+                handler.emit('writeBlocked', {
+                    reason: 'native-excel-editing',
+                    message,
+                });
+                void vscode.window.showErrorMessage(message);
+            }
         })
         .on('openVbaDeveloper', () =>
             vscode.commands.executeCommand(

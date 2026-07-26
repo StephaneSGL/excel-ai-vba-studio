@@ -5,6 +5,7 @@ import { Uri, workspace, type Webview } from 'vscode';
 
 export type EmbeddedSpreadsheetReadOnlyReason =
     | 'macro-preservation'
+    | 'native-excel-editing'
     | 'file-permissions';
 
 const MACRO_OR_LEGACY_EXTENSIONS = new Set(['.xlsm', '.xls']);
@@ -18,22 +19,33 @@ export function requiresNativeExcelForEditing(uri: Uri): boolean {
     return MACRO_OR_LEGACY_EXTENSIONS.has(extname(uri.fsPath).toLowerCase());
 }
 
+/** XLSM files can be edited safely through targeted native Excel operations. */
+export function supportsNativeMacroEditing(uri: Uri): boolean {
+    return extname(uri.fsPath).toLowerCase() === '.xlsm';
+}
+
 export async function getEmbeddedSpreadsheetReadOnlyState(
     uri: Uri
 ): Promise<{
     readOnly: boolean;
     readOnlyReason?: EmbeddedSpreadsheetReadOnlyReason;
 }> {
-    if (requiresNativeExcelForEditing(uri)) {
-        return {
-            readOnly: true,
-            readOnlyReason: 'macro-preservation',
-        };
-    }
     if (await isUriReadOnly(uri)) {
         return {
             readOnly: true,
             readOnlyReason: 'file-permissions',
+        };
+    }
+    if (supportsNativeMacroEditing(uri)) {
+        return {
+            readOnly: false,
+            readOnlyReason: 'native-excel-editing',
+        };
+    }
+    if (requiresNativeExcelForEditing(uri)) {
+        return {
+            readOnly: true,
+            readOnlyReason: 'macro-preservation',
         };
     }
     return { readOnly: false };

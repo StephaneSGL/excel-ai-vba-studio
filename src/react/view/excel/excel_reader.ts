@@ -2,6 +2,10 @@ import type ExcelJS from '@cweijan/exceljs';
 import type * as XLSX from 'xlsx';
 import { decodeCsvBuffer } from './csvEncoding';
 import { DEFAULT_ROW_HEIGHT_PX, excelFreezeToExpr, excelRowHeightToPx, readAutofilterRef } from './excel_meta';
+import {
+    normalizeOoxmlRelationshipTargets,
+    normalizeSpreadsheetMlElementPrefixes,
+} from './ooxml_namespace';
 import { readWorksheetSortStateXml } from './excel_sort_state';
 import {
     createExcelColorResolver,
@@ -269,26 +273,48 @@ const applyRowHeight = (rows: RowMap, ri: number, excelRow: ExcelJS.Row) => {
     }
 };
 
-const readWorkbookSortStateXml = async (buffer: ArrayBuffer) => {
+const prepareExcelJsWorkbook = async (buffer: ArrayBuffer) => {
     const { default: JSZip } = await import('jszip');
     const zip = await JSZip.loadAsync(buffer);
-    const entries = new Map<number, ReturnType<typeof readWorksheetSortStateXml>>();
-    const worksheetFiles = Object.keys(zip.files)
-        .map((name) => {
-            const match = /^xl\/worksheets\/sheet(\d+)\.xml$/i.exec(name);
-            return match ? { index: Number(match[1]) - 1, name } : null;
-        })
-        .filter((it): it is { index: number; name: string } => Boolean(it))
-        .sort((a, b) => a.index - b.index);
+    const sortStateXmlMap =
+        new Map<number, ReturnType<typeof readWorksheetSortStateXml>>();
+    let changed = false;
 
-    for (let i = 0; i < worksheetFiles.length; i += 1) {
-        const file = worksheetFiles[i];
-        const xml = await zip.file(file.name)?.async('string');
-        if (!xml) continue;
-        entries.set(file.index, readWorksheetSortStateXml(xml));
+    for (const [name, entry] of Object.entries(zip.files)) {
+        if (
+            entry.dir
+            || (!name.toLowerCase().endsWith('.xml')
+                && !name.toLowerCase().endsWith('.rels'))
+        ) {
+            continue;
+        }
+        const xml = await entry.async('string');
+        const prefixed = normalizeSpreadsheetMlElementPrefixes(xml);
+        const normalized = name.toLowerCase().endsWith('.rels')
+            ? normalizeOoxmlRelationshipTargets(prefixed.xml, name)
+            : { xml: prefixed.xml, changed: false };
+        if (prefixed.changed || normalized.changed) {
+            zip.file(name, normalized.xml);
+            changed = true;
+        }
+
+        const worksheet = /^xl\/worksheets\/sheet(\d+)\.xml$/i.exec(name);
+        if (worksheet) {
+            sortStateXmlMap.set(
+                Number(worksheet[1]) - 1,
+                readWorksheetSortStateXml(normalized.xml),
+            );
+        }
     }
 
-    return entries;
+    const excelJsBuffer = changed
+        ? await zip.generateAsync({
+            type: 'arraybuffer',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 },
+        })
+        : buffer;
+    return { excelJsBuffer, sortStateXmlMap };
 };
 
 const convertExcelJsWorksheet = (
@@ -428,12 +454,13 @@ const convertExcelJsWorkbook = (
 };
 
 const loadWithExcelJs = async (buffer: ArrayBuffer): Promise<ExcelData> => {
-    const sortStateXmlPromise = readWorkbookSortStateXml(buffer);
-    const { default: ExcelJSRuntime } = await import('@cweijan/exceljs');
+    const [prepared, { default: ExcelJSRuntime }] = await Promise.all([
+        prepareExcelJsWorkbook(buffer),
+        import('@cweijan/exceljs'),
+    ]);
     const workbook = new ExcelJSRuntime.Workbook();
-    await workbook.xlsx.load(buffer);
-    const sortStateXmlMap = await sortStateXmlPromise;
-    return convertExcelJsWorkbook(workbook, sortStateXmlMap);
+    await workbook.xlsx.load(prepared.excelJsBuffer);
+    return convertExcelJsWorkbook(workbook, prepared.sortStateXmlMap);
 };
 
 const sheetJsColWidthToPx = (col?: XLSX.ColInfo) => {

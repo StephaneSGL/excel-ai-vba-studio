@@ -13,6 +13,15 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Added automatic reinjection when an exported `.bas`, `.cls`, or existing `.frm` source is saved in VS Code.
 - Added safe creation of standard and class modules from the VBA Studio or Copilot.
 - Bundled a self-contained Windows x64 pyOpenVBA helper and a real UserForm regression fixture.
+- Added targeted native `.xlsm` editing for cell values, formulas, number
+  formats, fonts, alignment, fills, and borders without leaving VS Code.
+
+### Fixed
+
+- Removed the embedded read-only VBA banner for writable `.xlsm` workbooks;
+  legacy `.xls` files remain protected.
+- Made the XLSX reader accept namespaced SpreadsheetML elements and absolute
+  package relationship targets.
 
 ### Security
 
@@ -23,6 +32,8 @@ The project uses semantic versions. Marketplace Preview status is represented by
 ### Tests
 
 - Added round-trip coverage for standard modules, new modules, existing UserForm code-behind, unchanged designer streams, stale-write rejection, OOXML preservation, and absence of new Excel processes.
+- Added real Excel integration coverage for targeted XLSM edits, conditional
+  formatting, form buttons, OOXML parts, and bit-for-bit VBA/UserForm streams.
 
 ## [0.1.7] - 2026-07-25
 
