@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$PythonPath = 'python'
+)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -18,11 +20,28 @@ $buildRoot = Join-Path ([IO.Path]::GetTempPath()) (
 )
 $venv = Join-Path $buildRoot 'venv'
 $python = Join-Path $venv 'Scripts\python.exe'
+$previousPythonHashSeed = $env:PYTHONHASHSEED
+$previousSourceDateEpoch = $env:SOURCE_DATE_EPOCH
 
 try {
+    # PyInstaller documents both values as required inputs for reproducible
+    # Windows builds. Keep them fixed so CI can compare the shipped helper
+    # byte-for-byte with a clean rebuild from this repository.
+    $env:PYTHONHASHSEED = '1'
+    $env:SOURCE_DATE_EPOCH = '1704067200'
     [void][IO.Directory]::CreateDirectory($buildRoot)
     [void][IO.Directory]::CreateDirectory($outputDirectory)
-    & py -3.11 -m venv $venv
+    $bootstrapPython = (Get-Command $PythonPath -ErrorAction Stop).Source
+    $pythonVersion = & $bootstrapPython -c (
+        'import platform; print(platform.python_version())'
+    )
+    if ($LASTEXITCODE -ne 0 -or [string]$pythonVersion -cne '3.11.9') {
+        throw (
+            'The reproducible helper build requires Python 3.11.9 exactly; ' +
+            "found $pythonVersion at $bootstrapPython."
+        )
+    }
+    & $bootstrapPython -m venv $venv
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not create the isolated Python 3.11 build environment.'
     }
@@ -52,6 +71,8 @@ try {
     [Console]::Out.WriteLine("SHA256|$hash")
 }
 finally {
+    $env:PYTHONHASHSEED = $previousPythonHashSeed
+    $env:SOURCE_DATE_EPOCH = $previousSourceDateEpoch
     if ([IO.Directory]::Exists($buildRoot)) {
         Remove-Item -LiteralPath $buildRoot -Recurse -Force
     }

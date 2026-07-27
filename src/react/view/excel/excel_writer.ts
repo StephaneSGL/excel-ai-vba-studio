@@ -269,7 +269,9 @@ export async function exportSaveAs(
         const csvContent = XLSX.utils.sheet_to_csv(dataToSheetJs(sheets[0]), { FS: fs });
         const bytes = encodeCsvText(csvContent, csvEncoding);
         handler.emit('saveAs', { content: [...bytes], ext });
+        return;
     }
+    throw new Error(`Unsupported spreadsheet save format: ${ext || '(none)'}`);
 }
 
 export async function export_xlsx(

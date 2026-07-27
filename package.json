@@ -338,6 +338,7 @@
     "validate:vba-studio": "node tools/validate-vba-studio.mjs",
     "validate:vba-writeback": "node tools/validate-vba-writeback.mjs",
     "test:vba-writeback": "node test/vba-writeback-regression.mjs",
+    "test:vba-atomic": "python test/atomic-writeback-regression.py",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
     "test:native-diff": "node test/native-edit-regression.mjs",
     "test:native-xlsm": "node test/native-xlsm-integration.mjs",
@@ -346,7 +347,7 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-writeback && npm run test:vba-writeback && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-writeback && npm run test:vba-writeback && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

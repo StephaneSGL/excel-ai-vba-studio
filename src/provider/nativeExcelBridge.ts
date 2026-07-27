@@ -66,7 +66,7 @@ function parseOwnedExcelProcessId(output: string): number | undefined {
         : undefined;
 }
 
-async function getFileSha256(filePath: string): Promise<string> {
+export async function getFileSha256(filePath: string): Promise<string> {
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(filePath)) {
         hash.update(chunk);
@@ -177,7 +177,8 @@ function validateNativeEdits(
 
 export async function applyNativeExcelEdits(
     workbookPath: string,
-    operations: NativeExcelCellEdit[]
+    operations: NativeExcelCellEdit[],
+    expectedWorkbookSha256: string
 ): Promise<NativeExcelEditResult> {
     const canonicalWorkbookPath = await fs.realpath(workbookPath);
     await assertNoReparsePointChain(canonicalWorkbookPath);
@@ -185,7 +186,9 @@ export async function applyNativeExcelEdits(
         canonicalWorkbookPath,
         operations
     );
-    const expectedWorkbookSha256 = await getFileSha256(canonicalWorkbookPath);
+    if (!/^[0-9a-f]{64}$/.test(expectedWorkbookSha256)) {
+        throw new Error('Native edit requires the SHA-256 baseline loaded by the editor.');
+    }
     const payload: NativeExcelEditPayload = {
         version: 2,
         transactionId: randomUUID().toLowerCase(),

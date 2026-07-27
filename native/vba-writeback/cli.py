@@ -19,7 +19,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from pyopenvba.cfb import CFB
 from pyopenvba.excel import ExcelFile
@@ -257,6 +257,68 @@ def designer_stream_hashes(workbook: ExcelFile, form_names: set[str]) -> dict[st
     return hashes
 
 
+def project_stream_fingerprint(workbook: ExcelFile) -> dict[str, Any]:
+    cfb = CFB.from_bytes(workbook.vba_project_bytes())
+    streams: dict[str, str] = {}
+    storages: list[str] = []
+
+    def walk_storage(storage_index: int, prefix: str) -> None:
+        storage = cfb._directory[storage_index]  # pyOpenVBA 3.1.0 pinned API
+        for child_index in sorted(cfb._collect_subtree(storage.child_id)):
+            child = cfb._directory[child_index]
+            child_path = f"{prefix}/{child.name}" if prefix else child.name
+            if child.obj_type == 1:
+                storages.append(child_path)
+                walk_storage(child_index, child_path)
+            elif child.obj_type == 2:
+                streams[child_path] = sha256_bytes(cfb._read_stream(child))
+
+    walk_storage(0, "")
+    inventory = {
+        "streams": dict(sorted(streams.items())),
+        "storages": sorted(storages),
+    }
+    encoded = json.dumps(
+        inventory,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    return {
+        "sha256": sha256_bytes(encoded),
+        "streamCount": len(streams),
+        "storageCount": len(storages),
+    }
+
+
+def fingerprint_request(request: dict[str, Any]) -> dict[str, Any]:
+    workbook_path = validate_workbook_path(request)
+    with ExcelFile(workbook_path) as workbook:
+        project = workbook.vba_project()
+        validation_errors = workbook.validate()
+        if validation_errors:
+            raise WritebackError(
+                "VBA_PROJECT_INVALID",
+                "VBA project validation failed: " + "; ".join(validation_errors),
+            )
+        signature = detect_signature(workbook._get_cfb())
+        fingerprint = project_stream_fingerprint(workbook)
+        return {
+            "ok": True,
+            "operation": "fingerprint",
+            "workbookSha256": sha256_file(workbook_path),
+            "projectName": project.name,
+            "protected": bool(
+                project.protection is not None and project.protection.has_password
+            ),
+            "signed": signature.present,
+            "signatureKinds": signature.kinds,
+            "projectFingerprintSha256": fingerprint["sha256"],
+            "projectStreamCount": fingerprint["streamCount"],
+            "projectStorageCount": fingerprint["storageCount"],
+        }
+
+
 def create_backup_path(workbook_path: Path, original_hash: str) -> Path:
     backup_directory = workbook_path.parent / ".excel-ai-vba-backups"
     assert_no_reparse_point_chain(backup_directory)
@@ -275,6 +337,333 @@ def create_backup_path(workbook_path: Path, original_hash: str) -> Path:
         "BACKUP_NAME_UNAVAILABLE",
         "A unique backup path could not be allocated.",
     )
+
+
+def replace_file_with_backup(
+    workbook_path: Path,
+    replacement_path: Path,
+    displaced_path: Path,
+) -> None:
+    """Atomically install replacement_path and capture the actual destination."""
+    if os.name != "nt":
+        raise WritebackError(
+            "WINDOWS_REQUIRED",
+            "Transactional VBA write-back requires Windows ReplaceFile semantics.",
+        )
+
+    import ctypes
+    from ctypes import wintypes
+
+    replace_file = ctypes.WinDLL("kernel32", use_last_error=True).ReplaceFileW
+    replace_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+    ]
+    replace_file.restype = wintypes.BOOL
+    if not replace_file(
+        str(workbook_path),
+        str(replacement_path),
+        str(displaced_path),
+        0,
+        None,
+        None,
+    ):
+        error_code = ctypes.get_last_error()
+        raise OSError(
+            error_code,
+            ctypes.FormatError(error_code),
+            str(workbook_path),
+        )
+
+
+def move_file_without_replacement(source_path: Path, target_path: Path) -> None:
+    """Atomically move a same-volume recovery file only if target is absent."""
+    if os.name != "nt":
+        raise WritebackError(
+            "WINDOWS_REQUIRED",
+            "Transactional VBA write-back requires Windows move semantics.",
+        )
+
+    import ctypes
+    from ctypes import wintypes
+
+    move_file = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+    move_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+    ]
+    move_file.restype = wintypes.BOOL
+    move_file_write_through = 0x00000008
+    if not move_file(
+        str(source_path),
+        str(target_path),
+        move_file_write_through,
+    ):
+        error_code = ctypes.get_last_error()
+        raise OSError(
+            error_code,
+            ctypes.FormatError(error_code),
+            str(target_path),
+        )
+
+
+def preserve_displaced_candidate(
+    workbook_path: Path,
+    candidate_path: Path,
+    primary_backup_path: Path,
+) -> Path:
+    candidate_absolute = Path(os.path.abspath(candidate_path))
+    primary_absolute = Path(os.path.abspath(primary_backup_path))
+    if candidate_absolute == primary_absolute:
+        return primary_backup_path
+
+    candidate_hash = sha256_file(candidate_path)
+    preserved_path = create_backup_path(workbook_path, candidate_hash)
+    shutil.copy2(candidate_path, preserved_path)
+    if sha256_file(preserved_path) != candidate_hash:
+        raise WritebackError(
+            "BACKUP_VALIDATION_FAILED",
+            "A concurrently displaced workbook backup could not be verified.",
+        )
+    return preserved_path
+
+
+def restore_missing_workbook(
+    workbook_path: Path,
+    candidate_path: Path,
+    primary_backup_path: Path,
+) -> Path:
+    """Restore candidate only while the workbook path remains absent."""
+    candidate_hash = sha256_file(candidate_path)
+    preserved_path = preserve_displaced_candidate(
+        workbook_path,
+        candidate_path,
+        primary_backup_path,
+    )
+    temporary_paths: list[Path] = []
+    try:
+        for _ in range(8):
+            if workbook_path.exists():
+                return preserved_path
+
+            restore_handle, restore_name = tempfile.mkstemp(
+                prefix=f".{workbook_path.stem}.excel-ai-missing-restore-",
+                suffix=workbook_path.suffix,
+                dir=workbook_path.parent,
+            )
+            os.close(restore_handle)
+            restore_path = Path(restore_name)
+            temporary_paths.append(restore_path)
+            shutil.copy2(candidate_path, restore_path)
+            if sha256_file(restore_path) != candidate_hash:
+                raise WritebackError(
+                    "BACKUP_VALIDATION_FAILED",
+                    "A missing workbook recovery copy could not be verified.",
+                )
+            try:
+                move_file_without_replacement(restore_path, workbook_path)
+            except OSError:
+                if workbook_path.exists():
+                    return preserved_path
+                continue
+
+            if workbook_path.exists():
+                return preserved_path
+
+        raise WritebackError(
+            "ROLLBACK_FAILED",
+            "The workbook path remained unavailable during recovery. "
+            f"The displaced version is preserved at {preserved_path}.",
+        )
+    finally:
+        for temporary_path in temporary_paths:
+            try:
+                if temporary_path.exists():
+                    temporary_path.unlink()
+            except OSError:
+                pass
+
+
+def restore_displaced_workbook(
+    workbook_path: Path,
+    displaced_path: Path,
+    installed_hash: str,
+    primary_backup_path: Path,
+) -> Path:
+    """Restore the latest file displaced by this process without blind overwrite."""
+    candidate_path = displaced_path
+    cleanup_paths: list[Path] = []
+    try:
+        for _ in range(8):
+            preserved_path = preserve_displaced_candidate(
+                workbook_path,
+                candidate_path,
+                primary_backup_path,
+            )
+            if (
+                Path(os.path.abspath(candidate_path))
+                != Path(os.path.abspath(primary_backup_path))
+                and candidate_path not in cleanup_paths
+            ):
+                cleanup_paths.append(candidate_path)
+            try:
+                current_hash = sha256_file(workbook_path)
+            except FileNotFoundError:
+                return restore_missing_workbook(
+                    workbook_path,
+                    preserved_path,
+                    preserved_path,
+                )
+            if current_hash != installed_hash:
+                return preserved_path
+
+            restore_handle, restore_name = tempfile.mkstemp(
+                prefix=f".{workbook_path.stem}.excel-ai-restore-",
+                suffix=workbook_path.suffix,
+                dir=workbook_path.parent,
+            )
+            os.close(restore_handle)
+            restore_path = Path(restore_name)
+            cleanup_paths.append(restore_path)
+            shutil.copy2(candidate_path, restore_path)
+
+            capture_handle, capture_name = tempfile.mkstemp(
+                prefix=f".{workbook_path.stem}.excel-ai-displaced-",
+                suffix=workbook_path.suffix,
+                dir=workbook_path.parent,
+            )
+            os.close(capture_handle)
+            capture_path = Path(capture_name)
+            capture_path.unlink()
+
+            candidate_hash = sha256_file(restore_path)
+            try:
+                replace_file_with_backup(
+                    workbook_path,
+                    restore_path,
+                    capture_path,
+                )
+            except OSError as error:
+                recovery_candidate = (
+                    capture_path if capture_path.exists() else candidate_path
+                )
+                if workbook_path.exists():
+                    preserved_path = preserve_displaced_candidate(
+                        workbook_path,
+                        recovery_candidate,
+                        primary_backup_path,
+                    )
+                else:
+                    preserved_path = restore_missing_workbook(
+                        workbook_path,
+                        recovery_candidate,
+                        primary_backup_path,
+                    )
+                if (
+                    Path(os.path.abspath(recovery_candidate))
+                    != Path(os.path.abspath(primary_backup_path))
+                    and recovery_candidate not in cleanup_paths
+                ):
+                    cleanup_paths.append(recovery_candidate)
+                raise WritebackError(
+                    "ROLLBACK_FAILED",
+                    "A recovery swap failed after preserving or restoring the "
+                    f"displaced workbook at {preserved_path}: {error}",
+                ) from error
+
+            captured_hash = sha256_file(capture_path)
+            if captured_hash == installed_hash:
+                cleanup_paths.append(capture_path)
+                return preserved_path
+
+            candidate_path = capture_path
+            installed_hash = candidate_hash
+
+        preserved_path = preserve_displaced_candidate(
+            workbook_path,
+            candidate_path,
+            primary_backup_path,
+        )
+        if (
+            Path(os.path.abspath(candidate_path))
+            != Path(os.path.abspath(primary_backup_path))
+            and candidate_path not in cleanup_paths
+        ):
+            cleanup_paths.append(candidate_path)
+        raise WritebackError(
+            "ROLLBACK_FAILED",
+            "Repeated concurrent writes prevented automatic restoration. "
+            f"The last displaced version is preserved at {preserved_path}.",
+        )
+    finally:
+        for temporary_path in cleanup_paths:
+            try:
+                if temporary_path.exists():
+                    temporary_path.unlink()
+            except OSError:
+                pass
+
+
+def handle_failed_atomic_replace(
+    workbook_path: Path,
+    replacement_path: Path,
+    backup_path: Path,
+    replacement_hash: str,
+    error: OSError,
+) -> NoReturn:
+    """Recover every documented partial ReplaceFileW failure state."""
+    if backup_path.exists():
+        if workbook_path.exists():
+            try:
+                current_hash = sha256_file(workbook_path)
+            except FileNotFoundError:
+                current_hash = ""
+            if current_hash == replacement_hash:
+                recovery_path = restore_displaced_workbook(
+                    workbook_path,
+                    backup_path,
+                    replacement_hash,
+                    backup_path,
+                )
+            else:
+                recovery_path = preserve_displaced_candidate(
+                    workbook_path,
+                    backup_path,
+                    backup_path,
+                )
+        else:
+            recovery_path = restore_missing_workbook(
+                workbook_path,
+                backup_path,
+                backup_path,
+            )
+        raise WritebackError(
+            "WORKBOOK_REPLACE_FAILED",
+            "The atomic replacement failed after displacing the workbook. "
+            f"The displaced version was restored or preserved at {recovery_path}: {error}",
+        ) from error
+
+    if not workbook_path.exists():
+        recovery_path = create_backup_path(
+            workbook_path,
+            replacement_hash,
+        )
+        shutil.copy2(replacement_path, recovery_path)
+        raise WritebackError(
+            "ROLLBACK_FAILED",
+            "The atomic replacement failed and the workbook path is "
+            f"missing. The validated edited copy is preserved at {recovery_path}: {error}",
+        ) from error
+
+    raise WritebackError(
+        "WORKBOOK_REPLACE_FAILED",
+        f"The workbook could not be replaced atomically: {error}",
+    ) from error
 
 
 def validate_workbook_path(request: dict[str, Any]) -> Path:
@@ -552,12 +941,6 @@ def apply_request(request: dict[str, Any]) -> dict[str, Any]:
                     "backupPath": None,
                 }
             backup_path = create_backup_path(workbook_path, current_workbook_hash)
-            shutil.copy2(work_path, backup_path)
-            if sha256_file(backup_path) != current_workbook_hash:
-                raise WritebackError(
-                    "BACKUP_VALIDATION_FAILED",
-                    "The pre-write workbook backup could not be verified.",
-                )
             workbook.save()
 
         with ExcelFile(work_path) as validated:
@@ -609,12 +992,44 @@ def apply_request(request: dict[str, Any]) -> dict[str, Any]:
                 "STALE_WORKBOOK",
                 "Workbook changed during validation. The external version was left untouched.",
             )
-        os.replace(work_path, workbook_path)
+        patched_workbook_hash = sha256_file(work_path)
+        try:
+            replace_file_with_backup(workbook_path, work_path, backup_path)
+        except OSError as error:
+            handle_failed_atomic_replace(
+                workbook_path,
+                work_path,
+                backup_path,
+                patched_workbook_hash,
+                error,
+            )
+
+        displaced_workbook_hash = sha256_file(backup_path)
+        if displaced_workbook_hash != expected_workbook_hash:
+            preserved_path = restore_displaced_workbook(
+                workbook_path,
+                backup_path,
+                patched_workbook_hash,
+                backup_path,
+            )
+            raise WritebackError(
+                "STALE_WORKBOOK",
+                "Workbook changed during the atomic commit. "
+                f"The displaced external version was restored or preserved at {preserved_path}.",
+            )
+
+        installed_workbook_hash = sha256_file(workbook_path)
+        if installed_workbook_hash != patched_workbook_hash:
+            raise WritebackError(
+                "STALE_WORKBOOK",
+                "Workbook changed immediately after the atomic commit. "
+                "The newer external version was left untouched.",
+            )
         return {
             "ok": True,
             "changed": True,
             "modifiedModules": modified_names,
-            "workbookSha256": sha256_file(workbook_path),
+            "workbookSha256": installed_workbook_hash,
             "backupPath": str(backup_path),
         }
     finally:
@@ -640,10 +1055,12 @@ def main(argv: list[str] | None = None) -> int:
         operation = request.get("operation", "apply")
         if operation == "inspect":
             return emit_result(inspect_request(request), 0)
+        if operation == "fingerprint":
+            return emit_result(fingerprint_request(request), 0)
         if operation != "apply":
             raise WritebackError(
                 "UNSUPPORTED_OPERATION",
-                "operation must be apply or inspect.",
+                "operation must be apply, inspect, or fingerprint.",
             )
         return emit_result(apply_request(request), 0)
     except WritebackError as error:

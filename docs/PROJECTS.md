@@ -1,32 +1,42 @@
-# Carte des projets locaux
+# Dépôt canonique et prototypes
 
-Le dépôt `C:\Users\Stephane\Desktop\Code\excel-ai-vba-studio` est la source
-canonique de l’extension.
+## Source unique
 
-Les paquets VSIX locaux sont générés dans `output/vsix`, jamais à la racine.
+Le dépôt de production est
+[`StephaneSGL/excel-ai-vba-studio`](https://github.com/StephaneSGL/excel-ai-vba-studio).
+`package.json` est l’unique source de version. Les paquets distribuables sont
+construits depuis ce dépôt et générés sous `output/vsix`.
 
-Deux prototypes locaux restent utiles :
+L’exécutable `bin/win32-x64/excel-ai-vba-writeback.exe` est un composant
+d’exécution livré avec l’extension. Sa source maintenue se trouve sous
+`native/vba-writeback`; la CI Windows reconstruit et teste cette source.
 
-- `office-workbench`, branche `feat/xlsm-native-editing` : édition native XLSM
-  ciblée et tests de préservation.
-- `tu-peux-trouver-normalement-il-y`, nom interne `Office Workbench` : pont
-  natif C# / Excel COM et protocole JSON.
+## Décisions sur les prototypes
 
-Ils servent de sources techniques. Ils ne doivent pas remplacer le dépôt
-canonique ni être poussés vers son remote.
+| Prototype/capacité | Décision | Destination ou suivi |
+| --- | --- | --- |
+| Édition XLSM ciblée via Excel COM | Retenue et portée | `scripts/office-ai-apply-edits.ps1` et `src/provider/nativeExcelBridge.ts` |
+| Tests de préservation XLSM/VBA/UserForm | Retenus et portés | `test/run-native-edit-tests.ps1` et `test/run-vba-preservation-test.ps1` |
+| Réinjection directe du code VBA | Retenue | `native/vba-writeback` et VBA Studio |
+| Hôte C# Office Workbench autonome | Non retenu | Le chemin PowerShell/COM couvre le périmètre borné actuel sans second hôte de production |
+| Création de UserForms, contrôles et boutons | Différée | [Issue #7](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/7) |
+| Dimensions, fusions, structure et règles conditionnelles éditables | Différées | [Issue #10](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/10) |
 
-## Flux de travail
+Les anciens prototypes sont des archives ou références techniques, jamais des
+sources de release ni des extensions concurrentes. Aucun remote de prototype
+autonome ne doit pousser une version de production. Les branches historiques
+ne sont supprimées qu’après fusion et validation de la consolidation.
 
-1. Créer une branche depuis la version canonique la plus récente.
-2. Porter une capacité isolée depuis un prototype.
-3. Adapter ses tests au dépôt canonique.
-4. Exécuter `npm run validate`.
-5. Faire relire le diff.
-6. Commit, push et PR seulement après autorisation.
+## Garde-fous de contribution
 
-## Chantiers
+1. Partir de `main` du dépôt canonique.
+2. Porter une capacité bornée avec ses tests et sa décision d’architecture.
+3. Ne jamais suivre de classeur personnel, secret ou artefact temporaire.
+4. Exécuter `npm run validate`; pour une modification COM, exécuter aussi la
+   suite Excel Desktop.
+5. Faire relire la PR et attendre ses checks avant fusion.
+6. Construire la release depuis la version de `package.json`, jamais depuis un
+   prototype ou un chemin local.
 
-- Étendre l’outil transactionnel d’écriture VBA livré en `0.2.0` à la création sûre de designers UserForm.
-- Réintégrer le pipeline d’édition native XLSM dans la version `0.1.7+`.
-- Choisir les composants utiles du pont C# sans maintenir deux extensions
-  concurrentes.
+La décision de sécurité complète est décrite dans
+[`docs/VBA-WRITEBACK-ADR.md`](VBA-WRITEBACK-ADR.md).

@@ -17,6 +17,8 @@ The project uses semantic versions. Marketplace Preview status is represented by
   formats, fonts, alignment, fills, and borders without leaving VS Code.
 - Restored explicit commands and ribbon actions for opening the real workbook
   in Microsoft Excel and opening Excel's native VBE.
+- Added the VS Code editable-document lifecycle, including close prompts,
+  revert, Save As routing, and bounded hot-exit recovery for unsaved grids.
 
 ### Fixed
 
@@ -24,13 +26,24 @@ The project uses semantic versions. Marketplace Preview status is represented by
   legacy `.xls` files remain protected.
 - Made the XLSX reader accept namespaced SpreadsheetML elements and absolute
   package relationship targets.
+- Prevented file-watcher refreshes from overwriting unsaved grid edits.
+- Prevented split-view, edit-during-save, and stale hot-exit recovery races
+  from clearing or overwriting newer spreadsheet changes.
+- Routed Save, Save As, and external revert through the matching active custom
+  editor instead of issuing a delayed global save command.
 
 ### Security
 
-- Every changed workbook receives a verified timestamped backup before atomic replacement.
+- Every changed workbook receives the exact atomically displaced source as a
+  verified timestamped backup.
 - Native cell edits now use a hashed sibling work copy, re-check the source
   immediately before commit, validate the macro-enabled OOXML package, retain a
   persistent backup, and atomically replace the original.
+- Native saves bind the grid snapshot to a writer-locked source, fingerprint
+  every logical VBA/UserForm stream, and restore the verified backup
+  automatically if post-replacement validation fails.
+- The bundled writer is rebuilt from a fully pinned, reproducible Python
+  toolchain and must match the shipped executable byte-for-byte in Windows CI.
 - Stale workbooks, signed or password-protected VBA projects, reparse points, network paths, oversized requests, and UserForm designer changes are refused.
 - The write-back engine never starts Excel, executes macros, edits the Office registry, or changes AccessVBOM.
 

@@ -1,4 +1,4 @@
-import { App, Button, ConfigProvider, Modal, Radio, Spin } from "antd";
+import { App, Button, ConfigProvider, Spin } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handler, vscodeApi } from "../../util/vscode.ts";
 import { isVscodeEditorDark, observeVscodeThemeChange } from "../../util/vscodeTheme.ts";
@@ -88,8 +88,15 @@ function cloneSheets(sheets: SheetData[]): SheetData[] {
     return JSON.parse(JSON.stringify(sheets)) as SheetData[];
 }
 
+async function sha256Buffer(buffer: ArrayBuffer): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(digest), byte =>
+        byte.toString(16).padStart(2, '0')
+    ).join('');
+}
+
 function ExcelViewer() {
-    const { message, modal } = App.useApp();
+    const { message } = App.useApp();
     const [loading, setLoading] = useState(true)
     const [vscodeDark, setVscodeDark] = useState(isVscodeEditorDark)
     const [readOnly, setReadOnly] = useState(false)
@@ -98,9 +105,8 @@ function ExcelViewer() {
     const findPanelRef = useRef<'find' | 'replace' | null>(null)
     const findReplacePanelRef = useRef<FindReplacePanelHandle>(null)
     const [loadError, setLoadError] = useState<string | null>(null)
-    const [saveAsVisible, setSaveAsVisible] = useState(false)
-    const [saveAsFormat, setSaveAsFormat] = useState('xlsx')
     const [activeSpreadsheet, setActiveSpreadsheet] = useState<Spreadsheet | null>(null)
+    const [editorBusy, setEditorBusy] = useState(false)
     const extRef = useRef('')
     const documentCacheIdRef = useRef('')
     const readOnlyRef = useRef(false)
@@ -110,7 +116,14 @@ function ExcelViewer() {
     const csvDelimiterRef = useRef(',')
     const initialFormattingRef = useRef('')
     const initialSheetsRef = useRef<SheetData[]>([])
-    const nativeSavePendingRef = useRef(false)
+    const editorBusyRef = useRef(false)
+    const nativeSnapshotRef = useRef<{
+        expectedWorkbookSha256: string;
+        nativeLoadGeneration: string;
+    } | null>(null)
+    const loadedWorkbookSha256Ref = useRef<string | null>(null)
+    const openGenerationRef = useRef(0)
+    const openQueueRef = useRef<Promise<void>>(Promise.resolve())
     const lastMacroBlockedNoticeRef = useRef(0)
 
     const notifyMacroWriteBlocked = useCallback(() => {
@@ -125,6 +138,14 @@ function ExcelViewer() {
             className: 'excel-validation-error-message',
         });
     }, [message]);
+
+    const setEditorBusyState = useCallback((busy: boolean) => {
+        editorBusyRef.current = busy;
+        setEditorBusy(busy);
+        spreadSheetRef.current?.setMode(
+            busy || readOnlyRef.current ? 'read' : 'edit'
+        );
+    }, []);
 
     useEffect(() => {
         findPanelRef.current = findPanel;
@@ -156,7 +177,7 @@ function ExcelViewer() {
 
     const handleAutoFitColumns = useCallback(() => {
         const spreadSheet = spreadSheetRef.current;
-        if (!spreadSheet) return;
+        if (!spreadSheet || editorBusyRef.current) return;
         spreadSheet.autoFitColumns();
         if (!readOnlyRef.current) {
             spreadSheet.setSaveEnabled(true);
@@ -173,25 +194,53 @@ function ExcelViewer() {
             notifyMacroWriteBlocked();
             return;
         }
-        setSaveAsVisible(true);
+        handler.emit('requestHostSaveAs');
     }, [notifyMacroWriteBlocked]);
 
     const handleSave = useCallback(async () => {
         const spreadSheet = spreadSheetRef.current;
-        if (!spreadSheet) return;
+        if (!spreadSheet) {
+            handler.emit('saveRejected', {
+                message: 'Spreadsheet is not ready to save.',
+            });
+            return;
+        }
+        if (editorBusyRef.current) {
+            handler.emit('saveRejected', {
+                message: 'Spreadsheet is busy. Wait for the current operation to finish.',
+            });
+            return;
+        }
         if (readOnlyReasonRef.current === 'macro-preservation') {
             notifyMacroWriteBlocked();
+            handler.emit('saveRejected', {
+                message: t('viewer.macroWriteBlocked'),
+            });
             return;
         }
         if (readOnlyRef.current) {
-            await handleSaveAs();
+            handler.emit('saveRejected', {
+                message: 'Read-only spreadsheets must be saved to a new file.',
+            });
             return;
         }
 
+        if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+        }
         const ext = extRef.current.replace(/^\./, '').toLowerCase();
         const sheets = spreadSheet.getData();
         if (readOnlyReasonRef.current === 'native-excel-editing') {
-            if (nativeSavePendingRef.current) {
+            const snapshot = nativeSnapshotRef.current;
+            if (!snapshot) {
+                const reloadMessage = t('viewer.nativeReloadRequired');
+                message.warning({
+                    duration: 4,
+                    content: reloadMessage,
+                    className: 'excel-validation-error-message',
+                });
+                spreadSheet.setSaveEnabled(true);
+                handler.emit('saveRejected', { message: reloadMessage });
                 return;
             }
             const plan = buildNativeExcelEditPlan(
@@ -199,92 +248,63 @@ function ExcelViewer() {
                 sheets
             );
             if (plan.unsupportedChanges.length > 0) {
+                const unsupportedMessage = t(
+                    'viewer.nativeUnsupportedChange',
+                    plan.unsupportedChanges.slice(0, 3).join(', ')
+                );
                 message.warning({
                     duration: 6,
-                    content: t(
-                        'viewer.nativeUnsupportedChange',
-                        plan.unsupportedChanges.slice(0, 3).join(', ')
-                    ),
+                    content: unsupportedMessage,
                     className: 'excel-validation-error-message',
                 });
                 spreadSheet.setSaveEnabled(true);
+                handler.emit('saveRejected', {
+                    message: unsupportedMessage,
+                });
                 return;
             }
             if (plan.operations.length === 0) {
                 spreadSheet.setSaveEnabled(false);
+                handler.emit('clean');
                 return;
             }
-            nativeSavePendingRef.current = true;
-            handler.emit('saveNative', plan.operations);
+            setEditorBusyState(true);
+            handler.emit('saveNative', {
+                operations: plan.operations,
+                ...snapshot,
+            });
             return;
         }
 
-        const { export_xlsx } = await loadExcelWriter();
+        setEditorBusyState(true);
+        let export_xlsx: Awaited<ReturnType<typeof loadExcelWriter>>['export_xlsx'];
+        try {
+            ({ export_xlsx } = await loadExcelWriter());
+        } catch (error) {
+            setEditorBusyState(false);
+            handler.emit('saveRejected', {
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : String(error),
+            });
+            return;
+        }
         const csvEncoding = csvEncodingRef.current;
         const csvDelimiter = csvDelimiterRef.current;
 
         if (ext !== 'xlsx' && ext !== 'xlsm' && hasFormattingChanged(initialFormattingRef.current, sheets)) {
-            await new Promise<void>((resolve) => {
-                const dialog = modal.confirm({
-                    title: t('viewer.formatCannotPreserveTitle'),
-                    content: t('viewer.formatCannotPreserveContent', ext.toUpperCase()),
-                    okText: t('viewer.saveAsXlsx'),
-                    cancelText: t('button.cancel'),
-                    centered: true,
-                    getContainer: () => document.body,
-                    onOk: async () => {
-                        try {
-                            await export_xlsx(spreadSheet, 'xlsx', csvEncoding, { saveAs: true }, csvDelimiter);
-                        } catch (error) {
-                            console.error(`Failed to save Excel file: ${(error as Error).message}`);
-                            throw error;
-                        }
-                    },
-                    onCancel: () => { },
-                    footer: () => (
-                        <>
-                            <Button
-                                style={{ padding: '3px 12px', height: 'auto' }}
-                                onClick={() => dialog.destroy()}
-                            >
-                                {t('button.cancel')}
-                            </Button>
-                            <Button
-                                style={{ padding: '3px 12px', height: 'auto' }}
-                                onClick={() => {
-                                    void (async () => {
-                                        dialog.destroy();
-                                        try {
-                                            await export_xlsx(spreadSheet, extRef.current, csvEncoding, undefined, csvDelimiter);
-                                        } catch (error) {
-                                            console.error(`Failed to save Excel file: ${(error as Error).message}`);
-                                        }
-                                    })();
-                                }}
-                            >
-                                {t('viewer.saveAsOriginal')}
-                            </Button>
-                            <Button
-                                type="primary"
-                                style={{ padding: '3px 12px', height: 'auto' }}
-                                onClick={() => {
-                                    void (async () => {
-                                        try {
-                                            dialog.destroy();
-                                            await export_xlsx(spreadSheet, 'xlsx', csvEncoding, { saveAs: true }, csvDelimiter);
-                                        } catch (error) {
-                                            console.error(`Failed to save Excel file: ${(error as Error).message}`);
-                                        }
-                                    })();
-                                }}
-                            >
-                                {t('viewer.saveAsXlsx')}
-                            </Button>
-                        </>
-                    ),
-                    afterClose: () => resolve(),
-                });
+            const formatMessage = t(
+                'viewer.formatCannotPreserveContent',
+                ext.toUpperCase()
+            );
+            message.warning({
+                duration: 6,
+                content: formatMessage,
+                className: 'excel-validation-error-message',
             });
+            setEditorBusyState(false);
+            handler.emit('saveRejected', { message: formatMessage });
             return;
         }
 
@@ -293,31 +313,19 @@ function ExcelViewer() {
             spreadSheet.setSaveEnabled(false);
         } catch (error) {
             console.error(`Failed to save Excel file: ${(error as Error).message}`);
+            setEditorBusyState(false);
+            handler.emit('saveRejected', {
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : String(error),
+            });
         }
-    }, [message, modal, handleSaveAs, notifyMacroWriteBlocked]);
-
-    const confirmSaveAs = useCallback(async (fmt: string) => {
-        const spreadSheet = spreadSheetRef.current;
-        if (!spreadSheet) return;
-        if (
-            readOnlyReasonRef.current === 'macro-preservation'
-            || readOnlyReasonRef.current === 'native-excel-editing'
-        ) {
-            setSaveAsVisible(false);
-            notifyMacroWriteBlocked();
-            return;
-        }
-        setSaveAsVisible(false);
-        try {
-            const { exportSaveAs } = await loadExcelWriter();
-            await exportSaveAs(spreadSheet, fmt, csvEncodingRef.current, csvDelimiterRef.current);
-            if (!readOnlyRef.current) {
-                spreadSheet.setSaveEnabled(false);
-            }
-        } catch (error) {
-            console.error(`Failed to save Excel file: ${(error as Error).message}`);
-        }
-    }, [notifyMacroWriteBlocked]);
+    }, [
+        message,
+        notifyMacroWriteBlocked,
+        setEditorBusyState,
+    ]);
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
@@ -326,7 +334,7 @@ function ExcelViewer() {
                 if (readOnlyRef.current) {
                     void handleSaveAs();
                 } else {
-                    void handleSave();
+                    handler.emit('requestHostSave');
                 }
                 return;
             }
@@ -410,6 +418,10 @@ function ExcelViewer() {
                 csvEncodingRef.current = detectCsvEncoding(buffer);
             }
             const { sheets, maxLength, maxCols, csvDelimiter } = await loadSheets(buffer, payload.ext);
+            const restoredSheets = Array.isArray(payload.backupSheets)
+                ? payload.backupSheets as SheetData[]
+                : null;
+            const displayedSheets = restoredSheets ?? sheets;
             if (csvDelimiter) {
                 csvDelimiterRef.current = csvDelimiter;
             }
@@ -427,13 +439,16 @@ function ExcelViewer() {
             });
             spreadSheetRef.current = spreadSheet;
             setActiveSpreadsheet(spreadSheet);
-            spreadSheet.loadData(sheets);
+            spreadSheet.loadData(displayedSheets);
             initialSheetsRef.current = cloneSheets(sheets);
-            nativeSavePendingRef.current = false;
+            if (restoredSheets) {
+                spreadSheet.setSaveEnabled(true);
+            }
+            setEditorBusyState(false);
             setLoading(false);
             requestAnimationFrame(() => spreadSheet.resize());
             if (!fileReadOnly) {
-                spreadSheet.on('save', () => void handleSave());
+                spreadSheet.on('save', () => handler.emit('requestHostSave'));
             }
             spreadSheet.on('save-as', () => { void handleSaveAs(); });
             spreadSheet.on('edit-in-vscode', () => { handler.emit('editInVSCode', true); });
@@ -480,11 +495,18 @@ function ExcelViewer() {
             }
             const normalizedExt = (payload.ext ?? '').replace(/^\./, '').toLowerCase();
             initialFormattingRef.current = normalizedExt !== 'xlsx' && normalizedExt !== 'xlsm'
-                ? buildFormattingSnapshot(spreadSheet.getData())
+                ? buildFormattingSnapshot(sheets)
                 : '';
         };
 
         handler.on("open", (payload) => {
+            const openGeneration = ++openGenerationRef.current;
+            const previousOpen = openQueueRef.current;
+            setEditorBusyState(true);
+            setLoading(true);
+            setLoadError(null);
+            nativeSnapshotRef.current = null;
+            loadedWorkbookSha256Ref.current = null;
             extRef.current = payload.ext ?? '';
             documentCacheIdRef.current = payload.documentCacheId ?? '';
             const fileReadOnly = payload.readOnly === true;
@@ -497,27 +519,66 @@ function ExcelViewer() {
             readOnlyReasonRef.current = reason;
             setReadOnly(fileReadOnly);
             setReadOnlyReason(reason);
-            loadOfficeBuffer(payload).then(async (buffer) => {
+            const openTask = (async () => {
                 try {
+                    const buffer = await loadOfficeBuffer(payload);
+                    const workbookSha256 = await sha256Buffer(buffer);
+                    if (
+                        Array.isArray(payload.backupSheets) &&
+                        (
+                            !/^[0-9a-f]{64}$/.test(
+                                payload.backupSourceSha256 ?? ''
+                            ) ||
+                            payload.backupSourceSha256 !== workbookSha256
+                        )
+                    ) {
+                        throw new Error(
+                            'Spreadsheet recovery was stopped because the ' +
+                            'source changed while the backup was opening.'
+                        );
+                    }
+                    await previousOpen.catch(() => undefined);
+                    if (openGeneration !== openGenerationRef.current) {
+                        return;
+                    }
                     await initSpreadsheet(buffer, payload);
+                    loadedWorkbookSha256Ref.current = workbookSha256;
+                    if (
+                        openGeneration === openGenerationRef.current &&
+                        reason === 'native-excel-editing' &&
+                        typeof payload.nativeLoadGeneration === 'string'
+                    ) {
+                        nativeSnapshotRef.current = {
+                            expectedWorkbookSha256: workbookSha256,
+                            nativeLoadGeneration: payload.nativeLoadGeneration,
+                        };
+                    }
                 } catch (e) {
+                    await previousOpen.catch(() => undefined);
+                    if (openGeneration !== openGenerationRef.current) {
+                        return;
+                    }
+                    setEditorBusyState(false);
                     const msg = (e as Error).message || String(e);
                     console.error(`Failed to load Excel file: ${msg}`, e);
                     setLoadError(msg);
                     setLoading(false);
                 }
-            }).catch(error => {
-                const msg = (error as Error).message || String(error);
-                console.error(`Failed to load Excel file: ${msg}`, error);
-                setLoadError(msg);
-                setLoading(false);
-            });
-        }).on("saveDone", () => {
-            nativeSavePendingRef.current = false;
+            })();
+            openQueueRef.current = openTask;
+            return openTask;
+        }).on("saveDone", (payload) => {
             const spreadSheet = spreadSheetRef.current;
-            if (spreadSheet) {
+            if (
+                spreadSheet &&
+                readOnlyReasonRef.current !== 'native-excel-editing'
+            ) {
                 initialSheetsRef.current = cloneSheets(spreadSheet.getData());
                 spreadSheet.setSaveEnabled(false);
+                setEditorBusyState(false);
+            }
+            if (/^[0-9a-f]{64}$/.test(payload?.sourceSha256 ?? '')) {
+                loadedWorkbookSha256Ref.current = payload.sourceSha256;
             }
             message.success({
                 duration: 2,
@@ -525,13 +586,93 @@ function ExcelViewer() {
                 className: 'excel-save-success-message',
             });
         }).on("writeBlocked", (payload) => {
-            nativeSavePendingRef.current = false;
+            setEditorBusyState(false);
             spreadSheetRef.current?.setSaveEnabled(true);
             message.warning({
                 duration: 4,
                 content: payload?.message || t('viewer.macroWriteBlocked'),
                 className: 'excel-validation-error-message',
             });
+        }).on("requestSave", async () => {
+            try {
+                await handleSave();
+            } catch (error) {
+                setEditorBusyState(false);
+                handler.emit('saveRejected', {
+                    message:
+                        error instanceof Error
+                            ? error.message
+                            : String(error),
+                });
+            }
+        }).on("requestSaveAs", async (payload) => {
+            let lockedForSaveAs = false;
+            try {
+                const spreadSheet = spreadSheetRef.current;
+                const ext =
+                    typeof payload?.ext === 'string'
+                        ? payload.ext.replace(/^\./, '').toLowerCase()
+                        : '';
+                if (!spreadSheet || !ext) {
+                    throw new Error('Spreadsheet is not ready for Save As.');
+                }
+                if (
+                    readOnlyReasonRef.current === 'macro-preservation' ||
+                    readOnlyReasonRef.current === 'native-excel-editing'
+                ) {
+                    throw new Error(t('viewer.macroWriteBlocked'));
+                }
+                if (editorBusyRef.current) {
+                    throw new Error(
+                        'Spreadsheet is busy. Wait for the current operation to finish.'
+                    );
+                }
+                setEditorBusyState(true);
+                lockedForSaveAs = true;
+                const { exportSaveAs } = await loadExcelWriter();
+                await exportSaveAs(
+                    spreadSheet,
+                    ext,
+                    csvEncodingRef.current,
+                    csvDelimiterRef.current
+                );
+            } catch (error) {
+                if (lockedForSaveAs) {
+                    setEditorBusyState(false);
+                }
+                handler.emit('saveRejected', {
+                    message:
+                        error instanceof Error
+                            ? error.message
+                            : String(error),
+                });
+            }
+        }).on("requestBackup", (payload) => {
+            try {
+                const spreadSheet = spreadSheetRef.current;
+                if (!spreadSheet) {
+                    throw new Error('Spreadsheet is not ready for backup.');
+                }
+                const sourceSha256 = loadedWorkbookSha256Ref.current;
+                if (!sourceSha256) {
+                    throw new Error(
+                        'Spreadsheet source hash is not ready for backup.'
+                    );
+                }
+                handler.emit('backupState', {
+                    requestId: payload?.requestId,
+                    sheets: cloneSheets(spreadSheet.getData()),
+                    sourceSha256,
+                });
+            } catch (error) {
+                handler.emit('backupState', {
+                    requestId: payload?.requestId,
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : String(error),
+                });
+            }
         }).emit("init")
 
         let themeTimer: ReturnType<typeof setTimeout>;
@@ -547,14 +688,14 @@ function ExcelViewer() {
             themeObserver.disconnect();
             clearTimeout(themeTimer);
         };
-    }, [message, handleSave, handleSaveAs])
+    }, [message, handleSave, handleSaveAs, setEditorBusyState])
 
     return (
         <div className='excel-viewer'>
             <Spin spinning={loading} fullscreen={true} />
             <ExcelRibbon
                 spreadsheet={activeSpreadsheet}
-                readOnly={readOnly}
+                readOnly={readOnly || editorBusy}
                 allowSaveAs={
                     readOnlyReason !== 'macro-preservation'
                     && readOnlyReason !== 'native-excel-editing'
@@ -610,53 +751,17 @@ function ExcelViewer() {
                     spreadSheet={activeSpreadsheet}
                     mode={findPanel}
                     onClose={() => setFindPanel(null)}
-                    readOnly={readOnly}
+                    readOnly={readOnly || editorBusy}
                     onChanged={() => {
-                        if (!readOnlyRef.current) {
+                        if (
+                            !readOnlyRef.current &&
+                            !editorBusyRef.current
+                        ) {
                             spreadSheetRef.current?.setSaveEnabled(true);
                         }
                     }}
                 />
             )}
-            <Modal
-                open={saveAsVisible}
-                title={t('button.saveAs')}
-                onCancel={() => setSaveAsVisible(false)}
-                footer={[
-                    <Button key="cancel" onClick={() => setSaveAsVisible(false)} style={{ padding: '3px 12px', height: 'auto' }}>
-                        {t('button.cancel')}
-                    </Button>,
-                    <Button key="ok" type="primary" onClick={() => void confirmSaveAs(saveAsFormat)} style={{ padding: '3px 12px', height: 'auto' }}>
-                        {t('button.save')}
-                    </Button>,
-                ]}
-                getContainer={() => document.body}
-                centered
-                width={360}
-            >
-                <div style={{ padding: '8px 0 16px' }}>
-                    <div style={{ marginBottom: 12, opacity: 0.65, fontSize: 12 }}>
-                        {t('viewer.chooseExportFormat')}
-                    </div>
-                    <Radio.Group
-                        value={saveAsFormat}
-                        onChange={e => setSaveAsFormat(e.target.value as string)}
-                        style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
-                    >
-                        {[
-                            { value: 'xlsx', label: t('viewer.exportXlsxLabel'), desc: t('viewer.exportXlsxDesc') },
-                            { value: 'csv', label: t('viewer.exportCsvLabel'), desc: t('viewer.exportCsvDesc') },
-                            { value: 'xls', label: t('viewer.exportXlsLabel'), desc: t('viewer.exportXlsDesc') },
-                            { value: 'ods', label: t('viewer.exportOdsLabel'), desc: t('viewer.exportOdsDesc') },
-                        ].map(f => (
-                            <Radio key={f.value} value={f.value} style={{ alignItems: 'flex-start' }}>
-                                <span style={{ fontWeight: 500 }}>{f.label}</span>
-                                <span style={{ display: 'block', fontSize: 11, opacity: 0.55, marginTop: 1 }}>{f.desc}</span>
-                            </Radio>
-                        ))}
-                    </Radio.Group>
-                </div>
-            </Modal>
             <div id='container'></div>
         </div>
     )

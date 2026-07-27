@@ -8,6 +8,12 @@ export type EmbeddedSpreadsheetReadOnlyReason =
     | 'native-excel-editing'
     | 'file-permissions';
 
+export interface OfficeOpenSnapshot {
+    nativeLoadGeneration?: string;
+    backupSheets?: unknown;
+    backupSourceSha256?: string;
+}
+
 const MACRO_OR_LEGACY_EXTENSIONS = new Set(['.xlsm', '.xls']);
 
 /**
@@ -74,7 +80,8 @@ export function bytesToPayloadBuffer(data: Uint8Array): number[] {
 
 export async function emitVirtualOfficeOpen(
     handler: Handler,
-    uri: Uri
+    uri: Uri,
+    snapshot?: OfficeOpenSnapshot
 ): Promise<void> {
     const ext = extname(uri.fsPath);
     const readOnlyState = await getEmbeddedSpreadsheetReadOnlyState(uri);
@@ -92,11 +99,13 @@ export async function emitVirtualOfficeOpen(
         const data = await readUriBytes(uri);
         handler.emit('open', {
             ...basePayload,
+            ...snapshot,
             buffer: bytesToPayloadBuffer(data),
         });
     } catch (error) {
         handler.emit('open', {
             ...basePayload,
+            ...snapshot,
             error: error instanceof Error ? error.message : 'Failed to read file',
         });
     }
@@ -105,7 +114,8 @@ export async function emitVirtualOfficeOpen(
 export async function emitFileOfficeOpen(
     handler: Handler,
     uri: Uri,
-    webview: Webview
+    webview: Webview,
+    snapshot?: OfficeOpenSnapshot
 ): Promise<void> {
     const readOnlyState = await getEmbeddedSpreadsheetReadOnlyState(uri);
     handler.emit('open', {
@@ -114,5 +124,6 @@ export async function emitFileOfficeOpen(
         fileName: basename(uri.fsPath),
         documentCacheId: buildDocumentCacheId(uri),
         ...readOnlyState,
+        ...snapshot,
     });
 }

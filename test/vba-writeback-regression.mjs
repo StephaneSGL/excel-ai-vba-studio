@@ -84,6 +84,13 @@ const excelBefore = excelProcessIds();
 
 try {
   const before = inspect();
+  const fingerprint = runHelper({
+    operation: 'fingerprint',
+    workbookPath: workbook,
+  });
+  assert.match(fingerprint.projectFingerprintSha256, /^[0-9a-f]{64}$/);
+  assert.ok(fingerprint.projectStreamCount >= 20);
+  assert.ok(fingerprint.projectStorageCount > 0);
   const beforeModules = new Map(before.modules.map((module) => [module.name, module]));
   assert.equal(before.protected, false);
   assert.equal(before.signed, false);
@@ -118,6 +125,8 @@ try {
   assert.deepEqual(applied.modifiedModules, ['mCode']);
   assert.ok(applied.backupPath && existsSync(applied.backupPath));
   assert.equal(basename(applied.backupPath).includes(originalHash.slice(0, 12)), true);
+  assert.equal(sha256(readFileSync(applied.backupPath)), originalHash);
+  assert.equal(applied.workbookSha256, workbookHash());
 
   const afterModule = inspect();
   const afterModuleMap = new Map(

@@ -21,11 +21,17 @@ assert.match(cli, /expectedWorkbookSha256/, 'stale workbook hash gate is missing
 assert.match(cli, /detect_signature/, 'signed project gate is missing');
 assert.match(cli, /has_password/, 'protected project gate is missing');
 assert.match(cli, /designer_stream_hashes/, 'UserForm designer preservation is missing');
+assert.match(cli, /project_stream_fingerprint/, 'complete VBA stream fingerprint is missing');
+assert.match(cli, /fingerprint_request/, 'VBA fingerprint operation is missing');
 assert.match(cli, /zip_payload_hashes/, 'non-VBA OOXML preservation is missing');
 assert.match(cli, /assert_no_reparse_point_chain/, 'native reparse-point gate is missing');
 assert.match(cli, /project\.add_module/, 'new standard/class module support is missing');
-assert.match(cli, /shutil\.copy2\(work_path, backup_path\)/, 'verified baseline backup creation is missing');
-assert.match(cli, /os\.replace\(work_path, workbook_path\)/, 'atomic workbook replacement is missing');
+assert.match(cli, /replace_file_with_backup/, 'atomic workbook replacement is missing');
+assert.match(cli, /ReplaceFileW/, 'Windows displaced-file capture is missing');
+assert.match(cli, /restore_displaced_workbook/, 'conflict-safe restoration is missing');
+assert.match(cli, /restore_missing_workbook/, 'partial replace recovery is missing');
+assert.match(cli, /handle_failed_atomic_replace/, 'partial ReplaceFile failure handling is missing');
+assert.match(cli, /MoveFileExW/, 'non-overwriting missing-path recovery is missing');
 assert.doesNotMatch(
   cli,
   /import\s+winreg|Excel\.Application|Dispatch\(|RunAutoMacros|\.Run\(/i,

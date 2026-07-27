@@ -457,6 +457,15 @@ export class Spreadsheet {
         return this;
     }
 
+    setMode(mode: 'edit' | 'read'): this {
+        this.options.mode = mode;
+        for (const data of this.datas) {
+            data.settings.mode = mode;
+        }
+        this.sheet.resetData(this.data);
+        return this;
+    }
+
     executeCommand(type: string, value?: unknown): this {
         (this.sheet as any).toolbar.change(type, value);
         return this;

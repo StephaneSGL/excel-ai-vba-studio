@@ -128,8 +128,8 @@ assert.match(
 );
 assert.match(
   excelUi,
-  /handler\.emit\('saveNative', plan\.operations\)/,
-  'supported XLSM edits must be sent to the native save handler'
+  /handler\.emit\('saveNative',\s*\{[\s\S]+?operations:\s*plan\.operations,[\s\S]+?\.\.\.snapshot/,
+  'supported XLSM edits must be bound to the exact loaded snapshot'
 );
 assert.match(
   excelUi,

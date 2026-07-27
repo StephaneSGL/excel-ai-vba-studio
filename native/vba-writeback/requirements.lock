@@ -1,2 +1,7 @@
+altgraph==0.17.5
+packaging==26.2
+pefile==2023.2.7
 pyOpenVBA==3.1.0
 pyinstaller==6.15.0
+pyinstaller-hooks-contrib==2026.6
+pywin32-ctypes==0.2.3
