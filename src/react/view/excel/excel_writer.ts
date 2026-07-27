@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 import { handler } from "../../util/vscode";
 import * as XLSX from 'xlsx';
 import Spreadsheet from './x-spreadsheet/index';
-import type { RowData, SheetData } from './x-spreadsheet/index';
+import type { CellData, RowData, SheetData } from './x-spreadsheet/index';
 import { CsvEncoding, encodeCsvText } from './csvEncoding';
 import { DEFAULT_ROW_HEIGHT_PX, freezeExprToExcelView, pxToExcelRowHeight } from './excel_meta';
 import { patchWorksheetSortStateXml } from './excel_sort_state';
@@ -38,13 +38,20 @@ function pxToExcelColWidth(px: number) {
     return Math.max((px - 5) / 7, 0);
 }
 
-function setCellValue(cell: ExcelJS.Cell, text: string) {
+function setCellValue(
+    cell: ExcelJS.Cell,
+    text: string,
+    cachedResult?: CellData['formulaResult'],
+) {
     if (!text) {
         cell.value = null;
         return;
     }
     if (text.startsWith('=')) {
-        cell.value = { formula: text.slice(1) };
+        cell.value = {
+            formula: text.slice(1),
+            ...(cachedResult !== undefined ? { result: cachedResult } : {}),
+        };
         return;
     }
     const num = Number(text);
@@ -56,6 +63,9 @@ function setCellValue(cell: ExcelJS.Cell, text: string) {
 }
 
 function applySheetMeta(worksheet: ExcelJS.Worksheet, sheetData: SheetData) {
+    if (sheetData.pageSetup) {
+        Object.assign(worksheet.pageSetup, sheetData.pageSetup);
+    }
     if (sheetData.freeze) {
         const frozen = freezeExprToExcelView(sheetData.freeze);
         if (frozen) {
@@ -72,6 +82,29 @@ function applySheetMeta(worksheet: ExcelJS.Worksheet, sheetData: SheetData) {
     if (autofilter?.ref) {
         worksheet.autoFilter = autofilter.ref;
     }
+}
+
+function writeConditionalFormattings(
+    worksheet: ExcelJS.Worksheet,
+    conditionalFormattings: SheetData['conditionalFormattings'],
+) {
+    conditionalFormattings?.forEach(item => {
+        const rules = item.rules.map(rule => {
+            const { displayStyle: _displayStyle, ...excelRule } = rule;
+            return excelRule;
+        });
+        worksheet.addConditionalFormatting({
+            ref: item.ref,
+            rules,
+        } as ExcelJS.ConditionalFormattingOptions);
+    });
+}
+
+function writeComments(worksheet: ExcelJS.Worksheet, comments: SheetData['comments']) {
+    Object.entries(comments ?? {}).forEach(([address, comment]) => {
+        if (!comment?.text) return;
+        worksheet.getCell(address).note = comment.text;
+    });
 }
 
 function writeRowHeights(worksheet: ExcelJS.Worksheet, rows: SheetData['rows']) {
@@ -100,8 +133,14 @@ async function writeSheetToExcelJs(worksheet: ExcelJS.Worksheet, workbook: Excel
     applySheetMeta(worksheet, sheetData);
     writeRowHeights(worksheet, rows);
     writeWorksheetValidations(worksheet, validations);
+    writeConditionalFormattings(worksheet, sheetData.conditionalFormattings);
+    writeComments(worksheet, sheetData.comments);
 
-    if (!rows) return;
+    if (!rows) {
+        writeWorksheetImages(worksheet, workbook, sheetData.images, sheetData.backgroundImage);
+        await writeWorksheetProtection(worksheet, sheetData);
+        return;
+    }
 
     const rowLen = rows.len ?? 0;
     for (let ri = 0; ri < rowLen; ri += 1) {
@@ -116,7 +155,7 @@ async function writeSheetToExcelJs(worksheet: ExcelJS.Worksheet, workbook: Excel
             if (hl?.link) {
                 writeCellHyperlink(excelCell, cellData.text ?? '', hl);
             } else {
-                setCellValue(excelCell, cellData.text ?? '');
+                setCellValue(excelCell, cellData.text ?? '', cellData.formulaResult);
             }
             if (cellData.style != null && styles[cellData.style]) {
                 applySpreadsheetStyle(excelCell, styles[cellData.style]);
@@ -230,7 +269,9 @@ export async function exportSaveAs(
         const csvContent = XLSX.utils.sheet_to_csv(dataToSheetJs(sheets[0]), { FS: fs });
         const bytes = encodeCsvText(csvContent, csvEncoding);
         handler.emit('saveAs', { content: [...bytes], ext });
+        return;
     }
+    throw new Error(`Unsupported spreadsheet save format: ${ext || '(none)'}`);
 }
 
 export async function export_xlsx(

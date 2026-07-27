@@ -312,16 +312,19 @@ class Rows {
   }
 
   maxCell() {
-    const keys = Object.keys(this._);
-    const ri = keys[keys.length - 1];
-    const col = this._[ri];
-    if (col) {
-      const { cells } = col;
-      const ks = Object.keys(cells);
-      const ci = ks[ks.length - 1];
-      return [parseInt(ri, 10), parseInt(ci, 10)];
-    }
-    return [0, 0];
+    let maxRi = 0;
+    let maxCi = 0;
+    let found = false;
+    Object.entries(this._).forEach(([ri, row]) => {
+      const cellIndexes = Object.keys(row.cells || {})
+        .map(ci => parseInt(ci, 10))
+        .filter(Number.isFinite);
+      if (cellIndexes.length === 0) return;
+      found = true;
+      maxRi = Math.max(maxRi, parseInt(ri, 10));
+      maxCi = Math.max(maxCi, ...cellIndexes);
+    });
+    return found ? [maxRi, maxCi] : [0, 0];
   }
 
   each(cb) {

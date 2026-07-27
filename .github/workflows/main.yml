@@ -32,3 +32,55 @@ jobs:
 
       - name: Validate manifest, build, and package contents
         run: npm run validate
+
+  vba-writeback-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11.9'
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Validate and test the bundled VBA helper
+        run: |
+          npm run validate:vba-writeback
+          npm run test:vba-writeback
+          npm run test:vba-atomic
+
+      - name: Rebuild the VBA helper from pinned source
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-vba-writeback.ps1
+
+      - name: Upload canonical VBA helper candidate
+        uses: actions/upload-artifact@v6
+        with:
+          name: vba-writeback-helper-${{ github.sha }}
+          path: bin/win32-x64/excel-ai-vba-writeback.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify shipped helper provenance
+        shell: pwsh
+        run: |
+          git diff --exit-code -- bin/win32-x64/excel-ai-vba-writeback.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Bundled helper differs from the reproducible source build.'
+          }
+          Write-Output 'Bundled helper matches the reproducible source build.'
+
+      - name: Test the freshly rebuilt VBA helper
+        run: |
+          npm run test:vba-writeback
+          npm run test:vba-atomic

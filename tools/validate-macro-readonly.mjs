@@ -33,7 +33,7 @@ const protectedExtensions = [
 assert.deepEqual(
   protectedExtensions,
   ['.xls', '.xlsm'],
-  'only .xlsm and .xls should be forced into macro-preservation mode'
+  'only .xlsm and .xls should require a macro-safe write path'
 );
 
 for (const editable of ['.xlsx', '.csv', '.tsv']) {
@@ -46,7 +46,17 @@ for (const editable of ['.xlsx', '.csv', '.tsv']) {
 assert.match(
   officeContent,
   /readOnlyReason:\s*'macro-preservation'/,
-  'open payload must explain macro-preservation read-only mode'
+  'legacy .xls payloads must explain macro-preservation read-only mode'
+);
+assert.match(
+  officeContent,
+  /supportsNativeMacroEditing[\s\S]+?=== '\.xlsm'/,
+  '.xlsm must use the targeted native editing mode'
+);
+assert.match(
+  officeContent,
+  /readOnly:\s*false,\s*readOnlyReason:\s*'native-excel-editing'/,
+  'writable .xlsm files must open in editable native mode'
 );
 assert.match(
   officeContent,
@@ -58,7 +68,7 @@ const saveHandler = commonHandler.match(
   /\.on\('save',[\s\S]+?\.on\('saveAs'/
 )?.[0] ?? '';
 const saveAsHandler = commonHandler.match(
-  /\.on\('saveAs',[\s\S]+?\.on\('openNativeExcel'/
+  /\.on\('saveAs',[\s\S]+?\.on\('openVbaDeveloper'/
 )?.[0] ?? '';
 assert.match(
   saveHandler,
@@ -66,25 +76,40 @@ assert.match(
   'direct save must reject macro-preservation documents in the extension host'
 );
 assert.match(
+  saveHandler,
+  /readOnlyReason === 'native-excel-editing'/,
+  'direct binary save must reject native-editing XLSM documents'
+);
+assert.match(
   saveAsHandler,
   /readOnlyReason === 'macro-preservation'/,
   'Save As must reject macro-preservation documents in the extension host'
 );
 assert.match(
+  saveAsHandler,
+  /readOnlyReason === 'native-excel-editing'/,
+  'Save As must reject native-editing XLSM documents'
+);
+assert.match(
   commonHandler,
-  /excelAiVbaStudio\.openFullExcel/,
-  'native Excel action must remain available'
+  /\.on\('saveNative'[\s\S]+?applyNativeExcelEdits/,
+  'XLSM save must use targeted native Excel operations'
 );
 assert.match(
   commonHandler,
   /excelAiVbaStudio\.openVbaDeveloper/,
-  'native VBA/VBE action must remain available'
+  'the internal VBA Studio action must remain available'
+);
+assert.match(
+  commonHandler,
+  /excelAiVbaStudio\.openVbaExplorer/,
+  'the VBA source explorer action must remain available'
 );
 
 assert.match(
   excelUi,
   /allowSaveAs:\s*!preserveMacros/,
-  'macro-preservation documents must suppress Save As in the grid'
+  'macro-preserving modes must suppress Save As in the grid'
 );
 assert.match(
   excelUi,
@@ -98,13 +123,18 @@ assert.match(
 );
 assert.match(
   excelUi,
-  /openNativeExcel/,
-  'the protected-format banner must retain an Open in Excel action'
+  /buildNativeExcelEditPlan/,
+  'the webview must diff XLSM edits before saving'
+);
+assert.match(
+  excelUi,
+  /handler\.emit\('saveNative',\s*\{[\s\S]+?operations:\s*plan\.operations,[\s\S]+?\.\.\.snapshot/,
+  'supported XLSM edits must be bound to the exact loaded snapshot'
 );
 assert.match(
   excelUi,
   /openVbaDeveloper/,
-  'the protected-format banner must retain an Open VBA/VBE action'
+  'the protected-format banner must retain an internal VBA Studio action'
 );
 
 assert.match(
@@ -124,5 +154,5 @@ assert.match(
 );
 
 console.log(
-  'Macro safety validation passed: .xlsm/.xls are view-only; .xlsx/.csv/.tsv remain editable.'
+  'Macro safety validation passed: .xlsm uses native editing, .xls remains protected, and .xlsx/.csv/.tsv remain editable.'
 );

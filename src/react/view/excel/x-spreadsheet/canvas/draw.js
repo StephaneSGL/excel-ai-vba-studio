@@ -398,6 +398,21 @@ class Draw {
     ctx.restore();
   }
 
+  comment(box) {
+    const { ctx } = this;
+    const { x, y } = box;
+    const size = 8;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(npx(x + 1), npx(y + 1));
+    ctx.lineTo(npx(x + size), npx(y + 1));
+    ctx.lineTo(npx(x + 1), npx(y + size));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 185, 0, .9)';
+    ctx.fill();
+    ctx.restore();
+  }
+
   frozen(box, fillStyle = 'rgba(61, 153, 112, 0.42)') {
     const { ctx } = this;
     const { x, y, width } = box;

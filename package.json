@@ -1,8 +1,8 @@
 {
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
-  "description": "View and edit safe spreadsheet formats in VS Code, inspect bounded workbook context with AI, and open native Excel or VBA tools.",
-  "version": "0.1.1",
+  "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
+  "version": "0.2.0",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -52,17 +52,18 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "Opening native Excel and exporting workbook or VBA context executes local automation and therefore requires a trusted workspace."
+      "description": "Exporting workbook or VBA context uses local Office automation and therefore requires a trusted workspace."
     },
     "virtualWorkspaces": {
       "supported": false,
-      "description": "Native Excel and VBA integration requires local Windows files."
+      "description": "Excel and VBA project extraction requires local Windows files."
     }
   },
   "activationEvents": [
     "onCustomEditor:excelAiVbaStudio.officeViewer",
     "onView:excelAiVbaExplorer",
-    "onLanguageModelTool:excel_ai_vba_readWorkbook"
+    "onLanguageModelTool:excel_ai_vba_readWorkbook",
+    "onLanguageModelTool:excel_ai_vba_writeModule"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -90,21 +91,31 @@
         "icon": "$(clippy)"
       },
       {
-        "command": "excelAiVbaStudio.openFullExcel",
-        "title": "Excel AI & VBA Studio : Ouvrir dans Microsoft Excel",
-        "icon": "$(window)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        "command": "excelAiVbaStudio.openExcel",
+        "title": "Excel AI & VBA Studio : Ouvrir le classeur dans Microsoft Excel",
+        "icon": "$(file)"
+      },
+      {
+        "command": "excelAiVbaStudio.openVbe",
+        "title": "Excel AI & VBA Studio : Ouvrir le VBE natif d’Excel",
+        "icon": "$(window)"
       },
       {
         "command": "excelAiVbaStudio.openVbaDeveloper",
-        "title": "Excel AI & VBA Studio : Ouvrir Excel en mode Développeur / VBA",
+        "title": "Excel AI & VBA Studio : Ouvrir le studio VBA dans VS Code",
         "icon": "$(code)",
         "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
       },
       {
         "command": "excelAiVbaStudio.openVbaExplorer",
-        "title": "Excel AI & VBA Studio : Exporter et révéler les sources VBA",
+        "title": "Excel AI & VBA Studio : Ouvrir le projet VBA dans VS Code",
         "icon": "$(folder-opened)",
+        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+      },
+      {
+        "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
+        "title": "Excel AI & VBA Studio : Analyser le classeur et le VBA avec Copilot",
+        "icon": "$(copilot)",
         "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
       },
       {
@@ -150,14 +161,40 @@
           },
           "additionalProperties": false
         }
+      },
+      {
+        "name": "excel_ai_vba_writeModule",
+        "displayName": "Réinjecter un module VBA",
+        "toolReferenceName": "excelVbaWriteModule",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(save)",
+        "userDescription": "Réinjecte transactionnellement un composant VBA dans un classeur XLSM/XLAM, avec sauvegarde et validation.",
+        "modelDescription": "Utilise cet outil après avoir lu ou créé un fichier VBA dans le projet exporté par Excel AI & VBA Studio. Il met à jour les composants existants et peut ajouter un module .bas ou .cls. Il crée une sauvegarde, refuse les projets signés ou protégés, ne lance aucune macro et ne modifie jamais AccessVBOM. Pour un UserForm existant, seul le code est modifiable ; le designer et le .frx doivent rester identiques. La création d’un nouveau UserForm est refusée sans designer sûr.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "workbookPath": {
+              "type": "string",
+              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code. Omettre pour utiliser le classeur actif."
+            },
+            "componentFile": {
+              "type": "string",
+              "description": "Nom sans chemin du composant .bas, .cls ou .frm. Un nouveau .bas ou .cls peut être créé."
+            },
+            "source": {
+              "type": "string",
+              "description": "Source complet du composant. Limite : 2 000 000 de caractères."
+            }
+          },
+          "required": [
+            "componentFile",
+            "source"
+          ],
+          "additionalProperties": false
+        }
       }
     ],
     "keybindings": [
-      {
-        "command": "excelAiVbaStudio.openFullExcel",
-        "key": "ctrl+alt+e",
-        "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
-      },
       {
         "command": "excelAiVbaStudio.openVbaDeveloper",
         "key": "ctrl+alt+f11",
@@ -172,12 +209,12 @@
           "when": "view == excelAiVbaExplorer"
         },
         {
-          "command": "excelAiVbaStudio.openFullExcel",
+          "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "navigation@2",
           "when": "view == excelAiVbaExplorer"
         },
         {
-          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "navigation@3",
           "when": "view == excelAiVbaExplorer"
         },
@@ -189,50 +226,40 @@
       ],
       "editor/title": [
         {
-          "command": "excelAiVbaStudio.openFullExcel",
+          "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "navigation@1",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "navigation@2",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaExplorer",
-          "group": "navigation@3",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
-        },
-        {
           "command": "excelAiVbaStudio.exportWorkbook",
-          "group": "navigation@4",
+          "group": "navigation@3",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
         }
       ],
       "explorer/context": [
         {
-          "command": "excelAiVbaStudio.openFullExcel",
+          "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "excelAiVbaStudio@1",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "excelAiVbaStudio@2",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
         },
         {
-          "command": "excelAiVbaStudio.openVbaExplorer",
-          "group": "excelAiVbaStudio@3",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
-        },
-        {
           "command": "excelAiVbaStudio.exportWorkbook",
-          "group": "excelAiVbaStudio@4",
+          "group": "excelAiVbaStudio@3",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
         },
         {
           "command": "excelAiVbaStudio.copyWorkbookContext",
-          "group": "excelAiVbaStudio@5",
+          "group": "excelAiVbaStudio@4",
           "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
         }
       ]
@@ -241,7 +268,12 @@
       "explorer": [
         {
           "id": "excelAiVbaExplorer",
-          "name": "Excel & VBA",
+          "name": "Projet Excel & VBA",
+          "visibility": "visible"
+        },
+        {
+          "id": "excelAiVbaProperties",
+          "name": "Propriétés VBA",
           "visibility": "visible"
         }
       ]
@@ -300,11 +332,23 @@
     "build": "vite build --mode=production",
     "vscode:prepublish": "npm run build",
     "validate:manifest": "node tools/validate-manifest.mjs",
+    "validate:workbook-access": "node tools/validate-noninteractive-workbook-access.mjs",
     "validate:macro-readonly": "node tools/validate-macro-readonly.mjs",
+    "validate:native-xlsm": "node tools/validate-native-xlsm-editing.mjs",
+    "validate:vba-studio": "node tools/validate-vba-studio.mjs",
+    "validate:vba-writeback": "node tools/validate-vba-writeback.mjs",
+    "test:vba-writeback": "node test/vba-writeback-regression.mjs",
+    "test:vba-atomic": "python test/atomic-writeback-regression.py",
+    "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
+    "test:native-diff": "node test/native-edit-regression.mjs",
+    "test:native-xlsm": "node test/native-xlsm-integration.mjs",
+    "validate:theme-sync": "node tools/validate-theme-sync.mjs",
+    "validate:integrated-features": "node tools/validate-integrated-features.mjs",
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
+    "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:macro-readonly && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:package",
-    "package": "vsce package --target win32-x64 --no-dependencies",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-writeback && npm run test:vba-writeback && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"
   },
