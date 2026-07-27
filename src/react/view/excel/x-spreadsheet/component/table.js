@@ -42,6 +42,18 @@ function getDrawBox(data, rindex, cindex, yoffset = 0) {
   } = data.cellRect(rindex, cindex);
   return new DrawBox(left, top + yoffset, width, height, cellPaddingWidth);
 }
+
+function mergeCellStyle(baseStyle, conditionalStyle) {
+  if (!conditionalStyle) return baseStyle;
+  return {
+    ...baseStyle,
+    ...conditionalStyle,
+    font: {
+      ...(baseStyle.font || {}),
+      ...(conditionalStyle.font || {}),
+    },
+  };
+}
 /*
 function renderCellBorders(bboxes, translateFunc) {
   const { draw } = this;
@@ -77,7 +89,11 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     return;
   }
 
-  const style = data.getCellStyleOrDefault(rindex, cindex);
+  const conditional = data.getConditionalFormatting(rindex, cindex);
+  const style = mergeCellStyle(
+    data.getCellStyleOrDefault(rindex, cindex),
+    conditional?.style,
+  );
   const defaultStyle = data.defaultStyle();
 
   const dbox = getDrawBox(data, rindex, cindex, yoffset);
@@ -92,6 +108,20 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
     }
   }
   draw.rect(dbox, () => {
+    if (conditional?.dataBar) {
+      draw.save();
+      draw.attr({
+        fillStyle: conditional.dataBar.color,
+        globalAlpha: 0.36,
+      });
+      draw.fillRect(
+        dbox.x + 1,
+        dbox.y + 1,
+        Math.max(0, (dbox.width - 2) * conditional.dataBar.ratio),
+        Math.max(0, dbox.height - 2),
+      );
+      draw.restore();
+    }
     // render text
     let cellText = '';
     if (!data.settings.evalPaused) {
@@ -101,6 +131,18 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
       });
     } else {
       cellText = cell.text || '';
+    }
+    if (
+      cell.formulaResult !== undefined
+      && `${cell.text || ''}`.startsWith('=')
+      && (
+        cellText === cell.text
+        || /[\[\]@]/.test(cell.text)
+        || cellText == null
+        || `${cellText}`.includes('#NAME?')
+      )
+    ) {
+      cellText = cell.formulaResult;
     }
     const formatter = style.format ? formatm[style.format] : undefined;
     if (formatter) {
@@ -120,12 +162,30 @@ export function renderCell(draw, data, rindex, cindex, yoffset = 0) {
       strike: style.strike,
       underline: style.underline || !!hyperlink,
     };
+    if (conditional?.icon) {
+      const icon = typeof conditional.icon === 'string'
+        ? { glyph: conditional.icon, color: drawStyle.color, showValue: true }
+        : conditional.icon;
+      draw.save();
+      draw.attr({
+        fillStyle: icon.color || drawStyle.color,
+        textAlign: 'left',
+        textBaseline: 'middle',
+        font: `700 ${npx(12 * data.getZoomScale())}px Arial`,
+      });
+      draw.fillText(icon.glyph || '●', dbox.x + 5, dbox.y + (dbox.height / 2));
+      draw.restore();
+      cellText = icon.showValue === false ? '' : `   ${cellText}`;
+    }
     draw.text(cellText, dbox, drawStyle, style.textwrap);
     // error
     const error = data.getValidationError(rindex, cindex);
     if (error) {
       // console.log('error:', rindex, cindex, error);
       draw.error(dbox);
+    }
+    if (data.getComment(rindex, cindex)) {
+      draw.comment(dbox);
     }
     if (isLocked) {
       draw.frozen(dbox, lockedColor);
@@ -201,6 +261,7 @@ function renderSelectedHeaderCell(x, y, w, h) {
 // ty: moving distance on y-axis
 function renderFixedHeaders(type, viewRange, w, h, tx, ty) {
   const { draw, data } = this;
+  if (data.settings.showHeaders === false) return;
   const { rows, cols, exceptRowSet } = data;
   const {
     sri: viewSri, sci: viewSci, eri: viewEri, eci: viewEci,
@@ -271,7 +332,8 @@ function renderFixedHeaders(type, viewRange, w, h, tx, ty) {
 }
 
 function renderFixedLeftTopCell(fw, fh) {
-  const { draw } = this;
+  const { draw, data } = this;
+  if (data.settings.showHeaders === false) return;
   draw.save();
   // left-top-cell
   draw.attr({ fillStyle: getExcelThemeColor('--excel-header-bg', '#f4f5f8') })

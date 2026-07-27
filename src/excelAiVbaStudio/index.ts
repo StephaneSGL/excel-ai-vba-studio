@@ -1,8 +1,15 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ExcelAiVbaExplorerProvider } from './explorer';
+import {
+	ExcelAiVbaExplorerProvider,
+	ExcelAiVbaPropertiesProvider
+} from './explorer';
 import { registerExcelAiVbaLanguageModelTool } from './languageModelTool';
-import { EXCEL_AI_COMMANDS, EXCEL_AI_EXPLORER_VIEW } from './types';
+import {
+	EXCEL_AI_COMMANDS,
+	EXCEL_AI_EXPLORER_VIEW,
+	EXCEL_AI_PROPERTIES_VIEW
+} from './types';
 import { ExcelAiVbaWorkbookService } from './workbookService';
 
 export function registerExcelAiVbaStudio(
@@ -10,13 +17,23 @@ export function registerExcelAiVbaStudio(
 ): void {
 	const service = new ExcelAiVbaWorkbookService(context);
 	const explorer = new ExcelAiVbaExplorerProvider(service);
+	const properties = new ExcelAiVbaPropertiesProvider();
+	const explorerTree = vscode.window.createTreeView(EXCEL_AI_EXPLORER_VIEW, {
+		treeDataProvider: explorer,
+		showCollapseAll: true
+	});
 	context.subscriptions.push(
 		service,
 		explorer,
+		properties,
 		service.onDidChangeContext(() => explorer.refresh()),
-		vscode.window.createTreeView(EXCEL_AI_EXPLORER_VIEW, {
-			treeDataProvider: explorer,
-			showCollapseAll: true
+		explorerTree,
+		explorerTree.onDidChangeSelection(event => {
+			properties.setSelected(event.selection[0]);
+		}),
+		vscode.window.createTreeView(EXCEL_AI_PROPERTIES_VIEW, {
+			treeDataProvider: properties,
+			showCollapseAll: false
 		}),
 		vscode.commands.registerCommand(
 			EXCEL_AI_COMMANDS.exportWorkbook,
@@ -53,16 +70,28 @@ export function registerExcelAiVbaStudio(
 			() => service.copyGeneratedContext()
 		),
 		vscode.commands.registerCommand(
-			EXCEL_AI_COMMANDS.openFullExcel,
+			EXCEL_AI_COMMANDS.openExcel,
 			(candidate?: unknown) => service.openExcel(candidate, false)
 		),
 		vscode.commands.registerCommand(
-			EXCEL_AI_COMMANDS.openVbaDeveloper,
+			EXCEL_AI_COMMANDS.openVbe,
 			(candidate?: unknown) => service.openExcel(candidate, true)
+		),
+		vscode.commands.registerCommand(
+			EXCEL_AI_COMMANDS.openVbaDeveloper,
+			(candidate?: unknown) => service.openVbaExplorer(candidate)
 		),
 		vscode.commands.registerCommand(
 			EXCEL_AI_COMMANDS.openVbaExplorer,
 			(candidate?: unknown) => service.openVbaExplorer(candidate)
+		),
+		vscode.commands.registerCommand(
+			EXCEL_AI_COMMANDS.openVbaComponent,
+			(candidate?: unknown) => service.openVbaComponent(candidate)
+		),
+		vscode.commands.registerCommand(
+			EXCEL_AI_COMMANDS.askCopilotAboutWorkbook,
+			(candidate?: unknown) => service.askCopilotAboutWorkbook(candidate)
 		),
 		vscode.commands.registerCommand(EXCEL_AI_COMMANDS.refreshExplorer, () =>
 			explorer.refresh()
@@ -96,5 +125,6 @@ export function registerExcelAiVbaStudio(
 export {
 	EXCEL_AI_COMMANDS,
 	EXCEL_AI_EXPLORER_VIEW,
+	EXCEL_AI_PROPERTIES_VIEW,
 	EXCEL_AI_LANGUAGE_MODEL_TOOL
 } from './types';

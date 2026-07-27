@@ -4,7 +4,113 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.2.0] - 2026-07-26
+
+### Added
+
+- Added transactional VBA source write-back for local `.xlsm` and `.xlam` workbooks.
+- Added the prompt-referenceable `#excelVbaWriteModule` tool for GitHub Copilot.
+- Added automatic reinjection when an exported `.bas`, `.cls`, or existing `.frm` source is saved in VS Code.
+- Added safe creation of standard and class modules from the VBA Studio or Copilot.
+- Bundled a self-contained Windows x64 pyOpenVBA helper and a real UserForm regression fixture.
+- Added targeted native `.xlsm` editing for cell values, formulas, number
+  formats, fonts, alignment, fills, and borders without leaving VS Code.
+- Restored explicit commands and ribbon actions for opening the real workbook
+  in Microsoft Excel and opening Excel's native VBE.
+
+### Fixed
+
+- Removed the embedded read-only VBA banner for writable `.xlsm` workbooks;
+  legacy `.xls` files remain protected.
+- Made the XLSX reader accept namespaced SpreadsheetML elements and absolute
+  package relationship targets.
+
+### Security
+
+- Every changed workbook receives a verified timestamped backup before atomic replacement.
+- Native cell edits now use a hashed sibling work copy, re-check the source
+  immediately before commit, validate the macro-enabled OOXML package, retain a
+  persistent backup, and atomically replace the original.
+- Stale workbooks, signed or password-protected VBA projects, reparse points, network paths, oversized requests, and UserForm designer changes are refused.
+- The write-back engine never starts Excel, executes macros, edits the Office registry, or changes AccessVBOM.
+
+### Tests
+
+- Added round-trip coverage for standard modules, new modules, existing UserForm code-behind, unchanged designer streams, stale-write rejection, OOXML preservation, and absence of new Excel processes.
+- Added real Excel integration coverage for targeted XLSM edits, conditional
+  formatting, form buttons, OOXML parts, and bit-for-bit VBA/UserForm streams.
+
+## [0.1.7] - 2026-07-25
+
+### Added
+
+- Added an in-editor conditional-formatting dialog for value rules, text rules, colour scales, data bars, and icon sets.
+- Activated the former placeholder ribbon actions through direct spreadsheet operations or a targeted GitHub Copilot request with workbook and VBA context.
+- Added in-editor data import, table formatting, deduplication, text-to-columns, subtotals, forecasts, page setup, formula auditing, image insertion, and generated chart/shape visuals.
+
+### Fixed
+
+- Made conditional-format icon sets reliable in VS Code by rendering explicit coloured glyphs instead of platform-dependent colour emoji.
+- Removed every visible “Coming soon”/“Bientôt” badge from the ribbon.
+
+## [0.1.6] - 2026-07-25
+
+### Performance
+
+- Reduced the initial webview JavaScript from about 2.00 MB to 219 KB by loading the spreadsheet interface progressively.
+- Deferred Excel export, CSV parsing, and legacy XLS/ODS engines until those features are actually used.
+- Loaded the workbook parser and sort-state reader concurrently instead of opening the XLSX archive sequentially twice.
+- Removed a redundant full worksheet traversal and skipped unnecessary formatting snapshots for XLSX/XLSM files.
+- Added an automated bundle-size and lazy-loading regression check.
+
+## [0.1.5] - 2026-07-25
+
+### Changed
+
+- The spreadsheet and VBA Studio now follow the active VS Code light, dark, or high-contrast color theme automatically.
+- Removed the saved light-mode override that could conflict with the theme selected by the user in VS Code.
+- Improved VBA Studio surfaces, selections, controls, focus rings, warnings, and status colors in light and dark themes.
+
+## [0.1.4] - 2026-07-25
+
+### Added
+
+- Added a complete VBE-style editor tab inside VS Code with project tree, properties, module/procedure selectors, line numbers, source editing, and module/class/UserForm creation.
+- Connected the integrated editor to real `.bas`, `.cls`, and `.frm` workspace files so GitHub Copilot and the native VS Code editor share the same sources.
+- Added an in-studio Copilot action backed by the generated workspace instructions and `#excelVbaWorkbook`.
+- Added a starter `Module1.bas` for `.xlsx` workbooks that do not yet contain an embedded VBA project.
+
+### Fixed
+
+- Kept the Copilot-indexed VBA directory stable during refresh, fixing Windows `EBUSY: resource busy or locked, rmdir ...\\vba`.
+
+## [0.1.3] - 2026-07-25
+
+### Added
+
+- Added theme, indexed-colour, and tint resolution so workbook colours survive embedded viewing and `.xlsx` saves.
+- Added conditional-format rendering and round-trip support for cell rules, colour scales, data bars, and icon sets.
+- Added comments, workbook statistics, sheet protection, safe regional sorting, and conditional-format creation to the ribbon.
+- Added a direct Copilot action backed by `#excelVbaWorkbook`, plus a dedicated action to export and open VBA sources in VS Code.
+- Added a VBE-style VS Code project tree for Excel objects, UserForms, standard modules, class modules, and references.
+- Added a synchronized VBA properties view and an internal UserForm preview.
+- Added a Copilot-indexable VBA workspace root with generated repository instructions.
+- Added native VBComponent export so UserForm `.frm` layout metadata and `.frx` resources are preserved when available.
+- Kept unfinished ribbon commands inside VS Code instead of opening Microsoft Excel.
+
+### Fixed
+
+- Fixed blank print previews caused by formatted empty rows and corrected A4 portrait pagination.
+- Preserved cached results for structured formulas that the embedded calculation engine cannot evaluate.
+- Fixed VBA extraction when VS Code exposes global extension storage through a non-file URI.
+
 ## [0.1.1] - 2026-07-24
+
+### Added
+
+- Added a responsive Excel-style ribbon with File, Home, Insert, Page Layout, Formulas, Data, Review, View, and AI & VBA tabs.
+- Connected supported ribbon actions to the embedded spreadsheet engine, including formatting, formulas, filters, freeze panes, clipboard, row/column operations, validation, printing, and find/replace.
+- Added direct ribbon actions for native Excel, the VBA editor, workbook-context export, and VBA source export.
 
 ### Documentation
 

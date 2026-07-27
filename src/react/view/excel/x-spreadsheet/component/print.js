@@ -54,10 +54,10 @@ function pagerOrientationChange(evt) {
 export default class Print {
   constructor(data) {
     this.paper = {
-      w: inches2px(PAGER_SIZES[0][1]),
-      h: inches2px(PAGER_SIZES[0][2]),
+      w: inches2px(PAGER_SIZES[1][1]),
+      h: inches2px(PAGER_SIZES[1][2]),
       padding: 50,
-      orientation: PAGER_ORIENTATIONS[0],
+      orientation: PAGER_ORIENTATIONS[1],
       get width() {
         return this.orientation === 'landscape' ? this.h : this.w;
       },
@@ -86,13 +86,25 @@ export default class Print {
                 h('fieldset', '').children(
                   h('label', '').child(`${t('print.size')}`),
                   h('select', '').children(
-                    ...PAGER_SIZES.map((it, index) => h('option', '').attr('value', index).child(`${it[0]} ( ${it[1]}''x${it[2]}'' )`)),
+                    ...PAGER_SIZES.map((it, index) => {
+                      const option = h('option', '')
+                        .attr('value', index)
+                        .child(`${it[0]} ( ${it[1]}''x${it[2]}'' )`);
+                      if (index === 1) option.attr('selected', 'selected');
+                      return option;
+                    }),
                   ).on('change', pagerSizeChange.bind(this)),
                 ),
                 h('fieldset', '').children(
                   h('label', '').child(`${t('print.orientation')}`),
                   h('select', '').children(
-                    ...PAGER_ORIENTATIONS.map((it, index) => h('option', '').attr('value', index).child(`${t('print.orientations')[index]}`)),
+                    ...PAGER_ORIENTATIONS.map((it, index) => {
+                      const option = h('option', '')
+                        .attr('value', index)
+                        .child(`${t('print.orientations')[index]}`);
+                      if (index === 1) option.attr('selected', 'selected');
+                      return option;
+                    }),
                   ).on('change', pagerOrientationChange.bind(this)),
                 ),
               ),
@@ -111,8 +123,9 @@ export default class Print {
     const iwidth = width - padding * 2;
     const iheight = height - padding * 2;
     const cr = data.contentRange();
-    const pages = parseInt(cr.h / iheight, 10) + 1;
-    const scale = iwidth / cr.w;
+    const scale = cr.w > 0 ? iwidth / cr.w : 1;
+    const appliedScale = Math.min(scale, 1);
+    const pages = Math.max(1, Math.ceil((cr.h * appliedScale) / iheight));
     let left = padding;
     const top = padding;
     if (scale > 1) {
@@ -143,7 +156,7 @@ export default class Print {
       for (; ri <= cr.eri; ri += 1) {
         const rh = data.rows.getHeight(ri);
         th += rh;
-        if (th < iheight) {
+        if (th * appliedScale <= iheight) {
           for (let ci = 0; ci <= cr.eci; ci += 1) {
             renderCell(draw, data, ri, ci, yoffset);
             mViewRange.eci = ci;
@@ -176,28 +189,56 @@ export default class Print {
   toPrint() {
     this.el.hide();
     const { paper } = this;
-    const iframe = h('iframe', '').hide();
+    const iframe = h('iframe', '');
     const { el } = iframe;
+    Object.assign(el.style, {
+      position: 'fixed',
+      left: '-10000px',
+      top: '0',
+      width: `${paper.width}px`,
+      height: `${paper.height}px`,
+      border: '0',
+      opacity: '0',
+      pointerEvents: 'none',
+    });
+    el.setAttribute('aria-hidden', 'true');
     window.document.body.appendChild(el);
     const { contentWindow } = el;
     const idoc = contentWindow.document;
     const style = document.createElement('style');
     style.innerHTML = `
-      @page { size: ${paper.width}px ${paper.height}px; };
+      @page { size: ${paper.width}px ${paper.height}px; margin: 0; }
+      html, body { margin: 0; padding: 0; background: #fff; }
       canvas {
-        page-break-before: auto;        
+        display: block;
+        page-break-before: auto;
         page-break-after: always;
         image-rendering: pixelated;
-      };
+      }
     `;
     idoc.head.appendChild(style);
     this.canvases.forEach((it) => {
       const cn = it.cloneNode(false);
+      cn.width = it.width;
+      cn.height = it.height;
+      cn.style.width = `${paper.width}px`;
+      cn.style.height = `${paper.height}px`;
       const ctx = cn.getContext('2d');
-      // ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingEnabled = true;
       ctx.drawImage(it, 0, 0);
       idoc.body.appendChild(cn);
     });
-    contentWindow.print();
+    const printFrame = () => {
+      contentWindow.focus();
+      contentWindow.print();
+      window.setTimeout(() => el.remove(), 1000);
+    };
+    if (typeof contentWindow.requestAnimationFrame === 'function') {
+      contentWindow.requestAnimationFrame(() => {
+        contentWindow.requestAnimationFrame(printFrame);
+      });
+    } else {
+      window.setTimeout(printFrame, 50);
+    }
   }
 }

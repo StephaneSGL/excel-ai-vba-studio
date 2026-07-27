@@ -3,14 +3,19 @@
 .github/**
 .vscode/**
 .vscode-test/**
+.serena/**
+.playwright-cli/**
 .idea/**
+output/**
 tools/**
 test/**
+.tmp-vba-smoke/**
 docs/**
 src/**
 vditor/**
 vite/**
 node_modules/**
+native/**
 *.vsix
 *.log
 **/*.map
@@ -46,6 +51,7 @@ changelog.md
 # Keep Marketplace/runtime assets explicitly
 !image/marketplace-icon.png
 !scripts/**
+!bin/**
 !out/**
 !README.md
 !CHANGELOG.md

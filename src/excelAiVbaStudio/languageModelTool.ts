@@ -2,12 +2,16 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import {
 	EXCEL_AI_LANGUAGE_MODEL_TOOL,
+	EXCEL_AI_VBA_WRITE_TOOL,
 	ToolInput,
-	UNTRUSTED_WORKBOOK_PREAMBLE
+	UNTRUSTED_WORKBOOK_PREAMBLE,
+	VbaWriteToolInput
 } from './types';
 import { ExcelAiVbaWorkbookService } from './workbookService';
 
 const MAX_TOOL_CONTEXT_BYTES = 4 * 1024 * 1024;
+const MAX_VBA_SOURCE_CHARACTERS = 2_000_000;
+const VBA_SOURCE_EXTENSIONS = new Set(['.bas', '.cls', '.frm']);
 
 interface LanguageModelApi {
 	registerTool?: (name: string, tool: unknown) => vscode.Disposable;
@@ -51,6 +55,43 @@ function parseInput(value: unknown): ToolInput {
 		workbookPath: source.workbookPath as string | undefined,
 		includeVba: source.includeVba === true,
 		format
+	};
+}
+
+function parseWriteInput(value: unknown): VbaWriteToolInput {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('Les paramètres de l’outil d’écriture doivent être un objet.');
+	}
+	const source = value as Record<string, unknown>;
+	for (const property of ['workbookPath', 'componentFile', 'source']) {
+		if (
+			source[property] !== undefined &&
+			typeof source[property] !== 'string'
+		) {
+			throw new Error(`${property} doit être une chaîne.`);
+		}
+	}
+	const componentFile = String(source.componentFile || '').trim();
+	if (
+		!componentFile ||
+		path.basename(componentFile) !== componentFile ||
+		!VBA_SOURCE_EXTENSIONS.has(
+			path.extname(componentFile).toLocaleLowerCase('en-US')
+		)
+	) {
+		throw new Error('componentFile doit être un fichier .bas, .cls ou .frm sans chemin.');
+	}
+	const vbaSource = source.source as string | undefined;
+	if (vbaSource === undefined) {
+		throw new Error('source est obligatoire.');
+	}
+	if (vbaSource.length > MAX_VBA_SOURCE_CHARACTERS) {
+		throw new Error('source dépasse la limite de 2 000 000 de caractères.');
+	}
+	return {
+		workbookPath: source.workbookPath as string | undefined,
+		componentFile,
+		source: vbaSource
 	};
 }
 
@@ -140,14 +181,86 @@ export function registerExcelAiVbaLanguageModelTool(
 		}
 	};
 
+	const writeTool = {
+		async prepareInvocation(options: { input?: unknown }) {
+			const input = parseWriteInput(options?.input);
+			return {
+				invocationMessage: `Réinjection VBA transactionnelle de ${input.componentFile}`
+			};
+		},
+
+		async invoke(
+			options: { input?: unknown },
+			cancellationToken?: vscode.CancellationToken
+		): Promise<unknown> {
+			if (cancellationToken?.isCancellationRequested) {
+				throw new vscode.CancellationError();
+			}
+			const input = parseWriteInput(options?.input);
+			const workbookUri = await service.resolveToolWorkbookUri(input);
+			if (!workbookUri) {
+				throw new Error(
+					'Aucun classeur Excel local unique ne peut recevoir le code VBA.'
+				);
+			}
+			const contextResult = await service.exportWorkbook(workbookUri, {
+				open: false,
+				includeVba: true,
+				requestedByTool: true,
+				cancellationToken
+			});
+			if (!contextResult) {
+				throw new Error('Le projet VBA n’a pas pu être préparé.');
+			}
+			if (cancellationToken?.isCancellationRequested) {
+				throw new vscode.CancellationError();
+			}
+			const writeResult = await service.applyVbaSource(
+				contextResult,
+				input.componentFile as string,
+				input.source as string,
+				true
+			);
+			if (cancellationToken?.isCancellationRequested) {
+				throw new vscode.CancellationError();
+			}
+			const Result = vscodeRuntime.LanguageModelToolResult;
+			const TextPart = vscodeRuntime.LanguageModelTextPart;
+			if (!Result || !TextPart) {
+				throw new Error(
+					'Les types Language Model Tool ne sont pas disponibles dans cette version de VS Code.'
+				);
+			}
+			return new Result([
+				new TextPart(
+					JSON.stringify({
+						ok: true,
+						changed: writeResult.changed,
+						modifiedModules: writeResult.modifiedModules,
+						workbookSha256: writeResult.workbookSha256,
+						backupPath: writeResult.backupPath || null,
+						macrosExecuted: false,
+						accessVbomChanged: false
+					})
+				)
+			]);
+		}
+	};
+
 	try {
 		context.subscriptions.push(
-			vscodeRuntime.lm.registerTool(EXCEL_AI_LANGUAGE_MODEL_TOOL, tool)
+			vscodeRuntime.lm.registerTool(EXCEL_AI_LANGUAGE_MODEL_TOOL, tool),
+			vscodeRuntime.lm.registerTool(EXCEL_AI_VBA_WRITE_TOOL, writeTool)
 		);
 		service
 			.getOutputChannel()
 			.appendLine(
 				`[outil IA] ${EXCEL_AI_LANGUAGE_MODEL_TOOL} enregistré pour la lecture locale contrôlée.`
+			);
+		service
+			.getOutputChannel()
+			.appendLine(
+				`[outil IA] ${EXCEL_AI_VBA_WRITE_TOOL} enregistré pour la réinjection VBA transactionnelle.`
 			);
 	} catch (error) {
 		service

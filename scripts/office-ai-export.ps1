@@ -893,7 +893,9 @@ function Get-VbaRecords {
         [bool]$ShouldIncludeVba,
 
         [Parameter(Mandatory = $true)]
-        [object]$Warnings
+        [object]$Warnings,
+
+        [string]$VbaOutputDirectory
     )
 
     $result = [ordered]@{
@@ -976,14 +978,66 @@ function Get-VbaRecords {
         for ($componentIndex = 1; $componentIndex -le $componentCount; $componentIndex++) {
             $component = $null
             $codeModule = $null
+            $temporaryExportPath = $null
+            $temporaryResourcePath = $null
             try {
                 $component = $components.Item($componentIndex)
                 $codeModule = $component.CodeModule
                 $lineCount = [int]$codeModule.CountOfLines
+                $componentType = Get-VbaComponentTypeLabel ([int]$component.Type)
+                $rawSource = ''
+                $resourceBase64 = $null
+                if (-not [string]::IsNullOrWhiteSpace($VbaOutputDirectory)) {
+                    try {
+                        $nativeExtension = '.txt'
+                        switch ($componentType) {
+                            'Standard module' { $nativeExtension = '.bas' }
+                            'Class module' { $nativeExtension = '.cls' }
+                            'Document module' { $nativeExtension = '.cls' }
+                            'UserForm' { $nativeExtension = '.frm' }
+                        }
+                        $temporaryExportPath = Assert-SafeManagedFile `
+                            -FilePath ([IO.Path]::Combine(
+                                $VbaOutputDirectory,
+                                ('.native-export-{0}{1}' -f [Guid]::NewGuid().ToString('N'), $nativeExtension)
+                            )) `
+                            -OwnedDirectory $VbaOutputDirectory `
+                            -Label 'Temporary native VBA export'
+                        $component.Export($temporaryExportPath)
+                        if ([IO.File]::Exists($temporaryExportPath)) {
+                            $rawSource = [IO.File]::ReadAllText(
+                                $temporaryExportPath,
+                                [Text.Encoding]::Default
+                            )
+                        }
+                        if ($componentType -eq 'UserForm') {
+                            $temporaryResourcePath = [IO.Path]::ChangeExtension(
+                                $temporaryExportPath,
+                                '.frx'
+                            )
+                            if ([IO.File]::Exists($temporaryResourcePath)) {
+                                $resourceBase64 = [Convert]::ToBase64String(
+                                    [IO.File]::ReadAllBytes($temporaryResourcePath)
+                                )
+                            }
+                        }
+                    }
+                    catch {
+                        Add-ExportWarning $Warnings $null 'workbook.vba.modules' (
+                            "Native export for component {0} was unavailable; code-module text was used instead: {1}" -f
+                                $componentIndex,
+                                $_.Exception.Message
+                        )
+                    }
+                }
+                if ([string]::IsNullOrEmpty($rawSource) -and $lineCount -gt 0) {
+                    $rawSource = [string]$codeModule.Lines(1, $lineCount)
+                }
+
                 $source = ''
                 $sourceTruncated = $false
-                if ($lineCount -gt 0 -and $remainingVbaCharacters -gt 0) {
-                    $source = [string]$codeModule.Lines(1, $lineCount)
+                if ($rawSource.Length -gt 0 -and $remainingVbaCharacters -gt 0) {
+                    $source = $rawSource
                     if ($source.Length -gt $remainingVbaCharacters) {
                         $source = $source.Substring(0, $remainingVbaCharacters) +
                             "`r`n' … [VBA source truncated by the 2,000,000-character workbook limit]"
@@ -997,22 +1051,43 @@ function Get-VbaRecords {
                         )
                     )
                 }
-                elseif ($lineCount -gt 0) {
+                elseif ($rawSource.Length -gt 0) {
                     $source = "' [VBA source omitted: workbook-wide character limit reached]"
                     $sourceTruncated = $true
                 }
                 [void]$moduleRecords.Add([PSCustomObject][ordered]@{
                     name = [string]$component.Name
-                    type = Get-VbaComponentTypeLabel ([int]$component.Type)
+                    type = $componentType
                     lineCount = $lineCount
                     source = $source
                     sourceTruncated = $sourceTruncated
+                    resourceBase64 = $resourceBase64
                 })
             }
             catch {
                 Add-ExportWarning $Warnings $null 'workbook.vba.modules' ("Component {0} could not be read: {1}" -f $componentIndex, $_.Exception.Message)
             }
             finally {
+                foreach ($temporaryPath in @($temporaryExportPath, $temporaryResourcePath)) {
+                    if (
+                        -not [string]::IsNullOrWhiteSpace($temporaryPath) -and
+                        [IO.File]::Exists($temporaryPath)
+                    ) {
+                        try {
+                            $validatedTemporaryPath = Assert-SafeManagedFile `
+                                -FilePath $temporaryPath `
+                                -OwnedDirectory $VbaOutputDirectory `
+                                -Label 'Temporary native VBA export cleanup'
+                            [IO.File]::Delete($validatedTemporaryPath)
+                        }
+                        catch {
+                            Add-ExportWarning $Warnings $null 'workbook.vba.modules' (
+                                "Temporary native export could not be removed: {0}" -f
+                                    $_.Exception.Message
+                            )
+                        }
+                    }
+                }
                 Release-ComObject $codeModule
                 Release-ComObject $component
             }
@@ -1937,27 +2012,87 @@ function Write-VbaArtifacts {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $validatedTargetDirectory = [IO.Path]::GetFullPath($TargetDirectory).TrimEnd($separatorCharacters)
-    foreach ($managedPattern in @('*.bas', '*.cls', '*.frm', '*.txt', 'manifest.json', 'README.md')) {
-        foreach ($managedFile in [IO.Directory]::GetFiles($validatedTargetDirectory, $managedPattern, [IO.SearchOption]::TopDirectoryOnly)) {
-            $managedFullPath = Assert-SafeManagedFile `
-                -FilePath $managedFile `
+    # Remove only files recorded by the previous exporter manifest. Files created
+    # in VBA Studio are working sources for VS Code/Copilot and must survive a
+    # workbook refresh when they are not embedded in the source workbook.
+    $managedNames = @{
+        'manifest.json' = $true
+        'README.md' = $true
+    }
+    $previousManifestPath = [IO.Path]::Combine(
+        $validatedTargetDirectory,
+        'manifest.json'
+    )
+    if ([IO.File]::Exists($previousManifestPath)) {
+        try {
+            $previousManifestPath = Assert-SafeManagedFile `
+                -FilePath $previousManifestPath `
                 -OwnedDirectory $validatedTargetDirectory `
-                -Label 'Managed VBA artifact'
-            $managedParent = [IO.Path]::GetDirectoryName($managedFullPath).TrimEnd($separatorCharacters)
-            if (-not [string]::Equals($managedParent, $validatedTargetDirectory, [StringComparison]::OrdinalIgnoreCase)) {
-                throw "Refusing to remove a managed VBA artifact outside the validated target directory: $managedFullPath"
+                -Label 'Previous VBA manifest'
+            $previousManifest = [IO.File]::ReadAllText($previousManifestPath) |
+                ConvertFrom-Json
+            foreach ($previousModule in @($previousManifest.modules)) {
+                foreach ($propertyName in @('file', 'resourceFile')) {
+                    $property = $previousModule.PSObject.Properties[$propertyName]
+                    if (
+                        $null -eq $property -or
+                        [string]::IsNullOrWhiteSpace([string]$property.Value)
+                    ) {
+                        continue
+                    }
+                    $recordedName = [string]$property.Value
+                    $leafName = [IO.Path]::GetFileName($recordedName)
+                    $extension = [IO.Path]::GetExtension($leafName).ToLowerInvariant()
+                    if (
+                        [string]::Equals($recordedName, $leafName, [StringComparison]::Ordinal) -and
+                        $extension -in @('.bas', '.cls', '.frm', '.frx', '.txt')
+                    ) {
+                        $managedNames[$leafName] = $true
+                    }
+                }
             }
-            # Revalidate immediately before deletion to reject a swapped junction.
-            [void](Assert-SafeManagedFile `
-                -FilePath $managedFullPath `
-                -OwnedDirectory $validatedTargetDirectory `
-                -Label 'Managed VBA artifact')
-            [IO.File]::Delete($managedFullPath)
         }
+        catch {
+            Add-ExportWarning $Warnings $null 'workbook.vba.artifacts' (
+                'The previous VBA manifest could not be used for selective cleanup: ' +
+                $_.Exception.Message
+            )
+        }
+    }
+    foreach ($managedName in @($managedNames.Keys)) {
+        $managedFile = [IO.Path]::Combine(
+            $validatedTargetDirectory,
+            [string]$managedName
+        )
+        if (-not [IO.File]::Exists($managedFile)) {
+            continue
+        }
+        $managedFullPath = Assert-SafeManagedFile `
+            -FilePath $managedFile `
+            -OwnedDirectory $validatedTargetDirectory `
+            -Label 'Managed VBA artifact'
+        $managedParent = [IO.Path]::GetDirectoryName($managedFullPath).TrimEnd($separatorCharacters)
+        if (-not [string]::Equals($managedParent, $validatedTargetDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove a managed VBA artifact outside the validated target directory: $managedFullPath"
+        }
+        [void](Assert-SafeManagedFile `
+            -FilePath $managedFullPath `
+            -OwnedDirectory $validatedTargetDirectory `
+            -Label 'Managed VBA artifact')
+        [IO.File]::Delete($managedFullPath)
     }
 
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
     $usedFileNames = @{}
+    foreach ($existingPattern in @('*.bas', '*.cls', '*.frm', '*.txt')) {
+        foreach ($existingFile in [IO.Directory]::GetFiles(
+            $validatedTargetDirectory,
+            $existingPattern,
+            [IO.SearchOption]::TopDirectoryOnly
+        )) {
+            $usedFileNames[[IO.Path]::GetFileName($existingFile).ToLowerInvariant()] = $true
+        }
+    }
     $manifestModules = New-Object 'System.Collections.Generic.List[object]'
     $moduleIndex = 0
     foreach ($module in @($VbaData.modules)) {
@@ -1985,7 +2120,37 @@ function Write-VbaArtifacts {
             -FilePath $modulePath `
             -OwnedDirectory $validatedTargetDirectory `
             -Label 'VBA module artifact')
-        [IO.File]::WriteAllText($modulePath, [string]$module.source, $utf8WithoutBom)
+        $sourceText = [string]$module.source
+        $resourceFile = $null
+        $resourceValue = $null
+        if ($null -ne $module.PSObject.Properties['resourceBase64']) {
+            $resourceValue = [string]$module.resourceBase64
+        }
+        if (
+            [string]$module.type -eq 'UserForm' -and
+            -not [string]::IsNullOrWhiteSpace($resourceValue)
+        ) {
+            $resourceFile = [IO.Path]::ChangeExtension($candidate, '.frx')
+            $resourcePath = Assert-SafeManagedFile `
+                -FilePath ([IO.Path]::Combine($TargetDirectory, $resourceFile)) `
+                -OwnedDirectory $validatedTargetDirectory `
+                -Label 'VBA UserForm resource'
+            $sourceText = [Text.RegularExpressions.Regex]::Replace(
+                $sourceText,
+                '"[^"]+\.frx"',
+                ('"{0}"' -f $resourceFile),
+                [Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
+            [IO.File]::WriteAllBytes(
+                $resourcePath,
+                [Convert]::FromBase64String($resourceValue)
+            )
+        }
+        [IO.File]::WriteAllText($modulePath, $sourceText, $utf8WithoutBom)
+        $module.source = $sourceText
+        if ($null -ne $module.PSObject.Properties['resourceBase64']) {
+            $module.PSObject.Properties.Remove('resourceBase64')
+        }
         $module | Add-Member -NotePropertyName artifactFile -NotePropertyValue $candidate -Force
         $module | Add-Member -NotePropertyName artifactPath -NotePropertyValue $modulePath -Force
         [void]$manifestModules.Add([PSCustomObject][ordered]@{
@@ -1993,6 +2158,7 @@ function Write-VbaArtifacts {
             type = $module.type
             lineCount = $module.lineCount
             file = $candidate
+            resourceFile = $resourceFile
         })
     }
 
@@ -2032,9 +2198,9 @@ function Write-VbaArtifacts {
     [void]$readme.AppendLine()
     $moduleRows = New-Object 'System.Collections.Generic.List[object]'
     foreach ($moduleRecord in $manifestModules) {
-        [void]$moduleRows.Add(@($moduleRecord.name, $moduleRecord.type, $moduleRecord.lineCount, $moduleRecord.file))
+        [void]$moduleRows.Add(@($moduleRecord.name, $moduleRecord.type, $moduleRecord.lineCount, $moduleRecord.file, $moduleRecord.resourceFile))
     }
-    Add-MarkdownTable $readme @('Name', 'Type', 'Lines', 'File') @($moduleRows.ToArray())
+    Add-MarkdownTable $readme @('Name', 'Type', 'Lines', 'File', 'Resource') @($moduleRows.ToArray())
     [void]$readme.AppendLine('## References')
     [void]$readme.AppendLine()
     $referenceRows = New-Object 'System.Collections.Generic.List[object]'
@@ -3049,7 +3215,12 @@ try {
             [void]$worksheetRecords.Add($sheetRecord)
         }
 
-        $vbaData = Get-VbaRecords $workbook $workbookHasVba $includeVbaEnabled $warnings
+        $vbaData = Get-VbaRecords `
+            -Workbook $workbook `
+            -HasVbaProject $workbookHasVba `
+            -ShouldIncludeVba $includeVbaEnabled `
+            -Warnings $warnings `
+            -VbaOutputDirectory $vbaFullDirectory
 
         $workbookProtection = [ordered]@{
             structure = $null

@@ -1,11 +1,20 @@
-import ExcelJS from '@cweijan/exceljs';
-import JSZip from 'jszip';
-import * as XLSX from 'xlsx';
-import { inferSchema, initParser } from 'udsv';
+import type ExcelJS from '@cweijan/exceljs';
+import type * as XLSX from 'xlsx';
 import { decodeCsvBuffer } from './csvEncoding';
 import { DEFAULT_ROW_HEIGHT_PX, excelFreezeToExpr, excelRowHeightToPx, readAutofilterRef } from './excel_meta';
+import {
+    normalizeOoxmlRelationshipTargets,
+    normalizeSpreadsheetMlElementPrefixes,
+} from './ooxml_namespace';
 import { readWorksheetSortStateXml } from './excel_sort_state';
-import { excelJsCellToStyle, StyleRegistry } from './excel_styles';
+import {
+    createExcelColorResolver,
+    excelJsCellToStyle,
+    excelJsStyleToCellStyle,
+    hexToArgb,
+    type ExcelColorResolver,
+    StyleRegistry,
+} from './excel_styles';
 import { mergeHyperlinkMaps, readCellHyperlink } from './excel_hyperlink';
 import { readWorksheetBackgroundImage, readWorksheetImages } from './excel_images';
 import { readWorksheetValidations } from './excel_validation';
@@ -14,7 +23,12 @@ import {
     readCellEditableFromExcel,
     readWorksheetProtection,
 } from './excel_protection';
-import type { CellData, SheetData } from './x-spreadsheet/index';
+import type {
+    CellData,
+    SheetCommentData,
+    SheetConditionalFormatting,
+    SheetData,
+} from './x-spreadsheet/index';
 
 type RowMap = NonNullable<SheetData['rows']>;
 
@@ -25,6 +39,85 @@ type ExcelJsWorksheetWithMerges = ExcelJS.Worksheet & {
         merges?: string[];
     };
 };
+
+type ExcelJsWorksheetExtras = ExcelJS.Worksheet & {
+    conditionalFormattings?: ExcelJS.ConditionalFormattingOptions[];
+};
+
+function cloneJson<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalizeConditionalColors(value: unknown, resolveColor: ExcelColorResolver): unknown {
+    if (Array.isArray(value)) {
+        return value.map(item => normalizeConditionalColors(item, resolveColor));
+    }
+    if (!value || typeof value !== 'object') return value;
+    const record = value as Record<string, unknown>;
+    const isColor = ['argb', 'theme', 'indexed', 'tint', 'auto']
+        .some(key => Object.prototype.hasOwnProperty.call(record, key));
+    if (isColor) {
+        const color = resolveColor(record as Partial<ExcelJS.Color>);
+        const argb = hexToArgb(color);
+        return argb ? { argb } : cloneJson(record);
+    }
+    return Object.fromEntries(
+        Object.entries(record).map(([key, item]) => [
+            key,
+            normalizeConditionalColors(item, resolveColor),
+        ]),
+    );
+}
+
+function readConditionalFormattings(
+    worksheet: ExcelJS.Worksheet,
+    resolveColor: ExcelColorResolver,
+): SheetConditionalFormatting[] {
+    const source = (worksheet as ExcelJsWorksheetExtras).conditionalFormattings ?? [];
+    return source
+        .filter(item => typeof item?.ref === 'string' && Array.isArray(item.rules))
+        .map(item => {
+            const normalized = normalizeConditionalColors(item, resolveColor) as ExcelJS.ConditionalFormattingOptions;
+            return {
+                ref: normalized.ref,
+                rules: normalized.rules.map(rule => {
+                    const displayStyle = excelJsStyleToCellStyle(
+                        rule.style as Partial<ExcelJS.Style> | undefined,
+                        resolveColor,
+                    );
+                    return {
+                        ...rule,
+                        ...(displayStyle ? { displayStyle } : {}),
+                    };
+                }),
+            } as SheetConditionalFormatting;
+        });
+}
+
+function noteToComment(note: ExcelJS.Cell['note']): SheetCommentData | undefined {
+    if (!note) return undefined;
+    if (typeof note === 'string') return { text: note };
+    if (Array.isArray(note)) {
+        const text = note.map(part => part?.text ?? '').join('');
+        return text ? { text } : undefined;
+    }
+    const noteValue = note as {
+        texts?: { text?: string }[];
+        author?: string;
+    };
+    const text = noteValue.texts?.map(part => part.text ?? '').join('') ?? '';
+    return text ? { text, ...(noteValue.author ? { author: noteValue.author } : {}) } : undefined;
+}
+
+function formulaResult(cell: ExcelJS.Cell): CellData['formulaResult'] | undefined {
+    const result = cell.result;
+    if (result == null) return undefined;
+    if (result instanceof Date) return result.toISOString();
+    if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') {
+        return result;
+    }
+    return undefined;
+}
 
 export interface ExcelData {
     sheets: SheetData[];
@@ -84,13 +177,22 @@ const readWorksheetMerges = (worksheet: ExcelJS.Worksheet): string[] => {
 };
 
 const expandSizeForMerge = (merge: string, size: { maxRow: number; maxCols: number }) => {
-    const range = XLSX.utils.decode_range(merge);
-    size.maxRow = Math.max(size.maxRow, range.e.r + 1);
-    size.maxCols = Math.max(size.maxCols, range.e.c + 1);
+    const endAddress = merge.split(':').at(-1)?.replace(/\$/g, '');
+    const match = /^([A-Z]+)(\d+)$/i.exec(endAddress ?? '');
+    if (!match) return;
+    let col = 0;
+    const letters = match[1].toUpperCase();
+    for (let i = 0; i < letters.length; i += 1) {
+        col = col * 26 + letters.charCodeAt(i) - 64;
+    }
+    size.maxRow = Math.max(size.maxRow, Number(match[2]));
+    size.maxCols = Math.max(size.maxCols, col);
 };
 
-const readSheetJsMerges = (worksheet: XLSX.WorkSheet) => (worksheet['!merges'] ?? [])
-    .map(merge => XLSX.utils.encode_range(merge));
+type SheetJsUtils = typeof import('xlsx')['utils'];
+
+const readSheetJsMerges = (worksheet: XLSX.WorkSheet, utils: SheetJsUtils) => (worksheet['!merges'] ?? [])
+    .map(merge => utils.encode_range(merge));
 
 const expandSizeForSheetJsMerge = (merge: XLSX.Range, size: { maxRow: number; maxCols: number }) => {
     size.maxRow = Math.max(size.maxRow, merge.e.r + 1);
@@ -171,73 +273,107 @@ const applyRowHeight = (rows: RowMap, ri: number, excelRow: ExcelJS.Row) => {
     }
 };
 
-const readWorkbookSortStateXml = async (buffer: ArrayBuffer) => {
+const prepareExcelJsWorkbook = async (buffer: ArrayBuffer) => {
+    const { default: JSZip } = await import('jszip');
     const zip = await JSZip.loadAsync(buffer);
-    const entries = new Map<number, ReturnType<typeof readWorksheetSortStateXml>>();
-    const worksheetFiles = Object.keys(zip.files)
-        .map((name) => {
-            const match = /^xl\/worksheets\/sheet(\d+)\.xml$/i.exec(name);
-            return match ? { index: Number(match[1]) - 1, name } : null;
-        })
-        .filter((it): it is { index: number; name: string } => Boolean(it))
-        .sort((a, b) => a.index - b.index);
+    const sortStateXmlMap =
+        new Map<number, ReturnType<typeof readWorksheetSortStateXml>>();
+    let changed = false;
 
-    for (let i = 0; i < worksheetFiles.length; i += 1) {
-        const file = worksheetFiles[i];
-        const xml = await zip.file(file.name)?.async('string');
-        if (!xml) continue;
-        entries.set(file.index, readWorksheetSortStateXml(xml));
+    for (const [name, entry] of Object.entries(zip.files)) {
+        if (
+            entry.dir
+            || (!name.toLowerCase().endsWith('.xml')
+                && !name.toLowerCase().endsWith('.rels'))
+        ) {
+            continue;
+        }
+        const xml = await entry.async('string');
+        const prefixed = normalizeSpreadsheetMlElementPrefixes(xml);
+        const normalized = name.toLowerCase().endsWith('.rels')
+            ? normalizeOoxmlRelationshipTargets(prefixed.xml, name)
+            : { xml: prefixed.xml, changed: false };
+        if (prefixed.changed || normalized.changed) {
+            zip.file(name, normalized.xml);
+            changed = true;
+        }
+
+        const worksheet = /^xl\/worksheets\/sheet(\d+)\.xml$/i.exec(name);
+        if (worksheet) {
+            sortStateXmlMap.set(
+                Number(worksheet[1]) - 1,
+                readWorksheetSortStateXml(normalized.xml),
+            );
+        }
     }
 
-    return entries;
+    const excelJsBuffer = changed
+        ? await zip.generateAsync({
+            type: 'arraybuffer',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 },
+        })
+        : buffer;
+    return { excelJsBuffer, sortStateXmlMap };
 };
 
-const convertExcelJsWorksheet = (worksheet: ExcelJS.Worksheet, workbook: ExcelJS.Workbook): Pick<SheetData, 'rows' | 'cols' | 'styles' | 'merges' | 'freeze' | 'autofilter' | 'hyperlinks' | 'validations' | 'sheetProtection' | 'images' | 'backgroundImage'> => {
+const convertExcelJsWorksheet = (
+    worksheet: ExcelJS.Worksheet,
+    workbook: ExcelJS.Workbook,
+): Pick<
+    SheetData,
+    'rows' | 'cols' | 'styles' | 'merges' | 'freeze' | 'autofilter' | 'hyperlinks'
+    | 'validations' | 'sheetProtection' | 'images' | 'backgroundImage' | 'comments'
+    | 'conditionalFormattings' | 'pageSetup'
+> => {
     const rows: RowMap = {};
     const styleRegistry = new StyleRegistry();
     const hyperlinkParts: Record<string, { link: string; tooltip?: string }>[] = [];
+    const comments: Record<string, SheetCommentData> = {};
+    const resolveColor = createExcelColorResolver(workbook);
     const sheetProtected = isWorksheetProtected(worksheet);
     const sheetProtection = readWorksheetProtection(worksheet);
     let maxCols = 0;
     let maxRow = 0;
 
     worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
-        if (!row || row.cellCount === 0) return;
+        if (!row) return;
         const ri = rowNumber - 1;
+        applyRowHeight(rows, ri, row);
+        if (row.height != null && ri + 1 > maxRow) maxRow = ri + 1;
+        if (row.cellCount === 0) return;
         const cells: Record<number, CellData> = {};
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
             if (cell.isMerged && cell.address !== cell.master.address) return;
 
             const ci = colNumber - 1;
             const text = formatCellText(cell);
-            const cellStyle = excelJsCellToStyle(cell);
+            const cellStyle = excelJsCellToStyle(cell, resolveColor);
             const editable = readCellEditableFromExcel(cell, sheetProtected);
             const hl = readCellHyperlink(cell, ri, ci);
-            if (!text && !cellStyle && editable === undefined && !Object.keys(hl).length) return;
+            const comment = noteToComment(cell.note);
+            const hasHyperlink = Object.keys(hl).length > 0;
+            if (comment) comments[cell.address] = comment;
+            if (!text && !cellStyle && editable === undefined && !hasHyperlink && !comment) return;
 
             const styleIndex = styleRegistry.add(cellStyle);
             const cellData: CellData = { text };
             if (styleIndex != null) cellData.style = styleIndex;
             if (editable !== undefined) cellData.editable = editable;
+            const cachedResult = formulaResult(cell);
+            if (cachedResult !== undefined) cellData.formulaResult = cachedResult;
             cells[ci] = cellData;
             if (ci + 1 > maxCols) maxCols = ci + 1;
             if (ri + 1 > maxRow) maxRow = ri + 1;
-            if (Object.keys(hl).length) hyperlinkParts.push(hl);
+            if (hasHyperlink) hyperlinkParts.push(hl);
         });
         if (Object.keys(cells).length > 0) {
-            rows[ri] = { cells };
+            const existing = rows[ri];
+            rows[ri] = existing && typeof existing === 'object' && 'height' in existing
+                ? { cells, height: existing.height }
+                : { cells };
         }
-        applyRowHeight(rows, ri, row);
     });
-
-    const rowCount = Math.max(maxRow, worksheet.rowCount || 0);
-    for (let rowNumber = 1; rowNumber <= rowCount; rowNumber += 1) {
-        if (rows[rowNumber - 1]) continue;
-        const excelRow = worksheet.getRow(rowNumber);
-        if (excelRow.height == null) continue;
-        applyRowHeight(rows, rowNumber - 1, excelRow);
-        if (rowNumber > maxRow) maxRow = rowNumber;
-    }
 
     const merges = readWorksheetMerges(worksheet);
     const sheetSize = { maxRow, maxCols };
@@ -253,6 +389,8 @@ const convertExcelJsWorksheet = (worksheet: ExcelJS.Worksheet, workbook: ExcelJS
     const validations = readWorksheetValidations(worksheet);
     const images = readWorksheetImages(worksheet, workbook);
     const backgroundImage = readWorksheetBackgroundImage(worksheet, workbook);
+    const conditionalFormattings = readConditionalFormattings(worksheet, resolveColor);
+    const pageSetup = cloneJson(worksheet.pageSetup ?? {});
 
     return {
         rows: { len: maxRow, ...rows },
@@ -264,6 +402,9 @@ const convertExcelJsWorksheet = (worksheet: ExcelJS.Worksheet, workbook: ExcelJS
         ...(sheetProtection ? { sheetProtection } : {}),
         ...(images.length ? { images } : {}),
         ...(backgroundImage ? { backgroundImage } : {}),
+        ...(Object.keys(comments).length ? { comments } : {}),
+        ...(conditionalFormattings.length ? { conditionalFormattings } : {}),
+        ...(Object.keys(pageSetup).length ? { pageSetup } : {}),
         ...sheetExtras,
     };
 };
@@ -301,6 +442,11 @@ const convertExcelJsWorkbook = (
             ...(converted.sheetProtection ? { sheetProtection: converted.sheetProtection } : {}),
             ...(converted.images ? { images: converted.images } : {}),
             ...(converted.backgroundImage ? { backgroundImage: converted.backgroundImage } : {}),
+            ...(converted.comments ? { comments: converted.comments } : {}),
+            ...(converted.conditionalFormattings
+                ? { conditionalFormattings: converted.conditionalFormattings }
+                : {}),
+            ...(converted.pageSetup ? { pageSetup: converted.pageSetup } : {}),
         });
     });
 
@@ -308,10 +454,13 @@ const convertExcelJsWorkbook = (
 };
 
 const loadWithExcelJs = async (buffer: ArrayBuffer): Promise<ExcelData> => {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
-    const sortStateXmlMap = await readWorkbookSortStateXml(buffer);
-    return convertExcelJsWorkbook(workbook, sortStateXmlMap);
+    const [prepared, { default: ExcelJSRuntime }] = await Promise.all([
+        prepareExcelJsWorkbook(buffer),
+        import('@cweijan/exceljs'),
+    ]);
+    const workbook = new ExcelJSRuntime.Workbook();
+    await workbook.xlsx.load(prepared.excelJsBuffer);
+    return convertExcelJsWorkbook(workbook, prepared.sortStateXmlMap);
 };
 
 const sheetJsColWidthToPx = (col?: XLSX.ColInfo) => {
@@ -339,7 +488,10 @@ const formatSheetJsCell = (cell: XLSX.CellObject) => {
     return String(cell.v);
 };
 
-const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'rows' | 'cols' | 'merges'> => {
+const convertSheetJsWorksheet = (
+    worksheet: XLSX.WorkSheet,
+    utils: SheetJsUtils,
+): Pick<SheetData, 'rows' | 'cols' | 'merges'> => {
     const rows: RowMap = {};
     let maxCols = 0;
     let maxRow = 0;
@@ -348,12 +500,12 @@ const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'ro
         return { rows: { len: 0 }, cols: { len: 0 } };
     }
 
-    const range = XLSX.utils.decode_range(ref);
+    const range = utils.decode_range(ref);
     for (let ri = range.s.r; ri <= range.e.r; ri += 1) {
         const cells: Record<number, CellData> = {};
         let hasContent = false;
         for (let ci = range.s.c; ci <= range.e.c; ci += 1) {
-            const addr = XLSX.utils.encode_cell({ r: ri, c: ci });
+            const addr = utils.encode_cell({ r: ri, c: ci });
             const cell = worksheet[addr];
             if (!cell) continue;
             const text = formatSheetJsCell(cell);
@@ -374,7 +526,7 @@ const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'ro
     maxCols = sheetSize.maxCols;
 
     const colCount = Math.max(maxCols, range.e.c - range.s.c + 1);
-    const merges = readSheetJsMerges(worksheet);
+    const merges = readSheetJsMerges(worksheet, utils);
     return {
         rows: { len: maxRow, ...rows },
         cols: { len: colCount, ...buildColsFromSheetJsWorksheet(worksheet, colCount) },
@@ -382,13 +534,13 @@ const convertSheetJsWorksheet = (worksheet: XLSX.WorkSheet): Pick<SheetData, 'ro
     };
 };
 
-const convertSheetJsWorkbook = (workbook: XLSX.WorkBook): ExcelData => {
+const convertSheetJsWorkbook = (workbook: XLSX.WorkBook, utils: SheetJsUtils): ExcelData => {
     const sheets: SheetData[] = [];
     let maxLength = 0;
     let maxCols = 26;
 
     for (const sheetName of workbook.SheetNames) {
-        const converted = convertSheetJsWorksheet(workbook.Sheets[sheetName]);
+        const converted = convertSheetJsWorksheet(workbook.Sheets[sheetName], utils);
         const rowCount = converted.rows?.len ?? 0;
         if (maxLength < rowCount) maxLength = rowCount;
 
@@ -406,12 +558,13 @@ const convertSheetJsWorkbook = (workbook: XLSX.WorkBook): ExcelData => {
     return { sheets, maxLength, maxCols };
 };
 
-const loadWithSheetJs = (buffer: ArrayBuffer): ExcelData => {
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    return convertSheetJsWorkbook(workbook);
+const loadWithSheetJs = async (buffer: ArrayBuffer): Promise<ExcelData> => {
+    const XLSXRuntime = await import('xlsx');
+    const workbook = XLSXRuntime.read(buffer, { type: 'array', cellDates: true });
+    return convertSheetJsWorkbook(workbook, XLSXRuntime.utils);
 };
 
-const loadCsv = (buffer: ArrayBuffer): ExcelData => {
+const loadCsv = async (buffer: ArrayBuffer): Promise<ExcelData> => {
     let maxCols = 26;
     const emptySheet = { maxCols, sheets: [{ name: 'Sheet1', rows: { len: 0 } }] };
     let csvStr = decodeCsvBuffer(buffer);
@@ -432,6 +585,7 @@ const loadCsv = (buffer: ArrayBuffer): ExcelData => {
         }
         let parseInput = csvToParse;
         if (!parseInput.includes('\n')) parseInput += '\n';
+        const { inferSchema, initParser } = await import('udsv');
         const schema = inferSchema(parseInput, { header: () => [] });
         const rows = initParser(schema).stringArrs(parseInput);
         const colCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
@@ -484,7 +638,7 @@ export async function loadSheets(buffer: ArrayBuffer, ext: string): Promise<Exce
     return loadWithExcelJs(buffer);
 }
 
-export function readCSV(buffer: ArrayBuffer): ExcelData {
+export async function readCSV(buffer: ArrayBuffer): Promise<ExcelData> {
     return loadCsv(buffer);
 }
 

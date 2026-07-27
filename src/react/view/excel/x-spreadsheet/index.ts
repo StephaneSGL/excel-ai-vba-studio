@@ -17,8 +17,9 @@ import {
     type FindOptions,
 } from '../excel_find';
 import { parseSpreadsheetLink } from '../excel_hyperlink';
-import { expr2xy } from './core/alphabet';
+import { expr2xy, xy2expr } from './core/alphabet';
 import { getFontSizePxByPt } from './core/font';
+import CellRange from './core/cell_range';
 
 export interface ExtendToolbarOption {
     tip?: string;
@@ -92,6 +93,8 @@ export interface CellData {
     text: string;
     style?: number;
     merge?: CellMerge;
+    /** Cached Excel result used when the embedded formula engine cannot evaluate a formula. */
+    formulaResult?: string | number | boolean;
     /** false 表示不可编辑（对应 Excel 锁定单元格） */
     editable?: boolean;
 }
@@ -152,6 +155,24 @@ export interface SheetBackgroundImage {
     base64: string;
 }
 
+export interface SheetCommentData {
+    text: string;
+    author?: string;
+}
+
+export interface SheetConditionalFormattingRule extends Record<string, unknown> {
+    type?: string;
+    priority?: number;
+    style?: Record<string, unknown>;
+    /** Spreadsheet-native style used only by the canvas renderer. */
+    displayStyle?: CellStyle;
+}
+
+export interface SheetConditionalFormatting {
+    ref: string;
+    rules: SheetConditionalFormattingRule[];
+}
+
 export interface SheetData {
     name?: string;
     freeze?: string;
@@ -162,6 +183,9 @@ export interface SheetData {
     sheetProtection?: Record<string, unknown>;
     images?: SheetImage[];
     backgroundImage?: SheetBackgroundImage;
+    comments?: Record<string, SheetCommentData>;
+    conditionalFormattings?: SheetConditionalFormatting[];
+    pageSetup?: Record<string, unknown>;
     styles?: CellStyle[];
     merges?: string[];
     cols?: {
@@ -174,6 +198,14 @@ export interface SheetData {
 export interface SpreadsheetData {
     name?: string;
     [index: number]: SheetData;
+}
+
+export interface WorkbookStatistics {
+    sheets: number;
+    populatedCells: number;
+    formulas: number;
+    comments: number;
+    conditionalFormattingRules: number;
 }
 
 export interface CellStyle {
@@ -408,8 +440,61 @@ export class Spreadsheet {
         return this;
     }
 
+    resize(): this {
+        this.sheet.reload();
+        return this;
+    }
+
+    setZoom(scale: number): this {
+        if (this.data.setZoomScale(scale)) {
+            this.sheet.reload();
+        }
+        return this;
+    }
+
     setSaveEnabled(enabled: boolean): this {
         (this.sheet as any).toolbar.setSaveEnabled(enabled);
+        return this;
+    }
+
+    executeCommand(type: string, value?: unknown): this {
+        (this.sheet as any).toolbar.change(type, value);
+        return this;
+    }
+
+    toggleCommand(type: string): this {
+        const toolbar = (this.sheet as any).toolbar;
+        const style = this.data.getSelectedCellStyle();
+        if (type === 'font-bold') {
+            toolbar.change(type, !style.font.bold);
+        } else if (type === 'font-italic') {
+            toolbar.change(type, !style.font.italic);
+        } else if (type === 'underline' || type === 'strike' || type === 'textwrap') {
+            toolbar.change(type, !style[type]);
+        } else if (type === 'merge') {
+            toolbar.change(type, !this.data.canUnmerge());
+        } else if (type === 'freeze') {
+            toolbar.change(type, !this.data.freezeIsActive());
+        } else if (type === 'autofilter') {
+            toolbar.change(type);
+        } else if (type === 'paintformat') {
+            toolbar.trigger(type);
+        } else {
+            toolbar.change(type);
+        }
+        return this;
+    }
+
+    executeContextCommand(type: string): this {
+        (this.sheet as any).contextMenu.itemClick(type);
+        return this;
+    }
+
+    setGridVisible(visible: boolean): this {
+        for (const data of this.datas) {
+            data.settings.showGrid = visible;
+        }
+        this.sheet.table.render();
         return this;
     }
 
@@ -451,6 +536,438 @@ export class Spreadsheet {
     getSelection(): { ri: number; ci: number; sheetIndex: number } {
         const { ri = 0, ci = 0 } = this.data.selector ?? {};
         return { ri, ci, sheetIndex: this.getActiveSheetIndex() };
+    }
+
+    getSelectedComment(): SheetCommentData | undefined {
+        const { ri, ci } = this.getSelection();
+        return this.data.getComment(ri, ci) ?? undefined;
+    }
+
+    setSelectedComment(text: string, author?: string): this {
+        const { ri, ci } = this.getSelection();
+        this.data.setComment(ri, ci, {
+            text: text.trim(),
+            ...(author ? { author } : {}),
+        });
+        this.reRender();
+        return this;
+    }
+
+    listComments(): Array<SheetCommentData & { sheet: string; address: string }> {
+        return this.datas.flatMap((data: any) => Object.entries(data.comments ?? {}).map(
+            ([address, comment]) => ({
+                ...(comment as SheetCommentData),
+                address,
+                sheet: data.name,
+            }),
+        ));
+    }
+
+    getWorkbookStatistics(): WorkbookStatistics {
+        let populatedCells = 0;
+        let formulas = 0;
+        let comments = 0;
+        let conditionalFormattingRules = 0;
+        this.datas.forEach((data: any) => {
+            data.rows.each((_ri: number, row: RowData) => {
+                Object.values(row?.cells ?? {}).forEach(cell => {
+                    if (cell?.text != null && `${cell.text}` !== '') populatedCells += 1;
+                    if (`${cell?.text ?? ''}`.startsWith('=')) formulas += 1;
+                });
+            });
+            comments += Object.keys(data.comments ?? {}).length;
+            conditionalFormattingRules += (data.conditionalFormattings ?? [])
+                .reduce((total: number, item: SheetConditionalFormatting) => (
+                    total + (item.rules?.length ?? 0)
+                ), 0);
+        });
+        return {
+            sheets: this.datas.length,
+            populatedCells,
+            formulas,
+            comments,
+            conditionalFormattingRules,
+        };
+    }
+
+    isSheetProtected(): boolean {
+        return !!this.data.sheetProtection;
+    }
+
+    toggleSheetProtection(): boolean {
+        this.data.changeData(() => {
+            this.data.sheetProtection = this.data.sheetProtection
+                ? null
+                : { sheet: true };
+        });
+        this.reRender();
+        return this.isSheetProtected();
+    }
+
+    addConditionalFormatting(rule: SheetConditionalFormattingRule): this {
+        const ref = this.data.selector.range.toString();
+        this.data.changeData(() => {
+            this.data.conditionalFormattings = this.data.conditionalFormattings ?? [];
+            const nextPriority = this.data.conditionalFormattings
+                .flatMap((item: SheetConditionalFormatting) => item.rules ?? [])
+                .reduce((highest: number, item: SheetConditionalFormattingRule) => (
+                    Math.max(highest, Number(item.priority) || 0)
+                ), 0) + 1;
+            this.data.conditionalFormattings.push({
+                ref,
+                rules: [{
+                    ...rule,
+                    priority: rule.priority ?? nextPriority,
+                }],
+            });
+        });
+        this.reRender();
+        return this;
+    }
+
+    clearConditionalFormatting(): this {
+        this.data.changeData(() => {
+            this.data.conditionalFormattings = [];
+        });
+        this.reRender();
+        return this;
+    }
+
+    addBlankSheet(name = 'Nouveau classeur'): this {
+        this.addSheet(this.uniqueSheetName(name), false);
+        this.activateSheet(this.datas.length - 1);
+        this.sheet.trigger('change');
+        return this;
+    }
+
+    appendSheets(sheets: SheetData[]): this {
+        for (const sheetData of sheets) {
+            const name = this.uniqueSheetName(sheetData.name || 'Données importées');
+            const target = this.addSheet(name, false);
+            target.setData({ ...sheetData, name });
+        }
+        if (sheets.length > 0) {
+            this.activateSheet(this.datas.length - 1);
+            this.sheet.trigger('change');
+        }
+        return this;
+    }
+
+    formatSelectionAsTable(): this {
+        const range = this.data.selector.range;
+        this.data.changeData(() => {
+            range.each((ri: number, ci: number) => {
+                const cell = this.data.rows.getCellOrNew(ri, ci);
+                const previous = cell.style == null ? {} : this.data.styles[cell.style] ?? {};
+                const header = ri === range.sri;
+                cell.style = this.data.addStyle({
+                    ...previous,
+                    bgcolor: header ? '#1f4e78' : (ri - range.sri) % 2 === 0 ? '#ddebf7' : '#ffffff',
+                    color: header ? '#ffffff' : previous.color,
+                    font: {
+                        ...(previous.font ?? {}),
+                        bold: header || previous.font?.bold,
+                    },
+                    border: {
+                        top: ['thin', '#9eafbf'],
+                        right: ['thin', '#9eafbf'],
+                        bottom: ['thin', '#9eafbf'],
+                        left: ['thin', '#9eafbf'],
+                    },
+                });
+            });
+        });
+        if (!this.data.autoFilter.active()) this.toggleCommand('autofilter');
+        this.reRender();
+        return this;
+    }
+
+    setPageSetup(patch: Record<string, unknown>): this {
+        this.data.changeData(() => {
+            this.data.pageSetup = {
+                ...(this.data.pageSetup ?? {}),
+                ...patch,
+            };
+        });
+        return this;
+    }
+
+    autoFitRows(sheetIndex = this.getActiveSheetIndex()): this {
+        const data = this.datas[sheetIndex];
+        if (!data) return this;
+        const rowLen = data.rows?.len ?? 0;
+        const colLen = data.cols?.len ?? 0;
+        data.changeData(() => {
+            for (let ri = 0; ri < rowLen; ri += 1) {
+                let lineCount = 1;
+                for (let ci = 0; ci < colLen; ci += 1) {
+                    const text = `${data.getCell(ri, ci)?.text ?? ''}`;
+                    lineCount = Math.max(lineCount, text.split(/\r\n|\r|\n/).length);
+                }
+                data.rows.setHeight(ri, Math.min(240, Math.max(24, lineCount * 22)));
+            }
+        });
+        if (sheetIndex === this.getActiveSheetIndex()) this.sheet.resetData(data);
+        return this;
+    }
+
+    toggleFormulaDisplay(): boolean {
+        this.data.settings.evalPaused = !this.data.settings.evalPaused;
+        this.reRender();
+        return this.data.settings.evalPaused;
+    }
+
+    setFormulaBarVisible(visible: boolean): this {
+        const formulaBar = (this.sheet as any).formulaBar?.el;
+        if (visible) formulaBar?.show();
+        else formulaBar?.hide();
+        this.sheet.reload();
+        return this;
+    }
+
+    setHeadingsVisible(visible: boolean): this {
+        this.datas.forEach(data => {
+            data.settings.showHeaders = visible;
+        });
+        this.reRender();
+        return this;
+    }
+
+    copySelectionToNewSheet(name = 'Table extraite'): this {
+        const source = this.data;
+        const range = source.selector.range;
+        const target = this.addSheet(this.uniqueSheetName(name), false);
+        target.changeData(() => {
+            for (let ri = range.sri; ri <= range.eri; ri += 1) {
+                for (let ci = range.sci; ci <= range.eci; ci += 1) {
+                    const sourceCell = source.getCell(ri, ci);
+                    if (!sourceCell) continue;
+                    target.rows.setCell(ri - range.sri, ci - range.sci, structuredClone(sourceCell));
+                }
+            }
+            target.rows.len = Math.max(1, range.eri - range.sri + 1);
+            target.cols.len = Math.max(1, range.eci - range.sci + 1);
+        });
+        this.activateSheet(this.datas.length - 1);
+        this.sheet.trigger('change');
+        return this;
+    }
+
+    getSelectionMatrix(): string[][] {
+        const range = this.data.selector.range;
+        const result: string[][] = [];
+        for (let ri = range.sri; ri <= range.eri; ri += 1) {
+            const row: string[] = [];
+            for (let ci = range.sci; ci <= range.eci; ci += 1) {
+                const cell = this.data.getCell(ri, ci);
+                row.push(`${cell?.formulaResult ?? cell?.text ?? ''}`);
+            }
+            result.push(row);
+        }
+        return result;
+    }
+
+    textToColumns(delimiter: string): this {
+        const range = this.data.selector.range;
+        const separator = delimiter || ',';
+        this.data.changeData(() => {
+            for (let ri = range.sri; ri <= range.eri; ri += 1) {
+                const source = `${this.data.getCell(ri, range.sci)?.text ?? ''}`;
+                source.split(separator).forEach((value, offset) => {
+                    const cell = this.data.rows.getCellOrNew(ri, range.sci + offset);
+                    cell.text = value.trim();
+                    delete cell.formulaResult;
+                });
+            }
+        });
+        this.reRender();
+        return this;
+    }
+
+    removeDuplicateRows(): number {
+        const range = this.data.selector.range;
+        const seen = new Set<string>();
+        const unique: CellData[][] = [];
+        for (let ri = range.sri; ri <= range.eri; ri += 1) {
+            const row: CellData[] = [];
+            for (let ci = range.sci; ci <= range.eci; ci += 1) {
+                row.push(structuredClone(this.data.getCell(ri, ci) ?? { text: '' }));
+            }
+            const key = JSON.stringify(row.map(cell => cell.text));
+            if (!seen.has(key)) {
+                seen.add(key);
+                unique.push(row);
+            }
+        }
+        const removed = range.eri - range.sri + 1 - unique.length;
+        this.data.changeData(() => {
+            for (let offset = 0; offset <= range.eri - range.sri; offset += 1) {
+                for (let ci = range.sci; ci <= range.eci; ci += 1) {
+                    const target = this.data.rows.getCellOrNew(range.sri + offset, ci);
+                    const source = unique[offset]?.[ci - range.sci];
+                    if (source) Object.assign(target, source);
+                    else {
+                        target.text = '';
+                        delete target.formulaResult;
+                    }
+                }
+            }
+        });
+        this.reRender();
+        return removed;
+    }
+
+    addSubtotal(): this {
+        const range = this.data.selector.range;
+        const targetRow = range.eri + 1;
+        this.data.changeData(() => {
+            const label = this.data.rows.getCellOrNew(targetRow, range.sci);
+            label.text = 'Total';
+            for (let ci = range.sci + 1; ci <= range.eci; ci += 1) {
+                const cell = this.data.rows.getCellOrNew(targetRow, ci);
+                cell.text = `=SUM(${xy2expr(ci, range.sri)}:${xy2expr(ci, range.eri)})`;
+            }
+            this.data.rows.len = Math.max(this.data.rows.len, targetRow + 1);
+        });
+        this.reRender();
+        return this;
+    }
+
+    addForecastRow(): this {
+        const range = this.data.selector.range;
+        const targetRow = range.eri + 1;
+        this.data.changeData(() => {
+            for (let ci = range.sci; ci <= range.eci; ci += 1) {
+                const last = Number(this.data.getCell(range.eri, ci)?.text);
+                const previous = Number(this.data.getCell(Math.max(range.sri, range.eri - 1), ci)?.text);
+                const cell = this.data.rows.getCellOrNew(targetRow, ci);
+                cell.text = Number.isFinite(last) && Number.isFinite(previous)
+                    ? String(last + (last - previous))
+                    : '';
+            }
+            this.data.rows.len = Math.max(this.data.rows.len, targetRow + 1);
+        });
+        this.reRender();
+        return this;
+    }
+
+    toggleWorkbookProtection(): boolean {
+        const protectedWorkbook = this.datas.every(data => !!data.sheetProtection);
+        this.datas.forEach(data => {
+            data.changeData(() => {
+                data.sheetProtection = protectedWorkbook ? null : { sheet: true };
+            });
+        });
+        this.reRender();
+        return !protectedWorkbook;
+    }
+
+    formulaAudit(kind: 'precedents' | 'dependents' | 'errors'): string[] {
+        const { ri, ci } = this.getSelection();
+        const selectedAddress = xy2expr(ci, ri);
+        if (kind === 'precedents') {
+            const formula = `${this.data.getCell(ri, ci)?.text ?? ''}`;
+            return Array.from(new Set(
+                formula.match(/\$?[A-Z]{1,3}\$?\d+/gi)?.map(value => value.replace(/\$/g, '').toUpperCase()) ?? [],
+            ));
+        }
+        const matches: string[] = [];
+        this.data.rows.each((rowIndex: number, row: RowData) => {
+            Object.entries(row?.cells ?? {}).forEach(([columnIndex, cell]) => {
+                const text = `${cell?.text ?? ''}`;
+                if (kind === 'errors' && /^#(?:REF|VALUE|NAME|DIV\/0|N\/A|NUM|NULL)!?/i.test(text)) {
+                    matches.push(xy2expr(Number(columnIndex), rowIndex));
+                } else if (
+                    kind === 'dependents'
+                    && text.startsWith('=')
+                    && new RegExp(`(?:^|[^A-Z0-9_])\\$?${selectedAddress.replace(/\d+$/, '')}\\$?${selectedAddress.match(/\d+$/)?.[0]}(?:[^A-Z0-9_]|$)`, 'i').test(text)
+                ) {
+                    matches.push(xy2expr(Number(columnIndex), rowIndex));
+                }
+            });
+        });
+        return matches;
+    }
+
+    insertImage(base64: string, extension: SheetImage['extension'], background = false): this {
+        const imageId = this.datas.flatMap(data => data.images ?? [])
+            .reduce((highest, item) => Math.max(highest, Number(item.imageId) || 0), 0) + 1;
+        if (background) {
+            this.data.changeData(() => {
+                this.data.backgroundImage = { imageId, extension, base64 };
+            });
+        } else {
+            const { ri, ci } = this.getSelection();
+            this.data.changeData(() => {
+                this.data.images = this.data.images ?? [];
+                this.data.images.push({
+                    id: `image-${imageId}`,
+                    imageId,
+                    extension,
+                    base64,
+                    anchor: { row: ri, col: ci, width: 320, height: 200, editAs: 'oneCell' },
+                });
+            });
+        }
+        this.sheet.resetData(this.data);
+        this.sheet.trigger('change');
+        return this;
+    }
+
+    arrangeSelectedImage(direction: 'forward' | 'backward'): this {
+        const images = this.data.images ?? [];
+        if (images.length < 2) return this;
+        const selected = (this.sheet as any).sheetImages?.selectedIndex;
+        const index = selected >= 0 ? selected : images.length - 1;
+        const target = direction === 'forward'
+            ? Math.min(images.length - 1, index + 1)
+            : Math.max(0, index - 1);
+        if (index === target) return this;
+        this.data.changeData(() => {
+            const [image] = images.splice(index, 1);
+            images.splice(target, 0, image);
+        });
+        this.sheet.resetData(this.data);
+        return this;
+    }
+
+    sortSelection(order: 'asc' | 'desc'): this {
+        const { ri, ci } = this.getSelection();
+        if (!this.data.autoFilter.active()) {
+            const content = this.data.contentRange();
+            const hasValue = (row: number, col: number) => {
+                const cell = this.data.getCell(row, col);
+                return cell != null && `${cell.text ?? ''}`.trim() !== '';
+            };
+            let sri = ri;
+            let eri = ri;
+            while (sri > 0 && hasValue(sri - 1, ci)) sri -= 1;
+            while (eri < content.eri && hasValue(eri + 1, ci)) eri += 1;
+            if (sri === eri) return this;
+
+            const columnHasValue = (col: number) => {
+                for (let row = sri; row <= eri; row += 1) {
+                    if (hasValue(row, col)) return true;
+                }
+                return false;
+            };
+            let sci = ci;
+            let eci = ci;
+            while (sci > 0 && columnHasValue(sci - 1)) sci -= 1;
+            while (eci < content.eci && columnHasValue(eci + 1)) eci += 1;
+            this.data.changeData(() => {
+                this.data.autoFilter.ref = new CellRange(sri, sci, eri, eci).toString();
+            });
+        }
+        const filterRange = this.data.autoFilter.range();
+        if (ci < filterRange.sci || ci > filterRange.eci) return this;
+        const items = this.data.autoFilter.items(
+            ci,
+            (ri: number, columnIndex: number) => this.data.rows.getCell(ri, columnIndex),
+        );
+        this.data.setAutoFilter(ci, order, 'in', Object.keys(items));
+        this.reRender();
+        return this;
     }
 
     autoFitColumns(sheetIndex = this.getActiveSheetIndex()): this {

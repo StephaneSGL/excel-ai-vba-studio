@@ -4,7 +4,6 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { EXCEL_EXTENSIONS } from './types';
 
-const ALLOW_ONCE = 'Autoriser une fois';
 export const EXPORT_OWNER_MARKER = '.excel-ai-vba-studio-owned';
 const EXPORT_OWNER_MARKER_CONTENT =
 	'excel-ai-vba-studio:managed-export-directory:v1\n';
@@ -359,23 +358,6 @@ function isPathInside(candidatePath: string, rootPath: string): boolean {
 	);
 }
 
-async function canonicalWorkspaceRoots(): Promise<string[]> {
-	const roots: string[] = [];
-	for (const folder of vscode.workspace.workspaceFolders || []) {
-		if (folder.uri.scheme !== 'file' || folder.uri.authority) {
-			continue;
-		}
-		try {
-			await assertLocalDrive(folder.uri.fsPath);
-			roots.push(await fs.promises.realpath(folder.uri.fsPath));
-		} catch {
-			// A remote, unavailable or unverifiable workspace must not silently
-			// authorize a workbook path.
-		}
-	}
-	return roots;
-}
-
 export async function canonicalizeWorkbookUri(uri: vscode.Uri): Promise<vscode.Uri> {
 	if (!uri || uri.scheme !== 'file' || uri.authority) {
 		throw new Error(
@@ -395,58 +377,6 @@ export async function canonicalizeWorkbookUri(uri: vscode.Uri): Promise<vscode.U
 		throw new Error('La ressource demandée n’est pas un fichier.');
 	}
 	return vscode.Uri.file(canonicalPath);
-}
-
-export async function isWorkbookInsideWorkspace(
-	canonicalWorkbookPath: string
-): Promise<boolean> {
-	const roots = await canonicalWorkspaceRoots();
-	return roots.some(root => isPathInside(canonicalWorkbookPath, root));
-}
-
-async function confirmExactPath(
-	message: string,
-	canonicalWorkbookPath: string
-): Promise<boolean> {
-	const choice = await vscode.window.showWarningMessage(
-		`${message}\n\n${canonicalWorkbookPath}`,
-		{
-			modal: true,
-			detail: `Chemin canonique exact : ${canonicalWorkbookPath}`
-		},
-		ALLOW_ONCE
-	);
-	return choice === ALLOW_ONCE;
-}
-
-export async function authorizeWorkbookRead(
-	candidate: vscode.Uri,
-	options: { includeVba: boolean }
-): Promise<vscode.Uri | undefined> {
-	const canonicalUri = await canonicalizeWorkbookUri(candidate);
-	const isInsideWorkspace = await isWorkbookInsideWorkspace(canonicalUri.fsPath);
-
-	if (
-		!isInsideWorkspace &&
-		!(await confirmExactPath(
-			'Autoriser la lecture ponctuelle de ce classeur situé hors de l’espace de travail ?',
-			canonicalUri.fsPath
-		))
-	) {
-		return undefined;
-	}
-
-	if (
-		options.includeVba &&
-		!(await confirmExactPath(
-			'Autoriser l’extraction ponctuelle du code et des références VBA de ce classeur ?',
-			canonicalUri.fsPath
-		))
-	) {
-		return undefined;
-	}
-
-	return canonicalUri;
 }
 
 export function workbookUriFromPathInput(requestedPath: string): vscode.Uri {

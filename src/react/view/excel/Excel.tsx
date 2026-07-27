@@ -1,61 +1,42 @@
-import { MoonOutlined, SunOutlined } from "@ant-design/icons";
-import { App, Button, Modal, Radio, Spin } from "antd";
+import { App, Button, ConfigProvider, Modal, Radio, Spin } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handler, vscodeApi } from "../../util/vscode.ts";
 import { isVscodeEditorDark, observeVscodeThemeChange } from "../../util/vscodeTheme.ts";
 import { loadOfficeBuffer } from "../../util/loadOfficeContent.ts";
+import { antThemeConfig } from '../../antThemeConfig.ts';
 import './Excel.less';
-import { MIN_VIEW_COLS, MIN_VIEW_ROWS } from "./excel_meta.ts";
+import {
+    buildFormattingSnapshot,
+    hasFormattingChanged,
+    MIN_VIEW_COLS,
+    MIN_VIEW_ROWS,
+} from "./excel_meta.ts";
 import { detectCsvEncoding } from "./csvEncoding.ts";
 import { loadSheets } from "./excel_reader.ts";
-import { export_xlsx, exportSaveAs, buildFormattingSnapshot, hasFormattingChanged } from "./excel_writer.ts";
-import Spreadsheet from './x-spreadsheet/index';
+import Spreadsheet, { type SheetData } from './x-spreadsheet/index';
 import FindReplacePanel, { type FindReplacePanelHandle } from './FindReplacePanel';
 import { parseSpreadsheetLink } from './excel_hyperlink';
 import { initExcelLocale, t } from './excel_i18n';
+import ExcelRibbon from './ExcelRibbon';
+import { buildNativeExcelEditPlan } from './native_edit_diff';
 
 initExcelLocale();
 
-type ExcelColorMode = 'adaptive' | 'light';
-type EmbeddedReadOnlyReason = 'macro-preservation' | 'file-permissions';
-
-const EXCEL_COLOR_MODE_KEY = 'office-excel-color-mode';
-const LEGACY_DARK_MODE_KEY = 'office-dark-mode';
-
-function loadExcelColorMode(): ExcelColorMode {
-    const state = vscodeApi?.getState?.() as { excelColorMode?: ExcelColorMode } | undefined;
-    if (state?.excelColorMode === 'light' || state?.excelColorMode === 'adaptive') {
-        return state.excelColorMode;
-    }
-    try {
-        const saved = localStorage.getItem(EXCEL_COLOR_MODE_KEY);
-        if (saved === 'light' || saved === 'adaptive') {
-            return saved;
-        }
-        const legacy = localStorage.getItem(LEGACY_DARK_MODE_KEY);
-        if (legacy === '1') {
-            return 'adaptive';
-        }
-        if (legacy === '0') {
-            return 'light';
-        }
-    } catch { }
-    return 'light';
-}
-
-function saveExcelColorMode(mode: ExcelColorMode) {
-    try {
-        localStorage.setItem(EXCEL_COLOR_MODE_KEY, mode);
-    } catch { }
-    if (vscodeApi?.setState) {
-        const prev = (vscodeApi.getState?.() ?? {}) as Record<string, unknown>;
-        vscodeApi.setState({ ...prev, excelColorMode: mode });
-    }
-}
+type EmbeddedReadOnlyReason =
+    | 'macro-preservation'
+    | 'native-excel-editing'
+    | 'file-permissions';
 
 type ExcelViewState = { ri: number; ci: number; sheetIndex: number };
 
 const EXCEL_VIEW_STATE_SUFFIX = '-excel-view';
+
+let excelWriterPromise: Promise<typeof import('./excel_writer.ts')> | undefined;
+
+function loadExcelWriter() {
+    excelWriterPromise ??= import('./excel_writer.ts');
+    return excelWriterPromise;
+}
 
 function getViewStateKey(documentCacheId: string): string {
     return `${documentCacheId}${EXCEL_VIEW_STATE_SUFFIX}`;
@@ -103,10 +84,13 @@ function isFindPanelTarget(target: EventTarget | null): boolean {
     return target instanceof Element && Boolean(target.closest('.frp-panel'));
 }
 
+function cloneSheets(sheets: SheetData[]): SheetData[] {
+    return JSON.parse(JSON.stringify(sheets)) as SheetData[];
+}
+
 function ExcelViewer() {
     const { message, modal } = App.useApp();
     const [loading, setLoading] = useState(true)
-    const [colorMode, setColorMode] = useState(loadExcelColorMode)
     const [vscodeDark, setVscodeDark] = useState(isVscodeEditorDark)
     const [readOnly, setReadOnly] = useState(false)
     const [readOnlyReason, setReadOnlyReason] = useState<EmbeddedReadOnlyReason | null>(null)
@@ -125,6 +109,8 @@ function ExcelViewer() {
     const csvEncodingRef = useRef<'utf8' | 'gbk'>('utf8')
     const csvDelimiterRef = useRef(',')
     const initialFormattingRef = useRef('')
+    const initialSheetsRef = useRef<SheetData[]>([])
+    const nativeSavePendingRef = useRef(false)
     const lastMacroBlockedNoticeRef = useRef(0)
 
     const notifyMacroWriteBlocked = useCallback(() => {
@@ -144,42 +130,29 @@ function ExcelViewer() {
         findPanelRef.current = findPanel;
     }, [findPanel]);
 
-    const adaptiveColorMode = colorMode === 'adaptive';
-    const themedDark = adaptiveColorMode && vscodeDark;
+    const themedDark = vscodeDark;
 
     useEffect(() => {
-        if (!adaptiveColorMode) {
-            return;
-        }
         return observeVscodeThemeChange(() => {
             setVscodeDark(isVscodeEditorDark());
             requestAnimationFrame(() => spreadSheetRef.current?.reRender());
         });
-    }, [adaptiveColorMode]);
+    }, []);
 
     useEffect(() => {
-        document.body.classList.toggle('office-adaptive', adaptiveColorMode)
+        document.body.classList.add('office-adaptive')
         document.body.classList.toggle('office-dark', themedDark)
+        document.documentElement.style.colorScheme = themedDark ? 'dark' : 'light'
         return () => {
             document.body.classList.remove('office-adaptive')
             document.body.classList.remove('office-dark')
+            document.documentElement.style.removeProperty('color-scheme')
         }
-    }, [adaptiveColorMode, themedDark])
-
-    const toggleColorMode = () => {
-        setColorMode(prev => {
-            const next: ExcelColorMode = prev === 'adaptive' ? 'light' : 'adaptive';
-            saveExcelColorMode(next);
-            if (next === 'adaptive') {
-                setVscodeDark(isVscodeEditorDark());
-            }
-            return next;
-        })
-    }
+    }, [themedDark])
 
     useEffect(() => {
         spreadSheetRef.current?.reRender()
-    }, [adaptiveColorMode, themedDark])
+    }, [themedDark])
 
     const handleAutoFitColumns = useCallback(() => {
         const spreadSheet = spreadSheetRef.current;
@@ -193,7 +166,10 @@ function ExcelViewer() {
     }, [message]);
 
     const handleSaveAs = useCallback(() => {
-        if (readOnlyReasonRef.current === 'macro-preservation') {
+        if (
+            readOnlyReasonRef.current === 'macro-preservation'
+            || readOnlyReasonRef.current === 'native-excel-editing'
+        ) {
             notifyMacroWriteBlocked();
             return;
         }
@@ -214,6 +190,36 @@ function ExcelViewer() {
 
         const ext = extRef.current.replace(/^\./, '').toLowerCase();
         const sheets = spreadSheet.getData();
+        if (readOnlyReasonRef.current === 'native-excel-editing') {
+            if (nativeSavePendingRef.current) {
+                return;
+            }
+            const plan = buildNativeExcelEditPlan(
+                initialSheetsRef.current,
+                sheets
+            );
+            if (plan.unsupportedChanges.length > 0) {
+                message.warning({
+                    duration: 6,
+                    content: t(
+                        'viewer.nativeUnsupportedChange',
+                        plan.unsupportedChanges.slice(0, 3).join(', ')
+                    ),
+                    className: 'excel-validation-error-message',
+                });
+                spreadSheet.setSaveEnabled(true);
+                return;
+            }
+            if (plan.operations.length === 0) {
+                spreadSheet.setSaveEnabled(false);
+                return;
+            }
+            nativeSavePendingRef.current = true;
+            handler.emit('saveNative', plan.operations);
+            return;
+        }
+
+        const { export_xlsx } = await loadExcelWriter();
         const csvEncoding = csvEncodingRef.current;
         const csvDelimiter = csvDelimiterRef.current;
 
@@ -288,18 +294,22 @@ function ExcelViewer() {
         } catch (error) {
             console.error(`Failed to save Excel file: ${(error as Error).message}`);
         }
-    }, [modal, handleSaveAs, notifyMacroWriteBlocked]);
+    }, [message, modal, handleSaveAs, notifyMacroWriteBlocked]);
 
     const confirmSaveAs = useCallback(async (fmt: string) => {
         const spreadSheet = spreadSheetRef.current;
         if (!spreadSheet) return;
-        if (readOnlyReasonRef.current === 'macro-preservation') {
+        if (
+            readOnlyReasonRef.current === 'macro-preservation'
+            || readOnlyReasonRef.current === 'native-excel-editing'
+        ) {
             setSaveAsVisible(false);
             notifyMacroWriteBlocked();
             return;
         }
         setSaveAsVisible(false);
         try {
+            const { exportSaveAs } = await loadExcelWriter();
             await exportSaveAs(spreadSheet, fmt, csvEncodingRef.current, csvDelimiterRef.current);
             if (!readOnlyRef.current) {
                 spreadSheet.setSaveEnabled(false);
@@ -393,7 +403,9 @@ function ExcelViewer() {
 
         const initSpreadsheet = async (buffer: ArrayBuffer, payload: any) => {
             const fileReadOnly = payload.readOnly === true;
-            const preserveMacros = payload.readOnlyReason === 'macro-preservation';
+            const preserveMacros =
+                payload.readOnlyReason === 'macro-preservation'
+                || payload.readOnlyReason === 'native-excel-editing';
             if (payload.ext?.match(/csv/i)) {
                 csvEncodingRef.current = detectCsvEncoding(buffer);
             }
@@ -407,32 +419,19 @@ function ExcelViewer() {
             const spreadSheet = new Spreadsheet(container, {
                 mode: fileReadOnly ? 'read' : 'edit',
                 allowSaveAs: !preserveMacros,
-                showToolbar: true,
-                extendToolbar: {
-                    right: [
-                        {
-                            tip: `${t('viewer.autoFitColumns')} (${navigator.platform.includes('Mac') ? 'Cmd+Alt+0' : 'Ctrl+Alt+0'})`,
-                            el: (() => {
-                                const button = document.createElement('span');
-                                button.textContent = 'AF';
-                                button.className = 'excel-autofit-badge';
-                                return button;
-                            })(),
-                            onClick: () => {
-                                handleAutoFitColumns();
-                            },
-                        },
-                    ],
-                },
+                showToolbar: false,
                 showEditInVSCode: isCsvLikeExt(payload.ext ?? ''),
                 row: { len: viewRowLen, height: 30 },
                 col: { len: viewColLen },
-                view: { height: () => window.innerHeight - 2 },
+                view: { height: () => Math.max(180, container.clientHeight || window.innerHeight - 130) },
             });
             spreadSheetRef.current = spreadSheet;
             setActiveSpreadsheet(spreadSheet);
-            setLoading(false);
             spreadSheet.loadData(sheets);
+            initialSheetsRef.current = cloneSheets(sheets);
+            nativeSavePendingRef.current = false;
+            setLoading(false);
+            requestAnimationFrame(() => spreadSheet.resize());
             if (!fileReadOnly) {
                 spreadSheet.on('save', () => void handleSave());
             }
@@ -479,7 +478,10 @@ function ExcelViewer() {
                     requestAnimationFrame(() => { restoreViewState(spreadSheet, savedView); });
                 });
             }
-            initialFormattingRef.current = buildFormattingSnapshot(spreadSheet.getData());
+            const normalizedExt = (payload.ext ?? '').replace(/^\./, '').toLowerCase();
+            initialFormattingRef.current = normalizedExt !== 'xlsx' && normalizedExt !== 'xlsm'
+                ? buildFormattingSnapshot(spreadSheet.getData())
+                : '';
         };
 
         handler.on("open", (payload) => {
@@ -487,6 +489,7 @@ function ExcelViewer() {
             documentCacheIdRef.current = payload.documentCacheId ?? '';
             const fileReadOnly = payload.readOnly === true;
             const reason = payload.readOnlyReason === 'macro-preservation'
+                || payload.readOnlyReason === 'native-excel-editing'
                 || payload.readOnlyReason === 'file-permissions'
                 ? payload.readOnlyReason as EmbeddedReadOnlyReason
                 : null;
@@ -510,7 +513,20 @@ function ExcelViewer() {
                 setLoading(false);
             });
         }).on("saveDone", () => {
+            nativeSavePendingRef.current = false;
+            const spreadSheet = spreadSheetRef.current;
+            if (spreadSheet) {
+                initialSheetsRef.current = cloneSheets(spreadSheet.getData());
+                spreadSheet.setSaveEnabled(false);
+            }
+            message.success({
+                duration: 2,
+                content: t('viewer.saveSuccess'),
+                className: 'excel-save-success-message',
+            });
         }).on("writeBlocked", (payload) => {
+            nativeSavePendingRef.current = false;
+            spreadSheetRef.current?.setSaveEnabled(true);
             message.warning({
                 duration: 4,
                 content: payload?.message || t('viewer.macroWriteBlocked'),
@@ -536,6 +552,22 @@ function ExcelViewer() {
     return (
         <div className='excel-viewer'>
             <Spin spinning={loading} fullscreen={true} />
+            <ExcelRibbon
+                spreadsheet={activeSpreadsheet}
+                readOnly={readOnly}
+                allowSaveAs={
+                    readOnlyReason !== 'macro-preservation'
+                    && readOnlyReason !== 'native-excel-editing'
+                }
+                showEditInVscode={isCsvLikeExt(extRef.current)}
+                onAutoFitColumns={handleAutoFitColumns}
+                onOpenExcel={() => handler.emit('openExcel')}
+                onOpenVbe={() => handler.emit('openVbe')}
+                onOpenVbaDeveloper={() => handler.emit('openVbaDeveloper')}
+                onExportWorkbookContext={() => handler.emit('exportWorkbookContext')}
+                onOpenVbaExplorer={() => handler.emit('openVbaExplorer')}
+                onAskCopilotAboutWorkbook={(request) => handler.emit('askCopilotAboutWorkbook', request)}
+            />
             {loadError && !loading && (
                 <div className="excel-load-error">
                     <div className="excel-load-error-panel">
@@ -562,12 +594,6 @@ function ExcelViewer() {
                     </span>
                     {readOnlyReason === 'macro-preservation' && (
                         <span className="excel-readonly-actions">
-                            <Button
-                                size="small"
-                                onClick={() => handler.emit('openNativeExcel')}
-                            >
-                                {t('viewer.openNativeExcel')}
-                            </Button>
                             <Button
                                 size="small"
                                 onClick={() => handler.emit('openVbaDeveloper')}
@@ -632,22 +658,16 @@ function ExcelViewer() {
                 </div>
             </Modal>
             <div id='container'></div>
-            <button
-                type="button"
-                className="dark-mode-toggle"
-                title={adaptiveColorMode ? t('viewer.switchToLightMode') : t('viewer.switchToDarkMode')}
-                onClick={toggleColorMode}
-            >
-                {adaptiveColorMode ? <SunOutlined /> : <MoonOutlined />}
-            </button>
         </div>
     )
 }
 
 export default function Excel() {
     return (
-        <App className="excel-app" message={{ top: 16 }}>
-            <ExcelViewer />
-        </App>
+        <ConfigProvider componentSize='small' theme={antThemeConfig}>
+            <App className="excel-app" message={{ top: 16 }}>
+                <ExcelViewer />
+            </App>
+        </ConfigProvider>
     );
 }
