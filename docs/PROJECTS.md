@@ -19,7 +19,7 @@ d’exécution livré avec l’extension. Sa source maintenue se trouve sous
 | Tests de préservation XLSM/VBA/UserForm | Retenus et portés | `test/run-native-edit-tests.ps1` et `test/run-vba-preservation-test.ps1` |
 | Réinjection directe du code VBA | Retenue | `native/vba-writeback` et VBA Studio |
 | Hôte C# Office Workbench autonome | Non retenu | Le chemin PowerShell/COM couvre le périmètre borné actuel sans second hôte de production |
-| Création de UserForms, contrôles et boutons | Différée | [Issue #7](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/7) |
+| Création de UserForms, contrôles et boutons | Retenue et portée | `scripts/apply-vba-designer.ps1`, `#excelVbaDesignWorkbook` et `test/vba-designer-integration.mjs` |
 | Dimensions, fusions, structure et règles conditionnelles éditables | Différées | [Issue #10](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/10) |
 
 Les anciens prototypes sont des archives ou références techniques, jamais des

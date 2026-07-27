@@ -1165,7 +1165,7 @@ export default function ExcelRibbon({
                     </label>
                 )}
                 <p>
-                    La règle sera appliquée aux cellules actuellement sélectionnées et enregistrée dans le fichier XLSX.
+                    La règle sera appliquée aux cellules actuellement sélectionnées et enregistrée dans le fichier XLSX ou XLSM.
                 </p>
             </div>
         </Modal>

@@ -1,5 +1,5 @@
 import { Handler } from '@/common/handler';
-import type { NativeExcelCellEdit } from '@/common/nativeExcelEdits';
+import type { NativeExcelEditOperation } from '@/common/nativeExcelEdits';
 import { parseSafeExternalUri } from '@/common/webviewUri';
 import { applyNativeExcelEdits } from '@/provider/nativeExcelBridge';
 import {
@@ -480,7 +480,7 @@ export function handleCommonEvent(
             }
         })
         .on('saveNative', async (payload: {
-            operations: NativeExcelCellEdit[];
+            operations: NativeExcelEditOperation[];
             expectedWorkbookSha256: string;
             nativeLoadGeneration: string;
         }) => {

@@ -63,7 +63,8 @@
     "onCustomEditor:excelAiVbaStudio.officeViewer",
     "onView:excelAiVbaExplorer",
     "onLanguageModelTool:excel_ai_vba_readWorkbook",
-    "onLanguageModelTool:excel_ai_vba_writeModule"
+    "onLanguageModelTool:excel_ai_vba_writeModule",
+    "onLanguageModelTool:excel_ai_vba_designWorkbook"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -189,6 +190,309 @@
           "required": [
             "componentFile",
             "source"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "excel_ai_vba_designWorkbook",
+        "displayName": "Créer des UserForms et boutons VBA",
+        "toolReferenceName": "excelVbaDesignWorkbook",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(symbol-interface)",
+        "userDescription": "Crée transactionnellement de vrais UserForms, leurs contrôles visuels et des boutons de feuille affectés à des macros dans un classeur XLSM existant.",
+        "modelDescription": "Utilise cet outil pour créer un UserForm complet avec son designer et ses flux .frx, ajouter des contrôles visuels à un UserForm, ou créer un bouton de formulaire sur une feuille Excel. Le classeur doit être un .xlsm local existant. Chaque écriture utilise une copie de travail, crée une sauvegarde, vérifie les flux UserForm, puis remplace le fichier atomiquement. Aucune macro n’est exécutée et le réglage AccessVBOM n’est jamais modifié.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "workbookPath": {
+              "type": "string",
+              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code vers un classeur .xlsm existant. Omettre pour utiliser le classeur actif."
+            },
+            "operations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "createUserForm"
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "caption": {
+                        "type": "string",
+                        "maxLength": 1000
+                      },
+                      "width": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000
+                      },
+                      "height": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000
+                      },
+                      "source": {
+                        "type": "string",
+                        "maxLength": 2000000,
+                        "description": "Code VBA du UserForm, sans en-tête VERSION/BEGIN/Attribute VB_."
+                      },
+                      "controls": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "label",
+                                "textBox",
+                                "commandButton",
+                                "comboBox",
+                                "listBox",
+                                "checkBox",
+                                "optionButton",
+                                "toggleButton",
+                                "frame",
+                                "image",
+                                "spinButton",
+                                "scrollBar"
+                              ]
+                            },
+                            "name": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                            },
+                            "left": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 10000
+                            },
+                            "top": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 10000
+                            },
+                            "width": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 10000
+                            },
+                            "height": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 10000
+                            },
+                            "caption": {
+                              "type": "string",
+                              "maxLength": 1000
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "visible": {
+                              "type": "boolean"
+                            },
+                            "tabIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 32767
+                            },
+                            "controlTipText": {
+                              "type": "string",
+                              "maxLength": 1000
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "name",
+                            "left",
+                            "top",
+                            "width",
+                            "height"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "addUserFormControl"
+                        ]
+                      },
+                      "formName": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "control": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "label",
+                              "textBox",
+                              "commandButton",
+                              "comboBox",
+                              "listBox",
+                              "checkBox",
+                              "optionButton",
+                              "toggleButton",
+                              "frame",
+                              "image",
+                              "spinButton",
+                              "scrollBar"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                          },
+                          "left": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 10000
+                          },
+                          "top": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 10000
+                          },
+                          "width": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 10000
+                          },
+                          "height": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 10000
+                          },
+                          "caption": {
+                            "type": "string",
+                            "maxLength": 1000
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "visible": {
+                            "type": "boolean"
+                          },
+                          "tabIndex": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 32767
+                          },
+                          "controlTipText": {
+                            "type": "string",
+                            "maxLength": 1000
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "name",
+                          "left",
+                          "top",
+                          "width",
+                          "height"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "formName",
+                      "control"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "createWorksheetButton"
+                        ]
+                      },
+                      "sheetName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000
+                      },
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "caption": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000
+                      },
+                      "macroName": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}(\\.[A-Za-z_][A-Za-z0-9_]{0,30})?$"
+                      },
+                      "left": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 10000
+                      },
+                      "top": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 10000
+                      },
+                      "width": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000
+                      },
+                      "height": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 10000
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sheetName",
+                      "name",
+                      "caption",
+                      "macroName",
+                      "left",
+                      "top",
+                      "width",
+                      "height"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "operations"
           ],
           "additionalProperties": false
         }
@@ -338,8 +642,10 @@
     "validate:vba-studio": "node tools/validate-vba-studio.mjs",
     "validate:vba-bootstrap": "node tools/validate-vba-bootstrap.mjs",
     "validate:vba-writeback": "node tools/validate-vba-writeback.mjs",
+    "validate:vba-designer": "node tools/validate-vba-designer.mjs",
     "test:vba-bootstrap": "node test/vba-bootstrap-integration.mjs",
     "test:vba-writeback": "node test/vba-writeback-regression.mjs",
+    "test:vba-designer": "node test/vba-designer-integration.mjs",
     "test:vba-atomic": "python test/atomic-writeback-regression.py",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
     "test:native-diff": "node test/native-edit-regression.mjs",
@@ -349,7 +655,7 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

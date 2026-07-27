@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,6 +23,8 @@ import {
 	ExportPaths,
 	ProcessResult,
 	ToolInput,
+	VbaDesignToolInput,
+	VbaDesignToolResult,
 	VbaToolWriteResult
 } from './types';
 import { showUserFormPreview } from './userFormPreview';
@@ -40,6 +42,8 @@ const MAX_GENERATED_FILE_BYTES = 16 * 1024 * 1024;
 const EXPORT_TIMEOUT_MS = 180_000;
 const EXCEL_LAUNCH_TIMEOUT_MS = 45_000;
 const VBA_BOOTSTRAP_TIMEOUT_MS = 90_000;
+const VBA_DESIGN_TIMEOUT_MS = 120_000;
+const MAX_VBA_DESIGN_REQUEST_BYTES = 1024 * 1024;
 
 interface PowerShellRunOptions {
 	progress?: vscode.Progress<{ message?: string }>;
@@ -58,6 +62,22 @@ interface MacroBootstrapResult {
 	workbookSha256?: unknown;
 	macrosExecuted?: unknown;
 	accessVbomChanged?: unknown;
+}
+
+interface VbaDesignerProcessResult {
+	ok?: unknown;
+	targetWorkbookPath?: unknown;
+	sourceWorkbookPath?: unknown;
+	convertedToXlsm?: unknown;
+	changed?: unknown;
+	createdUserForms?: unknown;
+	addedControls?: unknown;
+	createdButtons?: unknown;
+	workbookSha256?: unknown;
+	backupPath?: unknown;
+	macrosExecuted?: unknown;
+	accessVbomChanged?: unknown;
+	designerVerified?: unknown;
 }
 
 function isUri(value: unknown): value is vscode.Uri {
@@ -194,6 +214,13 @@ async function hashFileSha256(filePath: string): Promise<string> {
 		digest.update(chunk as Buffer);
 	}
 	return digest.digest('hex');
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return (
+		Array.isArray(value) &&
+		value.every(item => typeof item === 'string' && item.length > 0)
+	);
 }
 
 async function terminateExactProcess(processId: number): Promise<void> {
@@ -367,6 +394,207 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			workbookSha256: writeResult.workbookSha256,
 			backupPath: writeResult.backupPath
 		};
+	}
+
+	async designVbaFromTool(
+		workbookUri: vscode.Uri,
+		operations: VbaDesignToolInput['operations'],
+		cancellationToken?: vscode.CancellationToken
+	): Promise<VbaDesignToolResult> {
+		if (cancellationToken?.isCancellationRequested) {
+			throw new vscode.CancellationError();
+		}
+		const canonicalUri = await canonicalizeWorkbookUri(workbookUri);
+		assertNotManagedBackupPath(canonicalUri.fsPath);
+		if (!(await this.ensureActiveWorkbookIsSaved(canonicalUri))) {
+			throw new Error(
+				'Le classeur contient des modifications non enregistrées et ne peut pas recevoir de composants visuels VBA.'
+			);
+		}
+		if (
+			path.extname(canonicalUri.fsPath).toLocaleLowerCase('en-US') !==
+			'.xlsm'
+		) {
+			throw new Error(
+				'La création de UserForms et de boutons accepte uniquement un classeur .xlsm existant.'
+			);
+		}
+
+		const contextResult = await this.exportWorkbook(canonicalUri, {
+			open: false,
+			includeVba: true,
+			requestedByTool: true,
+			cancellationToken
+		});
+		if (!contextResult) {
+			throw new Error('Le projet VBA n’a pas pu être préparé.');
+		}
+
+		const expectedWorkbookSha256 = await hashFileSha256(canonicalUri.fsPath);
+		const { exportsRoot } = await this.ensureStorage();
+		const requestDirectory = await assertOwnedDirectory(
+			contextResult.paths.outputDirectory,
+			exportsRoot
+		);
+		const requestPath = path.join(
+			requestDirectory,
+			`vba-designer-request-${randomUUID()}.json`
+		);
+		await assertNoReparsePointChain(requestPath, requestDirectory);
+		const requestJson = JSON.stringify({
+			schemaVersion: 1,
+			workbookPath: canonicalUri.fsPath,
+			expectedWorkbookSha256,
+			operations
+		});
+		if (
+			Buffer.byteLength(requestJson, 'utf8') >
+			MAX_VBA_DESIGN_REQUEST_BYTES
+		) {
+			throw new Error('La demande de création VBA dépasse la limite de 1 Mio.');
+		}
+
+		const scriptPath = this.extensionContext.asAbsolutePath(
+			path.join('scripts', 'apply-vba-designer.ps1')
+		);
+		const helperPath = this.extensionContext.asAbsolutePath(
+			path.join('bin', 'win32-x64', 'excel-ai-vba-writeback.exe')
+		);
+		await fs.promises.access(helperPath, fs.constants.R_OK);
+		await fs.promises.writeFile(requestPath, requestJson, {
+			encoding: 'utf8',
+			flag: 'wx'
+		});
+
+		try {
+			const processResult = await this.runPowerShell(
+				scriptPath,
+				[
+					'-RequestPathBase64',
+					Buffer.from(requestPath, 'utf8').toString('base64'),
+					'-HelperPathBase64',
+					Buffer.from(helperPath, 'utf8').toString('base64')
+				],
+				path.dirname(canonicalUri.fsPath),
+				{
+					cancellationToken,
+					timeoutMs: VBA_DESIGN_TIMEOUT_MS,
+					cleanupOwnedExcel: true
+				}
+			);
+			if (processResult.code !== 0) {
+				throw new Error(
+					processError(processResult.stderr, processResult.stdout) ||
+						`La création des composants visuels VBA a échoué avec le code ${processResult.code}.`
+				);
+			}
+
+			const resultLine = processResult.stdout
+				.replace(/\r/g, '')
+				.split('\n')
+				.map(line => line.trim())
+				.filter(Boolean)
+				.pop();
+			if (!resultLine) {
+				throw new Error('Le moteur VBA Designer n’a renvoyé aucun résultat.');
+			}
+			let parsed: VbaDesignerProcessResult;
+			try {
+				parsed = JSON.parse(resultLine) as VbaDesignerProcessResult;
+			} catch {
+				throw new Error('Le moteur VBA Designer a renvoyé un JSON invalide.');
+			}
+
+			if (
+				parsed.ok !== true ||
+				parsed.convertedToXlsm !== false ||
+				parsed.changed !== true ||
+				parsed.macrosExecuted !== false ||
+				parsed.accessVbomChanged !== false ||
+				parsed.designerVerified !== true ||
+				typeof parsed.targetWorkbookPath !== 'string' ||
+				typeof parsed.sourceWorkbookPath !== 'string' ||
+				typeof parsed.workbookSha256 !== 'string' ||
+				!/^[0-9a-f]{64}$/.test(parsed.workbookSha256) ||
+				typeof parsed.backupPath !== 'string' ||
+				!isStringArray(parsed.createdUserForms) ||
+				!isStringArray(parsed.addedControls) ||
+				!isStringArray(parsed.createdButtons)
+			) {
+				throw new Error('Le moteur VBA Designer a renvoyé un résultat incomplet.');
+			}
+			if (
+				!sameFile(parsed.targetWorkbookPath, canonicalUri.fsPath) ||
+				!sameFile(parsed.sourceWorkbookPath, canonicalUri.fsPath)
+			) {
+				throw new Error('Le moteur VBA Designer a confirmé un classeur inattendu.');
+			}
+
+			const actualWorkbookSha256 = await hashFileSha256(canonicalUri.fsPath);
+			if (actualWorkbookSha256 !== parsed.workbookSha256) {
+				throw new Error(
+					'Le hash du classeur modifié ne correspond pas au résultat du moteur VBA Designer.'
+				);
+			}
+
+			const backupPath = path.resolve(parsed.backupPath);
+			const expectedBackupDirectory = path.join(
+				path.dirname(canonicalUri.fsPath),
+				'.excel-ai-vba-backups'
+			);
+			if (
+				!path.isAbsolute(parsed.backupPath) ||
+				!sameFile(path.dirname(backupPath), expectedBackupDirectory) ||
+				path.extname(backupPath).toLocaleLowerCase('en-US') !== '.xlsm'
+			) {
+				throw new Error('Le chemin de sauvegarde VBA Designer est inattendu.');
+			}
+			await assertNoReparsePointChain(backupPath);
+			const backupStat = await fs.promises.lstat(backupPath);
+			if (!backupStat.isFile() || backupStat.isSymbolicLink()) {
+				throw new Error('La sauvegarde VBA Designer n’est pas un fichier sûr.');
+			}
+			if ((await hashFileSha256(backupPath)) !== expectedWorkbookSha256) {
+				throw new Error(
+					'La sauvegarde VBA Designer ne correspond pas au classeur d’origine.'
+				);
+			}
+
+			const refreshedContext = await this.exportWorkbook(canonicalUri, {
+				open: false,
+				includeVba: true,
+				requestedByTool: true,
+				cancellationToken
+			});
+			if (!refreshedContext) {
+				throw new Error(
+					'Le classeur modifié existe, mais son contexte VBA n’a pas pu être actualisé.'
+				);
+			}
+
+			return {
+				targetWorkbookPath: canonicalUri.fsPath,
+				sourceWorkbookPath: canonicalUri.fsPath,
+				convertedToXlsm: false,
+				changed: true,
+				createdUserForms: parsed.createdUserForms,
+				addedControls: parsed.addedControls,
+				createdButtons: parsed.createdButtons,
+				workbookSha256: parsed.workbookSha256,
+				backupPath,
+				macrosExecuted: false,
+				accessVbomChanged: false,
+				designerVerified: true
+			};
+		} finally {
+			await fs.promises.unlink(requestPath).catch(error => {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+					this.outputChannel.appendLine(
+						`[vba designer] Nettoyage de la demande impossible : ${String(error)}`
+					);
+				}
+			});
+		}
 	}
 
 	private async bootstrapMacroWorkbook(
@@ -923,9 +1151,15 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				this.appendProcessOutput('PowerShell', chunk);
 				const chunkText = String(chunk);
 				stdout = (stdout + chunkText).slice(-32_000);
-				const ownedProcessMatch = /OWNED_EXCEL_PID\|(\d+)/.exec(stdout);
-				if (ownedProcessMatch) {
-					const parsedProcessId = Number.parseInt(ownedProcessMatch[1], 10);
+				const ownedProcessMatches = [
+					...stdout.matchAll(/OWNED_EXCEL_PID\|(\d+)/g)
+				];
+				const latestOwnedProcessMatch = ownedProcessMatches.at(-1);
+				if (latestOwnedProcessMatch) {
+					const parsedProcessId = Number.parseInt(
+						latestOwnedProcessMatch[1],
+						10
+					);
 					if (Number.isSafeInteger(parsedProcessId) && parsedProcessId > 0) {
 						ownedExcelProcessId = parsedProcessId;
 					}

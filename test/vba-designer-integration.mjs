@@ -1,0 +1,340 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+
+if (process.platform !== 'win32') {
+  console.log('VBA designer integration skipped: Windows and Excel are required.');
+  process.exit(0);
+}
+
+const root = resolve(import.meta.dirname, '..');
+const engine = resolve(root, 'scripts/apply-vba-designer.ps1');
+const helper = resolve(root, 'bin/win32-x64/excel-ai-vba-writeback.exe');
+const fixture = resolve(root, 'test/fixtures/DemoExcelUserForm.xlsm');
+const temporaryDirectory = mkdtempSync(
+  join(tmpdir(), 'excel-ai-vba-designer-test-'),
+);
+let helperRequestIndex = 0;
+
+const base64 = (value) => Buffer.from(value, 'utf8').toString('base64');
+const sha256File = (filePath) =>
+  crypto.createHash('sha256').update(readFileSync(filePath)).digest('hex');
+
+function excelProcessIds() {
+  const result = spawnSync(
+    'powershell.exe',
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Get-Process -Name EXCEL -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }',
+    ],
+    { encoding: 'utf8', shell: false, windowsHide: true },
+  );
+  return new Set(
+    String(result.stdout)
+      .split(/\r?\n/)
+      .map((line) => Number.parseInt(line.trim(), 10))
+      .filter(Number.isSafeInteger),
+  );
+}
+
+function excelAutomationReady() {
+  const probe = [
+    "$ErrorActionPreference = 'Stop'",
+    '$excel = $null',
+    '$workbook = $null',
+    '$ready = $false',
+    'try {',
+    '  $excel = New-Object -ComObject Excel.Application',
+    '  $excel.AutomationSecurity = 3',
+    '  $excel.DisplayAlerts = $false',
+    '  $excel.EnableEvents = $false',
+    '  $excel.Visible = $false',
+    '  $workbook = $excel.Workbooks.Add()',
+    '  [void]$workbook.VBProject.VBComponents.Count',
+    '  $ready = $true',
+    '} catch {',
+    '  $ready = $false',
+    '} finally {',
+    '  if ($null -ne $workbook) { try { $workbook.Close($false) } catch {} }',
+    '  if ($null -ne $excel) { try { $excel.Quit() } catch {} }',
+    '  if ($null -ne $workbook -and [Runtime.InteropServices.Marshal]::IsComObject($workbook)) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($workbook) }',
+    '  if ($null -ne $excel -and [Runtime.InteropServices.Marshal]::IsComObject($excel)) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel) }',
+    '  [GC]::Collect()',
+    '  [GC]::WaitForPendingFinalizers()',
+    '}',
+    'if ($ready) { exit 0 } else { exit 2 }',
+  ].join('\n');
+  const result = spawnSync(
+    'powershell.exe',
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', probe],
+    { encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000 },
+  );
+  return result.status === 0;
+}
+
+function runDesigner(requestPath) {
+  return spawnSync(
+    'powershell.exe',
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      engine,
+      '-RequestPathBase64',
+      base64(requestPath),
+      '-HelperPathBase64',
+      base64(helper),
+    ],
+    {
+      cwd: temporaryDirectory,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 120_000,
+    },
+  );
+}
+
+function parseLastJson(stdout) {
+  const line = String(stdout)
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .at(-1);
+  assert.ok(line, 'designer did not return a JSON result');
+  return JSON.parse(line);
+}
+
+function inspectWorkbook(workbookPath) {
+  const requestPath = join(
+    temporaryDirectory,
+    `inspect-${helperRequestIndex++}.json`,
+  );
+  writeFileSync(
+    requestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      operation: 'inspect',
+      workbookPath,
+    }),
+    'utf8',
+  );
+  const result = spawnSync(helper, [requestPath], {
+    cwd: temporaryDirectory,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 30_000,
+  });
+  assert.equal(result.status, 0, String(result.stderr || result.stdout));
+  return parseLastJson(result.stdout);
+}
+
+function assertNoNewExcelProcess(before) {
+  const after = excelProcessIds();
+  const residual = [...after].filter((processId) => !before.has(processId));
+  assert.deepEqual(residual, [], `residual Excel process IDs: ${residual}`);
+}
+
+assert.ok(existsSync(engine), 'VBA designer engine is missing');
+assert.ok(existsSync(helper), 'native helper is missing');
+assert.ok(statSync(helper).size > 1_000_000, 'native helper is too small');
+assert.ok(existsSync(fixture), 'UserForm fixture is missing');
+
+if (!excelAutomationReady()) {
+  rmSync(temporaryDirectory, { recursive: true, force: true });
+  console.log(
+    'VBA designer integration skipped: Excel COM or user-enabled AccessVBOM is unavailable.',
+  );
+  process.exit(0);
+}
+
+const excelBefore = excelProcessIds();
+
+try {
+  const workbookPath = join(temporaryDirectory, 'designer-success.xlsm');
+  copyFileSync(fixture, workbookPath);
+  const originalHash = sha256File(workbookPath);
+  const requestPath = join(temporaryDirectory, 'designer-success.json');
+  writeFileSync(
+    requestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      workbookPath,
+      expectedWorkbookSha256: originalHash,
+      operations: [
+        {
+          kind: 'createUserForm',
+          name: 'frmGenerated',
+          caption: 'Generated form',
+          width: 360,
+          height: 240,
+          source: [
+            'Option Explicit',
+            '',
+            'Private Sub cmdClose_Click()',
+            '    Unload Me',
+            'End Sub',
+          ].join('\r\n'),
+          controls: [
+            {
+              type: 'label',
+              name: 'lblTitle',
+              caption: 'Generated safely',
+              left: 18,
+              top: 16,
+              width: 180,
+              height: 20,
+            },
+            {
+              type: 'commandButton',
+              name: 'cmdClose',
+              caption: 'Close',
+              left: 110,
+              top: 150,
+              width: 90,
+              height: 28,
+            },
+          ],
+        },
+        {
+          kind: 'addUserFormControl',
+          formName: 'oUserForm',
+          control: {
+            type: 'textBox',
+            name: 'txtGenerated',
+            left: 18,
+            top: 190,
+            width: 130,
+            height: 22,
+          },
+        },
+        {
+          kind: 'createWorksheetButton',
+          sheetName: 'Data',
+          name: 'btnGenerated',
+          caption: 'Run generated',
+          macroName: 'mCode.Test',
+          left: 20,
+          top: 20,
+          width: 120,
+          height: 28,
+        },
+      ],
+    }),
+    'utf8',
+  );
+
+  const result = runDesigner(requestPath);
+  assert.equal(result.error, undefined, String(result.error));
+  assert.equal(result.status, 0, String(result.stderr || result.stdout));
+  const output = parseLastJson(result.stdout);
+  assert.equal(output.ok, true);
+  assert.equal(output.targetWorkbookPath, workbookPath);
+  assert.equal(output.sourceWorkbookPath, workbookPath);
+  assert.equal(output.convertedToXlsm, false);
+  assert.equal(output.changed, true);
+  assert.deepEqual(output.createdUserForms, ['frmGenerated']);
+  assert.deepEqual(output.addedControls, [
+    'frmGenerated.lblTitle',
+    'frmGenerated.cmdClose',
+    'oUserForm.txtGenerated',
+  ]);
+  assert.deepEqual(output.createdButtons, ['Data.btnGenerated']);
+  assert.equal(output.macrosExecuted, false);
+  assert.equal(output.accessVbomChanged, false);
+  assert.equal(output.designerVerified, true);
+  assert.match(output.workbookSha256, /^[0-9a-f]{64}$/);
+  assert.equal(sha256File(workbookPath), output.workbookSha256);
+  assert.ok(existsSync(output.backupPath));
+  assert.equal(sha256File(output.backupPath), originalHash);
+
+  const inspection = inspectWorkbook(workbookPath);
+  assert.equal(inspection.ok, true);
+  assert.equal(inspection.workbookSha256, output.workbookSha256);
+  const modules = new Map(
+    inspection.modules.map((module) => [module.name, module]),
+  );
+  assert.equal(modules.get('frmGenerated')?.componentKind, 'userform');
+  assert.equal(modules.get('oUserForm')?.componentKind, 'userform');
+  const designerEntries = Object.entries(inspection.designerStreamsSha256);
+  assert.ok(
+    designerEntries.some(
+      ([name, digest]) =>
+        name.startsWith('frmgenerated/') && /^[0-9a-f]{64}$/.test(digest),
+    ),
+  );
+  assert.ok(
+    designerEntries.some(
+      ([name, digest]) =>
+        name.startsWith('ouserform/') && /^[0-9a-f]{64}$/.test(digest),
+    ),
+  );
+
+  const rollbackWorkbookPath = join(
+    temporaryDirectory,
+    'designer-rollback.xlsm',
+  );
+  copyFileSync(fixture, rollbackWorkbookPath);
+  const rollbackHash = sha256File(rollbackWorkbookPath);
+  const rollbackRequestPath = join(
+    temporaryDirectory,
+    'designer-rollback.json',
+  );
+  writeFileSync(
+    rollbackRequestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      workbookPath: rollbackWorkbookPath,
+      expectedWorkbookSha256: '0'.repeat(64),
+      operations: [
+        {
+          kind: 'createUserForm',
+          name: 'frmMustNotExist',
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const rollbackResult = runDesigner(rollbackRequestPath);
+  assert.notEqual(rollbackResult.status, 0, 'stale hash request must fail');
+  assert.equal(
+    sha256File(rollbackWorkbookPath),
+    rollbackHash,
+    'failed transaction changed the workbook',
+  );
+
+  assertNoNewExcelProcess(excelBefore);
+  console.log(
+    'VBA designer integration passed: UserForm/.frx, controls, worksheet button, backup, native verification and rollback.',
+  );
+} finally {
+  let processError;
+  try {
+    assertNoNewExcelProcess(excelBefore);
+  } catch (error) {
+    processError = error;
+  }
+  rmSync(temporaryDirectory, { recursive: true, force: true });
+  if (processError) {
+    throw processError;
+  }
+}

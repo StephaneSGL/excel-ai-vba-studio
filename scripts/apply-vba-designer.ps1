@@ -1,0 +1,977 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$RequestPathBase64,
+
+    [Parameter(Mandatory = $true)]
+    [string]$HelperPathBase64
+)
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+function Decode-Base64Utf8 {
+    param([string]$Value)
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}
+
+function Release-ComObject {
+    param([AllowNull()][object]$Value)
+    if ($null -ne $Value -and [Runtime.InteropServices.Marshal]::IsComObject($Value)) {
+        try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($Value) }
+        catch { }
+    }
+}
+
+function Test-ObjectProperty {
+    param([object]$Object, [string]$PropertyName)
+    if ($null -eq $Object) { return $false }
+    try {
+        $prop = $Object.PSObject.Properties[$PropertyName]
+        return $null -ne $prop -and $prop.IsGettable
+    }
+    catch { return $false }
+}
+
+function Assert-LocalFixedDrive {
+    param([string]$Path)
+    if ($Path -match '^(\\\\|//|\\\?\\)') {
+        throw "UNC/device paths are not allowed: $Path"
+    }
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    try {
+        $drive = New-Object IO.DriveInfo($root)
+        if ($drive.DriveType -ne [IO.DriveType]::Fixed) {
+            throw "Drive must be fixed local: $Path"
+        }
+    } catch { throw "Invalid drive root: $root" }
+}
+
+function Assert-NoManagedBackupComponent {
+    param([string]$Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    $parts = $full.Split([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    foreach ($p in $parts) {
+        if ($p -ieq '.excel-ai-vba-backups') {
+            throw "Path component '.excel-ai-vba-backups' is not allowed: $Path"
+        }
+    }
+}
+
+function Assert-NoReparsePointChain {
+    param([string]$Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    $current = $root
+    $relative = $full.Substring($root.Length)
+    foreach ($part in $relative.Split(@([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar), [StringSplitOptions]::RemoveEmptyEntries)) {
+        $current = [IO.Path]::Combine($current, $part)
+        if (-not (Test-Path -LiteralPath $current)) { break }
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "ReparsePoint found in path: $current"
+        }
+    }
+}
+
+function Assert-IsValidIdentifier {
+    param([string]$Name)
+    if ($Name -notmatch '^[A-Za-z_][A-Za-z0-9_]{0,30}$') {
+        throw "Invalid identifier: '$Name'. Must match ^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+    }
+}
+
+function Assert-IsValidMacroName {
+    param([string]$Name)
+    $parts = $Name.Split('.')
+    if ($parts.Length -gt 2) { throw "Invalid macro name (too many dots): $Name" }
+    foreach ($p in $parts) { Assert-IsValidIdentifier $p }
+}
+
+function Assert-NoNulString {
+    param([string]$Value)
+    if ($Value -and $Value.Contains("`0")) { throw "String contains NUL character" }
+}
+
+function Get-Sha256 {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        $hash = [Security.Cryptography.SHA256]::Create().ComputeHash($stream)
+        return ($hash | ForEach-Object { $_.ToString('x2') }) -join ''
+    } finally { $stream.Dispose() }
+}
+
+function Get-GuidString { [Guid]::NewGuid().ToString('N') }
+
+function New-InspectRequest {
+    param([string]$WorkbookDir, [string]$WorkbookPath)
+    $guid = Get-GuidString
+    $path = [IO.Path]::Combine($WorkbookDir, "inspect_$guid.json")
+    if (Test-Path -LiteralPath $path) { throw "Inspect request path already exists: $path" }
+    Assert-NoReparsePointChain $path
+    $body = @{ schemaVersion = 1; operation = 'inspect'; workbookPath = $WorkbookPath } | ConvertTo-Json
+    [IO.File]::WriteAllText($path, $body, [Text.UTF8Encoding]::new($false))
+    return $path
+}
+
+function Invoke-Helper {
+    param([string]$HelperExe, [string]$RequestPath)
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $HelperExe
+    $psi.Arguments = "`"$RequestPath`""
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $proc = [Diagnostics.Process]::Start($psi)
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+    $exitCode = $proc.ExitCode
+    $proc.Dispose()
+    if ($exitCode -ne 0 -or -not $stdout) {
+        throw "Helper failed. ExitCode: $exitCode StdErr: $stderr"
+    }
+    $lines = $stdout -split "`r?`n"
+    $lastNonEmpty = $lines | Where-Object { $_.TrimEnd() -ne '' } | Select-Object -Last 1
+    if (-not $lastNonEmpty) { throw "No JSON output from helper" }
+    try {
+        return $lastNonEmpty | ConvertFrom-Json
+    } catch { throw "Invalid JSON from helper: $_" }
+}
+
+function Get-ExcelPid {
+    param([object]$ExcelApp)
+    if (-not ('BudgetArtifact.NativeProcess' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace BudgetArtifact {
+    public static class NativeProcess {
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    }
+}
+'@
+    }
+    [uint32]$ownedProcessId = 0
+    [void][BudgetArtifact.NativeProcess]::GetWindowThreadProcessId([IntPtr][int64]$ExcelApp.Hwnd, [ref]$ownedProcessId)
+    return $ownedProcessId
+}
+
+function Ensure-ExcelSession {
+    param()
+    $excel = New-Object -ComObject Excel.Application
+    $excel.AutomationSecurity = 3
+    $excel.DisplayAlerts = $false
+    $excel.EnableEvents = $false
+    $excel.AskToUpdateLinks = $false
+    $excel.ScreenUpdating = $false
+    $excel.Visible = $false
+    $ownedProcessId = Get-ExcelPid $excel
+    [Console]::Out.WriteLine("OWNED_EXCEL_PID|$ownedProcessId")
+    return $excel, $ownedProcessId
+}
+
+function Cleanup-Excel {
+    param([object]$Excel, [int]$OwnedProcessId)
+    if ($null -ne $Excel) {
+        try { $Excel.Quit() } catch { }
+        Release-ComObject $Excel
+    }
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    if ($OwnedProcessId -gt 0) {
+        $end = (Get-Date).AddSeconds(5)
+        while ((Get-Date) -lt $end) {
+            try {
+                $p = Get-Process -Id $OwnedProcessId -ErrorAction SilentlyContinue
+                if (-not $p) { break }
+                Start-Sleep -Milliseconds 200
+            } catch { break }
+        }
+        try { Stop-Process -Id $OwnedProcessId -Force -ErrorAction SilentlyContinue } catch { }
+    }
+}
+
+function Open-WorkbookReadOnly {
+    param([object]$Excel, [string]$Path)
+    $workbooks = $null; $wb = $null
+    try {
+        $workbooks = $Excel.Workbooks
+        $wb = $workbooks.Open($Path, 0, $true)  # ReadOnly
+        return $wb
+    } finally {
+        Release-ComObject $workbooks
+    }
+}
+
+function Release-ComObjectSafe {
+    param($Value)
+    if ($null -ne $Value) {
+        try { Release-ComObject $Value } catch { }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+$requestPath = [IO.Path]::GetFullPath((Decode-Base64Utf8 $RequestPathBase64))
+$helperPath  = [IO.Path]::GetFullPath((Decode-Base64Utf8 $HelperPathBase64))
+
+# Validate helper and request exist
+if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) { throw "Helper not found: $helperPath" }
+if ([IO.Path]::GetExtension($helperPath) -ine '.exe') { throw "Helper must be .exe" }
+if (-not (Test-Path -LiteralPath $requestPath -PathType Leaf)) { throw "Request file not found: $requestPath" }
+$requestSize = (Get-Item -LiteralPath $requestPath).Length
+if ($requestSize -gt 1MB) { throw "Request file exceeds 1 MiB" }
+
+# Validate paths
+Assert-LocalFixedDrive $requestPath
+Assert-LocalFixedDrive $helperPath
+Assert-NoManagedBackupComponent $requestPath
+Assert-NoManagedBackupComponent $helperPath
+Assert-NoReparsePointChain $requestPath
+Assert-NoReparsePointChain $helperPath
+
+# Read and parse request
+$requestJson = [IO.File]::ReadAllText($requestPath, [Text.UTF8Encoding]::new($false))
+$request = $requestJson | ConvertFrom-Json
+if (-not $request -or ($request.schemaVersion -ne 1)) { throw "Invalid request JSON or schemaVersion" }
+
+# Validate required properties
+if (-not (Test-ObjectProperty $request 'workbookPath') -or -not $request.workbookPath) { throw "Missing workbookPath in request" }
+if (-not (Test-ObjectProperty $request 'expectedWorkbookSha256') -or -not $request.expectedWorkbookSha256) { throw "Missing expectedWorkbookSha256 in request" }
+if (-not (Test-ObjectProperty $request 'operations')) { throw "Missing operations in request" }
+
+$workbookPath = [IO.Path]::GetFullPath($request.workbookPath)
+$expectedSha256 = $request.expectedWorkbookSha256
+$operations = @($request.operations)  # Ensure array even if empty
+if ($operations.Count -lt 1 -or $operations.Count -gt 100) {
+    throw "Operations must contain between 1 and 100 items"
+}
+
+# Validate workbook
+if (-not (Test-Path -LiteralPath $workbookPath -PathType Leaf)) { throw "Workbook not found: $workbookPath" }
+if ([IO.Path]::GetExtension($workbookPath) -ine '.xlsm') { throw "Workbook must be .xlsm" }
+Assert-LocalFixedDrive $workbookPath
+Assert-NoManagedBackupComponent $workbookPath
+Assert-NoReparsePointChain $workbookPath
+
+# Compute original hash
+$originalHash = Get-Sha256 $workbookPath
+if (-not $originalHash) { throw "Cannot compute SHA256 of original workbook" }
+if ($originalHash -cne $expectedSha256) { throw "Workbook SHA256 does not match expected: $originalHash vs $expectedSha256" }
+
+# Pre-validate operations and collect validation sets
+$seenFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$seenControlKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$seenButtonKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+
+# Helper to validate a control object (for nested or standalone)
+$controlTypeMap = @{
+    'label'        = 'Forms.Label.1'
+    'textBox'      = 'Forms.TextBox.1'
+    'commandButton'= 'Forms.CommandButton.1'
+    'comboBox'     = 'Forms.ComboBox.1'
+    'listBox'      = 'Forms.ListBox.1'
+    'checkBox'     = 'Forms.CheckBox.1'
+    'optionButton' = 'Forms.OptionButton.1'
+    'toggleButton' = 'Forms.ToggleButton.1'
+    'frame'        = 'Forms.Frame.1'
+    'image'        = 'Forms.Image.1'
+    'spinButton'   = 'Forms.SpinButton.1'
+    'scrollBar'    = 'Forms.ScrollBar.1'
+}
+
+function Validate-Control {
+    param(
+        [object]$Control,
+        [System.Collections.Generic.HashSet[string]]$ControlKeySet,
+        [string]$FormName,
+        [ref]$ErrorRef
+    )
+    if (-not (Test-ObjectProperty $Control 'name') -or -not $Control.name) { throw "Control missing name" }
+    $ctrlName = [string]$Control.name
+    Assert-IsValidIdentifier $ctrlName
+    $key = "$FormName.$ctrlName"
+    if (-not $ControlKeySet.Add($key)) { throw "Duplicate control key in request: $key" }
+
+    if (-not (Test-ObjectProperty $Control 'type') -or -not $Control.type) { throw "Control $ctrlName missing type" }
+    $typeStr = [string]$Control.type
+    if (-not $controlTypeMap.ContainsKey($typeStr.ToLowerInvariant())) { throw "Unknown control type: $typeStr" }
+
+    $left = if (Test-ObjectProperty $Control 'left') { [double]($Control.left) } else { throw "Control $ctrlName missing left" }
+    $top = if (Test-ObjectProperty $Control 'top') { [double]($Control.top) } else { throw "Control $ctrlName missing top" }
+    $width = if (Test-ObjectProperty $Control 'width') { [double]($Control.width) } else { throw "Control $ctrlName missing width" }
+    $height = if (Test-ObjectProperty $Control 'height') { [double]($Control.height) } else { throw "Control $ctrlName missing height" }
+
+    if ([double]::IsNaN($left) -or [double]::IsInfinity($left) -or $left -lt 0 -or $left -gt 10000) { throw "Invalid left for ${ctrlName}: $left" }
+    if ([double]::IsNaN($top) -or [double]::IsInfinity($top) -or $top -lt 0 -or $top -gt 10000) { throw "Invalid top for ${ctrlName}: $top" }
+    if ([double]::IsNaN($width) -or [double]::IsInfinity($width) -or $width -le 0 -or $width -gt 10000) { throw "Invalid width for ${ctrlName}: $width (must be >0)" }
+    if ([double]::IsNaN($height) -or [double]::IsInfinity($height) -or $height -le 0 -or $height -gt 10000) { throw "Invalid height for ${ctrlName}: $height (must be >0)" }
+
+    $caption = if (Test-ObjectProperty $Control 'caption') { [string]$Control.caption } else { '' }
+    Assert-NoNulString $caption
+    if ($caption.Length -gt 1000) { throw "caption too long for $ctrlName" }
+
+    $enabled = if (Test-ObjectProperty $Control 'enabled') {
+        $val = $Control.enabled
+        if ($val -isnot [bool]) { throw "enabled must be boolean for $ctrlName" }
+        $val
+    } else { $true }
+
+    $visible = if (Test-ObjectProperty $Control 'visible') {
+        $val = $Control.visible
+        if ($val -isnot [bool]) { throw "visible must be boolean for $ctrlName" }
+        $val
+    } else { $true }
+
+    $tabIndex = if (Test-ObjectProperty $Control 'tabIndex') {
+        $ti = $Control.tabIndex
+        if ($ti -isnot [int] -and $ti -isnot [double]) { throw "tabIndex must be numeric for $ctrlName" }
+        $tiInt = [int]$ti
+        if ($tiInt -lt 0 -or $tiInt -gt 32767) { throw "tabIndex out of range (0-32767) for $ctrlName" }
+        $tiInt
+    } else { $null }
+
+    $tip = if (Test-ObjectProperty $Control 'controlTipText') { [string]$Control.controlTipText } else { '' }
+    Assert-NoNulString $tip
+    if ($tip.Length -gt 1000) { throw "controlTipText too long for $ctrlName" }
+}
+
+# Prevalidate operations
+foreach ($op in $operations) {
+    if (-not (Test-ObjectProperty $op 'kind') -or -not $op.kind) { throw "Operation missing 'kind'" }
+    $opKind = [string]$op.kind
+    switch ($opKind) {
+        'createUserForm' {
+            if (-not (Test-ObjectProperty $op 'name') -or -not $op.name) { throw "createUserForm missing name" }
+            $name = [string]$op.name
+            Assert-IsValidIdentifier $name
+            if (-not $seenFormNames.Add($name)) { throw "Duplicate form name in request: $name" }
+
+            $caption = if (Test-ObjectProperty $op 'caption') { [string]$op.caption } else { '' }
+            Assert-NoNulString $caption
+            if ($caption.Length -gt 1000) { throw "form caption too long" }
+
+            $width = if (Test-ObjectProperty $op 'width') { [double]($op.width) } else { 400.0 }
+            $height = if (Test-ObjectProperty $op 'height') { [double]($op.height) } else { 300.0 }
+            if ([double]::IsNaN($width) -or [double]::IsInfinity($width) -or $width -le 0 -or $width -gt 10000) { throw "Invalid width for form ${name}: $width (must be >0)" }
+            if ([double]::IsNaN($height) -or [double]::IsInfinity($height) -or $height -le 0 -or $height -gt 10000) { throw "Invalid height for form ${name}: $height (must be >0)" }
+
+            $source = if (Test-ObjectProperty $op 'source') { [string]$op.source } else { '' }
+            if ($source) {
+                if ($source.Length -gt 2000000) { throw "Source too long for $name" }
+                Assert-NoNulString $source
+                $lines = $source -split "`r?`n"
+                foreach ($line in $lines) {
+                    $trimmed = $line.TrimStart()
+                    if ($trimmed -match '(?i)^(VERSION(?:\s|$)|BEGIN(?:\s|$)|Attribute\s+VB_)') {
+                        throw "Source for $name contains forbidden line: $trimmed"
+                    }
+                }
+            }
+
+            # Validate nested controls if present
+            if (Test-ObjectProperty $op 'controls') {
+                $nestedControls = @($op.controls)
+                foreach ($ctrl in $nestedControls) {
+                    Validate-Control $ctrl $seenControlKeys $name
+                }
+            }
+        }
+        'addUserFormControl' {
+            if (-not (Test-ObjectProperty $op 'formName') -or -not $op.formName) { throw "addUserFormControl missing formName" }
+            $formName = [string]$op.formName
+            Assert-IsValidIdentifier $formName
+            # Note: form may exist in workbook or be previously created; we don't require it in seenFormNames here.
+            if (-not (Test-ObjectProperty $op 'control')) { throw "addUserFormControl missing control" }
+            $ctrl = $op.control
+            Validate-Control $ctrl $seenControlKeys $formName
+        }
+        'createWorksheetButton' {
+            if (-not (Test-ObjectProperty $op 'sheetName') -or -not $op.sheetName) { throw "createWorksheetButton missing sheetName" }
+            $sheetName = [string]$op.sheetName
+            if ($sheetName.Length -gt 1000) { throw "sheetName too long" }
+            Assert-NoNulString $sheetName
+
+            if (-not (Test-ObjectProperty $op 'name') -or -not $op.name) { throw "createWorksheetButton missing name" }
+            $name = [string]$op.name
+            Assert-IsValidIdentifier $name
+
+            if (-not (Test-ObjectProperty $op 'caption') -or -not $op.caption) { throw "createWorksheetButton missing caption" }
+            $caption = [string]$op.caption
+            Assert-NoNulString $caption
+            if ($caption.Length -gt 1000) { throw "button caption too long" }
+
+            if (-not (Test-ObjectProperty $op 'macroName') -or -not $op.macroName) { throw "createWorksheetButton missing macroName" }
+            $macroName = [string]$op.macroName
+            Assert-IsValidMacroName $macroName
+
+            $left = if (Test-ObjectProperty $op 'left') { [double]($op.left) } else { throw "createWorksheetButton missing left" }
+            $top = if (Test-ObjectProperty $op 'top') { [double]($op.top) } else { throw "createWorksheetButton missing top" }
+            $width = if (Test-ObjectProperty $op 'width') { [double]($op.width) } else { throw "createWorksheetButton missing width" }
+            $height = if (Test-ObjectProperty $op 'height') { [double]($op.height) } else { throw "createWorksheetButton missing height" }
+            if ([double]::IsNaN($left) -or [double]::IsInfinity($left) -or $left -lt 0 -or $left -gt 10000) { throw "Invalid left for button ${name}: $left" }
+            if ([double]::IsNaN($top) -or [double]::IsInfinity($top) -or $top -lt 0 -or $top -gt 10000) { throw "Invalid top for button ${name}: $top" }
+            if ([double]::IsNaN($width) -or [double]::IsInfinity($width) -or $width -le 0 -or $width -gt 10000) { throw "Invalid width for button ${name}: $width (must be >0)" }
+            if ([double]::IsNaN($height) -or [double]::IsInfinity($height) -or $height -le 0 -or $height -gt 10000) { throw "Invalid height for button ${name}: $height (must be >0)" }
+
+            $key = "$sheetName.$name"
+            if (-not $seenButtonKeys.Add($key)) { throw "Duplicate button key in request: $key" }
+        }
+        default { throw "Unknown operation kind: $opKind" }
+    }
+}
+
+# Pre-inspect original workbook
+$workbookDir = [IO.Path]::GetDirectoryName($workbookPath)
+$backupDir = [IO.Path]::Combine($workbookDir, '.excel-ai-vba-backups')
+
+$inspectReqPath = New-InspectRequest $workbookDir $workbookPath
+try {
+    $preInspect = Invoke-Helper $helperPath $inspectReqPath
+} finally {
+    if (Test-Path -LiteralPath $inspectReqPath) { Remove-Item -LiteralPath $inspectReqPath -Force }
+}
+if ($preInspect.ok -ne $true) { throw "Pre-inspect did not return ok true" }
+if ($preInspect.workbookSha256 -cne $expectedSha256) { throw "Pre-inspect hash mismatch" }
+if ($preInspect.protected -ne $false) { throw "Workbook is VBA protected" }
+if ($preInspect.signed -ne $false) { throw "Workbook is signed" }
+
+# Gather existing module names with componentKind from preInspect for reference (not used for duplicate check yet)
+$preModules = @($preInspect.modules)
+foreach ($m in $preModules) {
+    # Just validate structure - not needed immediately
+}
+
+# ---------------------------------------------------------------------------
+# Transaction
+# ---------------------------------------------------------------------------
+$stagingGuid = Get-GuidString
+$stagingPath = [IO.Path]::Combine($workbookDir, "staging_$stagingGuid.xlsm")
+if (Test-Path -LiteralPath $stagingPath) { throw "Staging file already exists: $stagingPath" }
+try {
+    Copy-Item -LiteralPath $workbookPath -Destination $stagingPath
+} catch { throw "Failed to copy to staging: $_" }
+
+$excel1 = $null; $excel1Pid = 0
+$wbStaging = $null
+$vbaProject = $null; $components = $null
+$excel2 = $null; $excel2Pid = 0
+$wbVerify = $null
+$operationError = $null
+$createdForms = [System.Collections.Generic.List[string]]::new()
+$createdControls = [System.Collections.Generic.List[string]]::new()
+$createdButtons = [System.Collections.Generic.List[string]]::new()
+
+# For verification we need to store expected button properties
+$expectedButtonProps = @{}  # key $sheetName.$name -> @{caption= ; onAction= }
+
+try {
+    # First Excel instance for modifications
+    $excel1, $excel1Pid = Ensure-ExcelSession
+    $workbooks1 = $null
+    try {
+        $workbooks1 = $excel1.Workbooks
+        $wbStaging = $workbooks1.Open($stagingPath, 0, $false)
+        if (-not $wbStaging) { throw "Failed to open staging workbook" }
+        $vbaProject = $wbStaging.VBProject
+        $components = $vbaProject.VBComponents
+    } catch {
+        $errMsg = $_.Exception.Message
+        if ($errMsg -match 'VBProject|Access is denied|Cannot access') {
+            throw "Please manually enable 'Trust access to the VBA project object model' in Excel Trust Center. Extension never changes this setting. Error: $errMsg"
+        } else {
+            throw "Failed to open staging workbook. Error: $errMsg"
+        }
+    }
+
+    if ($vbaProject.Protection -ne 0) { throw "VBProject is protected" }
+
+    # Enumerate existing forms and controls from workbook
+    $existingFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $existControlKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $compCount = $components.Count
+    for ($i = 0; $i -lt $compCount; $i++) {
+        $comp = $null
+        try {
+            $comp = $components.Item($i+1)
+            if ($comp.Type -eq 3) {
+                $fname = $comp.Name
+                $existingFormNames.Add($fname) > $null
+                # Enumerate controls
+                $designer = $null
+                $controls = $null
+                try {
+                    $designer = $comp.Designer
+                    $controls = $designer.Controls
+                    $ctrlCount = $controls.Count
+                    for ($j = 0; $j -lt $ctrlCount; $j++) {
+                        $ctrl = $null
+                        try {
+                            $ctrl = $controls.Item($j)
+                            $existControlKeys.Add("$fname.$($ctrl.Name)") > $null
+                        } finally { Release-ComObject $ctrl }
+                    }
+                } finally {
+                    Release-ComObject $controls
+                    Release-ComObject $designer
+                }
+            }
+        } finally { Release-ComObject $comp }
+    }
+
+    # Check for duplicate form names between request and existing (already checked prevalidation among request)
+    foreach ($op in $operations) {
+        if ($op.kind -eq 'createUserForm') {
+            $name = [string]$op.name
+            if ($existingFormNames.Contains($name)) { throw "Form name '$name' already exists in workbook" }
+        }
+    }
+
+    # Enumerate existing worksheet buttons
+    $existingButtonKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $sheets = $wbStaging.Worksheets
+    $sheetCount = $sheets.Count
+    for ($i = 0; $i -lt $sheetCount; $i++) {
+        $ws = $null
+        try {
+            $ws = $sheets.Item($i+1)
+            $btns = $null
+            try {
+                $btns = $ws.Buttons()
+                if ($btns) {
+                    $btnCount = $btns.Count
+                    for ($j = 0; $j -lt $btnCount; $j++) {
+                        $btn = $null
+                        try {
+                            $btn = $btns.Item($j+1)
+                            $existingButtonKeys.Add("$($ws.Name).$($btn.Name)") > $null
+                        } finally { Release-ComObject $btn }
+                    }
+                }
+            } finally { Release-ComObject $btns }
+        } finally { Release-ComObject $ws }
+    }
+
+    # Check duplicate buttons between request and existing
+    foreach ($op in $operations) {
+        if ($op.kind -eq 'createWorksheetButton') {
+            $key = "$($op.sheetName).$($op.name)"
+            if ($existingButtonKeys.Contains($key)) { throw "Button '$key' already exists in workbook" }
+        }
+    }
+
+    # Apply operations
+    foreach ($op in $operations) {
+        $opKind = [string]$op.kind
+        switch ($opKind) {
+            'createUserForm' {
+                $name = [string]$op.name
+                $caption = if (Test-ObjectProperty $op 'caption') { [string]$op.caption } else { $name }
+                $width = if (Test-ObjectProperty $op 'width') { [double]$op.width } else { 400.0 }
+                $height = if (Test-ObjectProperty $op 'height') { [double]$op.height } else { 300.0 }
+                $source = if (Test-ObjectProperty $op 'source') { [string]$op.source } else { '' }
+                if (-not $source) { $source = "Option Explicit" }
+
+                $comp = $null; $designer = $null; $props = $null; $widthProp = $null; $heightProp = $null; $codeMod = $null
+                try {
+                    $comp = $components.Add(3)
+                    $comp.Name = $name
+                    $designer = $comp.Designer
+                    $designer.Caption = $caption
+                    $props = $comp.Properties
+                    $widthProp = $props.Item('Width')
+                    $heightProp = $props.Item('Height')
+                    $widthProp.Value = $width
+                    $heightProp.Value = $height
+                    if ($source) {
+                        $codeMod = $comp.CodeModule
+                        $codeMod.AddFromString($source)
+                        if ([int]$codeMod.CountOfLines -le 0) {
+                            throw "Source code resulted in empty module for $name"
+                        }
+                    }
+                    $createdForms.Add($name)
+
+                    # Process nested controls
+                    if (Test-ObjectProperty $op 'controls') {
+                        $nestedControls = @($op.controls)
+                        foreach ($ctrl in $nestedControls) {
+                            $ctrlName = $ctrl.name
+                            $typeStr = $ctrl.type.ToString().ToLowerInvariant()
+                            $progId = $controlTypeMap[$typeStr]
+                            $left = [double]$ctrl.left
+                            $top = [double]$ctrl.top
+                            $widthCtrl = [double]$ctrl.width
+                            $heightCtrl = [double]$ctrl.height
+                            $captionCtrl = if (Test-ObjectProperty $ctrl 'caption') { [string]$ctrl.caption } else { '' }
+                            $enabledCtrl = if (Test-ObjectProperty $ctrl 'enabled') { [bool]$ctrl.enabled } else { $true }
+                            $visibleCtrl = if (Test-ObjectProperty $ctrl 'visible') { [bool]$ctrl.visible } else { $true }
+                            $tabIndexCtrl = if (Test-ObjectProperty $ctrl 'tabIndex') { [int]$ctrl.tabIndex } else { $null }
+                            $tipCtrl = if (Test-ObjectProperty $ctrl 'controlTipText') { [string]$ctrl.controlTipText } else { '' }
+
+                            $ctrlObj = $null; $ctrlControls = $null
+                            try {
+                                $ctrlControls = $designer.Controls
+                                $ctrlObj = $ctrlControls.Add($progId, $ctrlName, $true)
+                                $ctrlObj.Left = $left
+                                $ctrlObj.Top = $top
+                                $ctrlObj.Width = $widthCtrl
+                                $ctrlObj.Height = $heightCtrl
+                                if ($captionCtrl) { $ctrlObj.Caption = $captionCtrl }
+                                $ctrlObj.Enabled = $enabledCtrl
+                                $ctrlObj.Visible = $visibleCtrl
+                                if ($null -ne $tabIndexCtrl) { $ctrlObj.TabIndex = $tabIndexCtrl }
+                                if ($tipCtrl) { $ctrlObj.ControlTipText = $tipCtrl }
+                                $createdControls.Add("$name.$ctrlName")
+                            } finally {
+                                Release-ComObject $ctrlObj
+                                Release-ComObject $ctrlControls
+                            }
+                        }
+                    }
+                } finally {
+                    Release-ComObject $codeMod
+                    Release-ComObject $heightProp
+                    Release-ComObject $widthProp
+                    Release-ComObject $props
+                    Release-ComObject $designer
+                    Release-ComObject $comp
+                }
+            }
+            'addUserFormControl' {
+                $formName = [string]$op.formName
+                $ctrl = $op.control
+                $ctrlName = $ctrl.name
+                $typeStr = $ctrl.type.ToString().ToLowerInvariant()
+                $progId = $controlTypeMap[$typeStr]
+                $left = [double]$ctrl.left
+                $top = [double]$ctrl.top
+                $widthCtrl = [double]$ctrl.width
+                $heightCtrl = [double]$ctrl.height
+                $captionCtrl = if (Test-ObjectProperty $ctrl 'caption') { [string]$ctrl.caption } else { '' }
+                $enabledCtrl = if (Test-ObjectProperty $ctrl 'enabled') { [bool]$ctrl.enabled } else { $true }
+                $visibleCtrl = if (Test-ObjectProperty $ctrl 'visible') { [bool]$ctrl.visible } else { $true }
+                $tabIndexCtrl = if (Test-ObjectProperty $ctrl 'tabIndex') { [int]$ctrl.tabIndex } else { $null }
+                $tipCtrl = if (Test-ObjectProperty $ctrl 'controlTipText') { [string]$ctrl.controlTipText } else { '' }
+
+                $targetComp = $null
+                try {
+                    $targetComp = $components.Item($formName)
+                    if ($targetComp.Type -ne 3) { throw "Component '$formName' is not a UserForm" }
+                    $designer = $null; $ctrlControls = $null; $ctrlObj = $null
+                    try {
+                        $designer = $targetComp.Designer
+                        $ctrlControls = $designer.Controls
+                        $ctrlObj = $ctrlControls.Add($progId, $ctrlName, $true)
+                        $ctrlObj.Left = $left
+                        $ctrlObj.Top = $top
+                        $ctrlObj.Width = $widthCtrl
+                        $ctrlObj.Height = $heightCtrl
+                        if ($captionCtrl) { $ctrlObj.Caption = $captionCtrl }
+                        $ctrlObj.Enabled = $enabledCtrl
+                        $ctrlObj.Visible = $visibleCtrl
+                        if ($null -ne $tabIndexCtrl) { $ctrlObj.TabIndex = $tabIndexCtrl }
+                        if ($tipCtrl) { $ctrlObj.ControlTipText = $tipCtrl }
+                        $createdControls.Add("$formName.$ctrlName")
+                    } finally {
+                        Release-ComObject $ctrlObj
+                        Release-ComObject $ctrlControls
+                        Release-ComObject $designer
+                    }
+                } finally {
+                    Release-ComObject $targetComp
+                }
+            }
+            'createWorksheetButton' {
+                $sheetName = [string]$op.sheetName
+                $name = [string]$op.name
+                $caption = [string]$op.caption
+                $macroName = [string]$op.macroName
+                $left = [double]$op.left
+                $top = [double]$op.top
+                $width = [double]$op.width
+                $height = [double]$op.height
+
+                $ws = $null; $btns = $null; $btn = $null
+                try {
+                    $ws = $wbStaging.Worksheets.Item($sheetName)
+                    if (-not $ws) { throw "Worksheet '$sheetName' not found" }
+                    $btns = $ws.Buttons()
+                    $btn = $btns.Add($left, $top, $width, $height)
+                    $btn.Name = $name
+                    $btn.Caption = $caption
+                    # OnAction should qualify original workbook filename (not staging)
+                    $originalWorkbookName = [IO.Path]::GetFileNameWithoutExtension($workbookPath) + '.xlsm'
+                    $btn.OnAction = "'$originalWorkbookName'!$macroName"
+                    $createdButtons.Add("$sheetName.$name")
+                    # Store expected properties for verification
+                    $expectedButtonProps["$sheetName.$name"] = @{ caption = $caption; onAction = $btn.OnAction }
+                } finally {
+                    Release-ComObject $btn
+                    Release-ComObject $btns
+                    Release-ComObject $ws
+                }
+            }
+        }
+    }
+
+    # Save and close staging
+    $wbStaging.Save()
+    $wbStaging.Close($false)
+    $wbStaging = $null
+
+    # Release VBProject and components before workbook close
+    Release-ComObject $components
+    Release-ComObject $vbaProject
+
+    # Cleanup first Excel
+    $workbooks1 = $excel1.Workbooks
+    Release-ComObject $workbooks1
+    Cleanup-Excel $excel1 $excel1Pid
+    $excel1 = $null; $excel1Pid = 0
+
+    # Second Excel instance for read-only verification
+    $excel2, $excel2Pid = Ensure-ExcelSession
+    $wbVerify = Open-WorkbookReadOnly $excel2 $stagingPath
+
+    # Verify created forms
+    $verifyComponents = $null
+    try {
+        $verifyVba = $wbVerify.VBProject
+        $verifyComponents = $verifyVba.VBComponents
+        $verifyCompCount = $verifyComponents.Count
+        $verifyFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        for ($i = 0; $i -lt $verifyCompCount; $i++) {
+            $comp = $null
+            try {
+                $comp = $verifyComponents.Item($i+1)
+                if ($comp.Type -eq 3) {
+                    $verifyFormNames.Add($comp.Name) > $null
+                }
+            } finally { Release-ComObject $comp }
+        }
+        foreach ($fn in $createdForms) {
+            if (-not $verifyFormNames.Contains($fn)) { throw "Form '$fn' not found during verification" }
+        }
+
+        # Verify controls
+        foreach ($ctrlKey in $createdControls) {
+            $parts = $ctrlKey.Split('.')
+            $formName = $parts[0]; $ctrlName = $parts[1]
+            $comp = $null; $designer = $null; $controls = $null
+            try {
+                $comp = $verifyComponents.Item($formName)
+                if ($comp.Type -ne 3) { throw "$formName is not a form" }
+                $designer = $comp.Designer
+                $controls = $designer.Controls
+                # Check control exists
+                $ctrlFound = $false
+                $ctrlCount = $controls.Count
+                for ($j = 0; $j -lt $ctrlCount; $j++) {
+                    $c = $null
+                    try {
+                        $c = $controls.Item($j)
+                        if ($c.Name -ieq $ctrlName) { $ctrlFound = $true; break }
+                    } finally { Release-ComObject $c }
+                }
+                if (-not $ctrlFound) { throw "Control '$ctrlName' not found on form '$formName'" }
+            } finally {
+                Release-ComObject $controls
+                Release-ComObject $designer
+                Release-ComObject $comp
+            }
+        }
+
+        # Verify buttons
+        foreach ($btnKey in $createdButtons) {
+            $parts = $btnKey.Split('.')
+            $sheetName = $parts[0]; $btnName = $parts[1]
+            $ws = $null; $btns = $null; $btn = $null
+            try {
+                $ws = $wbVerify.Worksheets.Item($sheetName)
+                $btns = $ws.Buttons()
+                $btnFound = $false
+                $btnCount = $btns.Count
+                for ($j = 0; $j -lt $btnCount; $j++) {
+                    $b = $null
+                    try {
+                        $b = $btns.Item($j+1)
+                        if ($b.Name -ieq $btnName) {
+                            # Verify Caption and OnAction
+                            $expected = $expectedButtonProps[$btnKey]
+                            if ($b.Caption -cne $expected.caption) { throw "Button '$btnKey' caption mismatch" }
+                            if ($b.OnAction -cne $expected.onAction) { throw "Button '$btnKey' OnAction mismatch" }
+                            $btnFound = $true; break
+                        }
+                    } finally { Release-ComObject $b }
+                }
+                if (-not $btnFound) { throw "Button '$btnName' not found on sheet '$sheetName'" }
+            } finally {
+                Release-ComObject $btn
+                Release-ComObject $btns
+                Release-ComObject $ws
+            }
+        }
+    } finally {
+        Release-ComObject $verifyComponents
+        Release-ComObject $verifyVba
+    }
+
+    $wbVerify.Close($false)
+    $wbVerify = $null
+    # Release workbooks of excel2
+    $workbooks2 = $excel2.Workbooks
+    Release-ComObject $workbooks2
+    # Close second Excel
+    Cleanup-Excel $excel2 $excel2Pid
+    $excel2 = $null; $excel2Pid = 0
+
+    # Post-verification with native helper on staging
+    $inspectReqPath2 = New-InspectRequest $workbookDir $stagingPath
+    try {
+        $postInspect = Invoke-Helper $helperPath $inspectReqPath2
+    } finally {
+        if (Test-Path -LiteralPath $inspectReqPath2) { Remove-Item -LiteralPath $inspectReqPath2 -Force }
+    }
+    if ($postInspect.ok -ne $true) { throw "Post-inspect did not return ok true" }
+    if ($postInspect.protected -ne $false) { throw "Staging workbook became protected" }
+    if ($postInspect.signed -ne $false) { throw "Staging workbook became signed" }
+    if (-not $postInspect.workbookSha256) { throw "Post-inspect missing workbookSha256" }
+
+    # Check that each created form appears in modules with componentKind userform
+    $postModules = @($postInspect.modules)
+    $postFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in $postModules) {
+        $name = if (Test-ObjectProperty $m 'name') { [string]$m.name } else { $null }
+        $kind = if (Test-ObjectProperty $m 'componentKind') { [string]$m.componentKind } else { $null }
+        if ($name -and $kind -ieq 'userform') {
+            $postFormNames.Add($name) > $null
+        }
+    }
+    foreach ($fn in $createdForms) {
+        if (-not $postFormNames.Contains($fn)) { throw "Form '$fn' not found in post-inspect modules" }
+    }
+
+    # Check global designerStreamsSha256 has entries for each form name+slash
+    $ds = $postInspect.designerStreamsSha256
+    if (-not $ds) { throw "No designerStreamsSha256 in post-inspect" }
+    $dsProps = $ds.PSObject.Properties
+    foreach ($fn in $createdForms) {
+        $prefix = $fn + '/'
+        $found = $false
+        foreach ($prop in $dsProps) {
+            if ($prop.Name.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and $prop.Value -and [string]$prop.Value -ne '') {
+                $found = $true
+                break
+            }
+        }
+        if (-not $found) { throw "Designer stream for '$fn' not found or empty in designerStreamsSha256" }
+    }
+
+    # Verify staging zip contains nonempty xl/vbaProject.bin
+    $zip = $null
+    try {
+        $zip = [IO.Compression.ZipFile]::OpenRead($stagingPath)
+        $entry = $zip.GetEntry('xl/vbaProject.bin')
+        if (-not $entry -or $entry.Length -eq 0) { throw "xl/vbaProject.bin missing or empty in staging" }
+    } finally { if ($zip) { $zip.Dispose() } }
+
+    # Recompute original hash again before commit
+    $originalHash2 = Get-Sha256 $workbookPath
+    if ($originalHash2 -cne $originalHash) { throw "Original workbook changed before commit" }
+    if (-not (Test-Path -LiteralPath $stagingPath)) { throw "Staging file disappeared before commit" }
+
+    # Create backup directory only now
+    if (-not (Test-Path -LiteralPath $backupDir)) {
+        New-Item -ItemType Directory -Path $backupDir | Out-Null
+        # Recheck that it's not a reparse point
+        $backupItem = Get-Item -LiteralPath $backupDir -Force
+        if ($backupItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Backup directory is a reparse point" }
+    } else {
+        $backupItem = Get-Item -LiteralPath $backupDir -Force
+        if (-not ($backupItem.PSIsContainer)) { throw "Backup path exists but is not a directory: $backupDir" }
+        if ($backupItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Backup directory cannot be a reparse point" }
+    }
+    $backupGuid = Get-GuidString
+    $backupPath = [IO.Path]::Combine($backupDir, "backup_$backupGuid.xlsm")
+
+    # Commit: replace original with staging, using backup
+    [IO.File]::Replace($stagingPath, $workbookPath, $backupPath)
+
+    # Compute final hash of original (now replaced)
+    $finalHash = Get-Sha256 $workbookPath
+
+    # Build success output
+    $result = [ordered]@{
+        ok = $true
+        targetWorkbookPath = $workbookPath
+        sourceWorkbookPath = $workbookPath
+        convertedToXlsm = $false
+        changed = $true
+        createdUserForms = @($createdForms)
+        addedControls = @($createdControls)
+        createdButtons = @($createdButtons)
+        workbookSha256 = $finalHash
+        backupPath = $backupPath
+        macrosExecuted = $false
+        accessVbomChanged = $false
+        designerVerified = $true
+    }
+    Write-Output ($result | ConvertTo-Json -Compress)
+
+} catch {
+    $operationError = $_
+} finally {
+    # Cleanup COM objects (safely)
+    if ($null -ne $wbStaging) {
+        try { $wbStaging.Close($false) } catch { }
+        Release-ComObject $wbStaging
+    }
+    if ($null -ne $vbaProject) { Release-ComObject $vbaProject }
+    if ($null -ne $components) { Release-ComObject $components }
+    if ($null -ne $excel1) {
+        try { $excel1.Quit() } catch { }
+        Release-ComObject $excel1
+    }
+    if ($null -ne $wbVerify) {
+        try { $wbVerify.Close($false) } catch { }
+        Release-ComObject $wbVerify
+    }
+    if ($null -ne $excel2) {
+        try { $excel2.Quit() } catch { }
+        Release-ComObject $excel2
+    }
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+
+    # Kill Excel processes if still alive
+    if ($excel1Pid -gt 0) {
+        try { Stop-Process -Id $excel1Pid -Force -ErrorAction SilentlyContinue } catch { }
+    }
+    if ($excel2Pid -gt 0) {
+        try { Stop-Process -Id $excel2Pid -Force -ErrorAction SilentlyContinue } catch { }
+    }
+
+    # Cleanup staging and backup on precommit failure
+    if ($null -ne $operationError) {
+        if (Test-Path -LiteralPath $stagingPath) { Remove-Item -LiteralPath $stagingPath -Force -ErrorAction SilentlyContinue }
+        # Also remove any leftover inspect files already handled in try blocks
+    }
+}
+
+if ($null -ne $operationError) {
+    $errMsg = $operationError.Exception.Message
+    $stackTrace = $operationError.ScriptStackTrace
+    Write-Error "$errMsg`n$stackTrace" -ErrorAction Continue
+    exit 1
+}
