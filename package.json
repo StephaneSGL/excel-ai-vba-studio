@@ -2,7 +2,7 @@
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
   "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -168,18 +168,18 @@
         "toolReferenceName": "excelVbaWriteModule",
         "canBeReferencedInPrompt": true,
         "icon": "$(save)",
-        "userDescription": "Réinjecte transactionnellement un composant VBA dans un classeur XLSM/XLAM, avec sauvegarde et validation.",
-        "modelDescription": "Utilise cet outil après avoir lu ou créé un fichier VBA dans le projet exporté par Excel AI & VBA Studio. Il met à jour les composants existants et peut ajouter un module .bas ou .cls. Il crée une sauvegarde, refuse les projets signés ou protégés, ne lance aucune macro et ne modifie jamais AccessVBOM. Pour un UserForm existant, seul le code est modifiable ; le designer et le .frx doivent rester identiques. La création d’un nouveau UserForm est refusée sans designer sûr.",
+        "userDescription": "Réinjecte transactionnellement un composant VBA. Une première écriture .bas/.cls dans un XLSX crée une copie XLSM voisine ; XLSM/XLAM conservent sauvegarde et validation.",
+        "modelDescription": "Utilise cet outil pour toute écriture réelle de code VBA. Il refuse toujours un chemin contenant le composant exact .excel-ai-vba-backups. Pour un .xlsx, la première écriture d’un .bas ou .cls crée une copie .xlsm voisine sans modifier la source : toutes les écritures suivantes doivent utiliser le targetWorkbookPath renvoyé. Pour un .xlsm/.xlam, il met à jour un composant existant ou ajoute un .bas/.cls avec sauvegarde transactionnelle. Il ne lance aucune macro et ne modifie jamais AccessVBOM. Un .frm est accepté uniquement pour le code d’un UserForm déjà présent dans un .xlsm/.xlam ; la création d’un UserForm, de son designer, de ses contrôles ou de son .frx est refusée.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "workbookPath": {
               "type": "string",
-              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code. Omettre pour utiliser le classeur actif."
+              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code. Un .xlsx produit une copie .xlsm voisine et l’outil renvoie son targetWorkbookPath. Omettre pour utiliser le classeur actif."
             },
             "componentFile": {
               "type": "string",
-              "description": "Nom sans chemin du composant .bas, .cls ou .frm. Un nouveau .bas ou .cls peut être créé."
+              "description": "Nom sans chemin du composant .bas, .cls ou .frm. Un nouveau .bas ou .cls peut être créé. Un .frm doit déjà exister dans un .xlsm/.xlam."
             },
             "source": {
               "type": "string",
@@ -336,7 +336,9 @@
     "validate:macro-readonly": "node tools/validate-macro-readonly.mjs",
     "validate:native-xlsm": "node tools/validate-native-xlsm-editing.mjs",
     "validate:vba-studio": "node tools/validate-vba-studio.mjs",
+    "validate:vba-bootstrap": "node tools/validate-vba-bootstrap.mjs",
     "validate:vba-writeback": "node tools/validate-vba-writeback.mjs",
+    "test:vba-bootstrap": "node test/vba-bootstrap-integration.mjs",
     "test:vba-writeback": "node test/vba-writeback-regression.mjs",
     "test:vba-atomic": "python test/atomic-writeback-regression.py",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
@@ -347,7 +349,7 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-writeback && npm run test:vba-writeback && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

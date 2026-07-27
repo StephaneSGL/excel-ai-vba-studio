@@ -48,6 +48,7 @@ const required = [
   'scripts/office-ai-export.ps1',
   'scripts/office-ai-apply-edits.ps1',
   'scripts/open-excel-developer.ps1',
+  'scripts/prepare-macro-workbook.ps1',
   'bin/win32-x64/excel-ai-vba-writeback.exe',
 ];
 for (const file of required) {
@@ -64,12 +65,15 @@ const forbiddenPrefixes = [
   'icons/',
   'native/',
   'node_modules/',
+  'output/',
+  'outputs/',
   'src/',
   'syntaxes/',
   'test/',
   'theme/',
   'tools/',
   'vditor/',
+  'work/',
 ];
 for (const file of files) {
   if (forbiddenPrefixes.some((prefix) => file.startsWith(prefix))) {

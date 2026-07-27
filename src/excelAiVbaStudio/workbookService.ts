@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import {
 	assertNoReparsePointChain,
+	assertNotManagedBackupPath,
 	assertOwnedDirectory,
 	assertLocalPath,
 	canonicalizeWorkbookUri,
@@ -21,7 +22,8 @@ import {
 	ExportOptions,
 	ExportPaths,
 	ProcessResult,
-	ToolInput
+	ToolInput,
+	VbaToolWriteResult
 } from './types';
 import { showUserFormPreview } from './userFormPreview';
 import { VbaStudioPanel } from './vbaStudioPanel';
@@ -37,12 +39,25 @@ const MAX_CONFIGURED_COLUMNS = 256;
 const MAX_GENERATED_FILE_BYTES = 16 * 1024 * 1024;
 const EXPORT_TIMEOUT_MS = 180_000;
 const EXCEL_LAUNCH_TIMEOUT_MS = 45_000;
+const VBA_BOOTSTRAP_TIMEOUT_MS = 90_000;
 
 interface PowerShellRunOptions {
 	progress?: vscode.Progress<{ message?: string }>;
 	cancellationToken?: vscode.CancellationToken;
 	timeoutMs: number;
 	cleanupOwnedExcel: boolean;
+}
+
+interface MacroBootstrapResult {
+	ok?: unknown;
+	targetWorkbookPath?: unknown;
+	sourceWorkbookPath?: unknown;
+	convertedToXlsm?: unknown;
+	changed?: unknown;
+	modifiedModules?: unknown;
+	workbookSha256?: unknown;
+	macrosExecuted?: unknown;
+	accessVbomChanged?: unknown;
 }
 
 function isUri(value: unknown): value is vscode.Uri {
@@ -172,6 +187,15 @@ async function pathExists(candidatePath: string): Promise<boolean> {
 	}
 }
 
+async function hashFileSha256(filePath: string): Promise<string> {
+	const digest = createHash('sha256');
+	const stream = fs.createReadStream(filePath);
+	for await (const chunk of stream) {
+		digest.update(chunk as Buffer);
+	}
+	return digest.digest('hex');
+}
+
 async function terminateExactProcess(processId: number): Promise<void> {
 	if (
 		process.platform !== 'win32' ||
@@ -283,6 +307,205 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			await fs.promises.writeFile(sourcePath, source, 'utf8');
 		}
 		return result;
+	}
+
+	async writeVbaFromTool(
+		workbookUri: vscode.Uri,
+		file: string,
+		source: string,
+		cancellationToken?: vscode.CancellationToken
+	): Promise<VbaToolWriteResult> {
+		if (cancellationToken?.isCancellationRequested) {
+			throw new vscode.CancellationError();
+		}
+		const canonicalUri = await canonicalizeWorkbookUri(workbookUri);
+		assertNotManagedBackupPath(canonicalUri.fsPath);
+		if (!(await this.ensureActiveWorkbookIsSaved(canonicalUri))) {
+			throw new Error(
+				'Le classeur contient des modifications non enregistrées et ne peut pas recevoir de code VBA.'
+			);
+		}
+
+		const workbookExtension = path
+			.extname(canonicalUri.fsPath)
+			.toLocaleLowerCase('en-US');
+		if (workbookExtension === '.xlsx') {
+			return await this.bootstrapMacroWorkbook(
+				canonicalUri,
+				file,
+				source,
+				cancellationToken
+			);
+		}
+		if (workbookExtension !== '.xlsm' && workbookExtension !== '.xlam') {
+			throw new Error(
+				'L’écriture VBA accepte un fichier .xlsm ou .xlam, ou un fichier .xlsx à convertir en copie .xlsm. Les formats .xls et .xlsb restent protégés.'
+			);
+		}
+
+		const contextResult = await this.exportWorkbook(canonicalUri, {
+			open: false,
+			includeVba: true,
+			requestedByTool: true,
+			cancellationToken
+		});
+		if (!contextResult) {
+			throw new Error('Le projet VBA n’a pas pu être préparé.');
+		}
+		const writeResult = await this.applyVbaSource(
+			contextResult,
+			file,
+			source,
+			true
+		);
+		return {
+			targetWorkbookPath: canonicalUri.fsPath,
+			sourceWorkbookPath: canonicalUri.fsPath,
+			convertedToXlsm: false,
+			changed: writeResult.changed,
+			modifiedModules: writeResult.modifiedModules,
+			workbookSha256: writeResult.workbookSha256,
+			backupPath: writeResult.backupPath
+		};
+	}
+
+	private async bootstrapMacroWorkbook(
+		sourceUri: vscode.Uri,
+		file: string,
+		source: string,
+		cancellationToken?: vscode.CancellationToken
+	): Promise<VbaToolWriteResult> {
+		const componentExtension = path
+			.extname(file)
+			.toLocaleLowerCase('en-US');
+		if (componentExtension === '.frm') {
+			throw new Error(
+				'La création d’un nouveau UserForm est refusée : un vrai designer, ses contrôles et son fichier .frx ne peuvent pas être remplacés par un faux fichier .frm. Créez d’abord le UserForm dans le VBE natif.'
+			);
+		}
+		if (
+			path.basename(file) !== file ||
+			(componentExtension !== '.bas' && componentExtension !== '.cls')
+		) {
+			throw new Error(
+				'La première écriture dans un fichier .xlsx accepte uniquement un module .bas ou une classe .cls sans chemin.'
+			);
+		}
+
+		const sourcePath = sourceUri.fsPath;
+		const expectedTargetPath = path.join(
+			path.dirname(sourcePath),
+			`${path.basename(sourcePath, path.extname(sourcePath))}.xlsm`
+		);
+		assertNotManagedBackupPath(expectedTargetPath);
+		await assertNoReparsePointChain(expectedTargetPath);
+
+		const scriptPath = this.extensionContext.asAbsolutePath(
+			path.join('scripts', 'prepare-macro-workbook.ps1')
+		);
+		const result = await this.runPowerShell(
+			scriptPath,
+			[
+				'-WorkbookPathBase64',
+				Buffer.from(sourcePath, 'utf8').toString('base64'),
+				'-ComponentFileBase64',
+				Buffer.from(file, 'utf8').toString('base64'),
+				'-SourceBase64',
+				Buffer.from(source, 'utf8').toString('base64')
+			],
+			path.dirname(sourcePath),
+			{
+				cancellationToken,
+				timeoutMs: VBA_BOOTSTRAP_TIMEOUT_MS,
+				cleanupOwnedExcel: true
+			}
+		);
+		if (result.code !== 0) {
+			throw new Error(
+				processError(result.stderr, result.stdout) ||
+					`La préparation XLSM a échoué avec le code ${result.code}.`
+			);
+		}
+
+		const resultLine = result.stdout
+			.replace(/\r/g, '')
+			.split('\n')
+			.map(line => line.trim())
+			.filter(Boolean)
+			.pop();
+		if (!resultLine) {
+			throw new Error('Le préparateur XLSM n’a renvoyé aucun résultat.');
+		}
+		let parsed: MacroBootstrapResult;
+		try {
+			parsed = JSON.parse(resultLine) as MacroBootstrapResult;
+		} catch {
+			throw new Error('Le préparateur XLSM a renvoyé un JSON invalide.');
+		}
+		if (
+			parsed.ok !== true ||
+			parsed.convertedToXlsm !== true ||
+			parsed.changed !== true ||
+			parsed.macrosExecuted !== false ||
+			parsed.accessVbomChanged !== false ||
+			typeof parsed.sourceWorkbookPath !== 'string' ||
+			typeof parsed.targetWorkbookPath !== 'string' ||
+			typeof parsed.workbookSha256 !== 'string' ||
+			!/^[0-9a-f]{64}$/.test(parsed.workbookSha256) ||
+			!Array.isArray(parsed.modifiedModules) ||
+			parsed.modifiedModules.length !== 1 ||
+			typeof parsed.modifiedModules[0] !== 'string' ||
+			!parsed.modifiedModules[0]
+		) {
+			throw new Error('Le préparateur XLSM a renvoyé un résultat incomplet.');
+		}
+		if (!sameFile(parsed.sourceWorkbookPath, sourcePath)) {
+			throw new Error('Le préparateur XLSM a confirmé un classeur source inattendu.');
+		}
+		if (!sameFile(parsed.targetWorkbookPath, expectedTargetPath)) {
+			throw new Error('Le préparateur XLSM a confirmé un classeur cible inattendu.');
+		}
+
+		assertNotManagedBackupPath(parsed.targetWorkbookPath);
+		await assertNoReparsePointChain(parsed.targetWorkbookPath);
+		const targetUri = await canonicalizeWorkbookUri(
+			vscode.Uri.file(parsed.targetWorkbookPath)
+		);
+		if (!sameFile(targetUri.fsPath, expectedTargetPath)) {
+			throw new Error('Le chemin canonique du classeur XLSM est inattendu.');
+		}
+		const verifiedHash = await hashFileSha256(targetUri.fsPath);
+		if (verifiedHash !== parsed.workbookSha256) {
+			throw new Error('Le hash du classeur XLSM créé ne correspond pas au résultat.');
+		}
+
+		let contextResult: ExportContext | undefined;
+		try {
+			contextResult = await this.exportWorkbook(targetUri, {
+				open: false,
+				includeVba: true,
+				requestedByTool: true,
+				cancellationToken
+			});
+			if (!contextResult) {
+				throw new Error('Le nouveau projet VBA n’a pas pu être relu.');
+			}
+			await this.vbaWritebackService.prepare(contextResult);
+		} catch (error) {
+			this.outputChannel.appendLine(
+				`[vba bootstrap] Le fichier créé est conservé pour récupération : ${targetUri.fsPath}`
+			);
+			throw error;
+		}
+
+		return {
+			targetWorkbookPath: targetUri.fsPath,
+			sourceWorkbookPath: sourcePath,
+			convertedToXlsm: true,
+			changed: true,
+			modifiedModules: parsed.modifiedModules as string[],
+			workbookSha256: parsed.workbookSha256
+		};
 	}
 
 	getSettings(): ExcelAiSettings {
@@ -478,11 +701,15 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		const commonInstructions = [
 			'Ce dossier est un projet VBA extrait localement par Excel AI & VBA Studio.',
 			'Les fichiers .bas, .cls et .frm sont les sources à analyser et modifier.',
-			'Ne jamais exécuter une macro. Proposer les changements dans les fichiers source uniquement.',
+			'Ne jamais exécuter une macro.',
 			'Préserver les déclarations Attribute, les signatures Public/Private et les événements Excel.',
 			'Pour relire les données du classeur, utiliser l’outil #excelVbaWorkbook avec includeVba: true.',
 			`Classeur source : ${context.workbookUri.fsPath}`,
-			'Les modifications de ce dossier sont une copie de travail et ne sont pas réinjectées automatiquement dans le classeur.'
+			'Ne jamais utiliser un chemin contenant un composant exact .excel-ai-vba-backups : ce dossier contient uniquement des sauvegardes de récupération.',
+			'Pour écrire un module .bas ou une classe .cls, appeler #excelVbaWriteModule. Si le classeur est .xlsx, la première écriture crée une nouvelle copie .xlsm voisine ; utiliser ensuite uniquement le targetWorkbookPath renvoyé.',
+			'Un .frm existant dans un .xlsm peut recevoir du code, mais ne jamais inventer un nouveau .frm, un designer, des contrôles ou un .frx. MsgBox et InputBox ne sont pas des UserForms.',
+			'Ne déclarer une écriture réussie qu’après le résultat de #excelVbaWriteModule, puis indiquer exactement targetWorkbookPath.',
+			'Les fichiers de ce dossier restent une copie de travail tant qu’aucun outil d’écriture ou enregistrement synchronisé n’a confirmé la modification du classeur.'
 		];
 		await fs.promises.writeFile(
 			instructionsPath,
@@ -498,13 +725,13 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				'',
 				`- Classeur source : \`${context.workbookUri.fsPath}\``,
 				'- Macros exécutées pendant l’extraction : **non**',
-				'- Outil Copilot : `#excelVbaWorkbook`',
+				'- Outils Copilot : `#excelVbaWorkbook` pour lire, `#excelVbaWriteModule` pour écrire',
 				'',
 				'## Composants',
 				'',
 				moduleList,
 				'',
-				'> Les modifications portent sur la copie de travail. Une réinjection automatique dans le classeur n’est pas encore effectuée.'
+				'> Les modifications locales portent sur la copie de travail. Pour les appliquer au classeur, appeler `#excelVbaWriteModule` et reprendre le `targetWorkbookPath` confirmé par l’outil. Ne jamais cibler `.excel-ai-vba-backups`.'
 			].join('\n'),
 			'utf8'
 		);
@@ -1246,6 +1473,10 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			`Le projet VBA est aussi disponible comme dossier VS Code : ${result.paths.vbaDirectory}`,
 			'Lis les fichiers .bas, .cls et .frm du dossier VBA avant de proposer des modifications.',
 			'Commence par résumer les objets Excel, les modules, les classes et les UserForms.',
+			'Ne cible jamais un chemin contenant le composant exact .excel-ai-vba-backups.',
+			'Pour appliquer un .bas ou .cls, utilise #excelVbaWriteModule. Sur un .xlsx, reprends ensuite le targetWorkbookPath .xlsm renvoyé pour toutes les écritures suivantes.',
+			'Ne crée jamais de faux UserForm .frm ou .frx. Un nouveau UserForm avec designer doit être créé dans le VBE natif ; MsgBox et InputBox ne sont pas des UserForms.',
+			'Ne confirme une modification du classeur qu’après le succès de #excelVbaWriteModule et donne le targetWorkbookPath exact.',
 			...(requestedTask ? [`Tâche demandée depuis le ruban : ${requestedTask}`] : []),
 			'N’exécute aucune macro : analyse uniquement le code et les données.'
 		].join('\n');

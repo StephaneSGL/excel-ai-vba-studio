@@ -45,7 +45,7 @@ assert.match(
 assert.match(service, /ensureOwnedDirectory/, 'owned request directory gate is missing');
 assert.match(
   languageTool,
-  /EXCEL_AI_VBA_WRITE_TOOL[\s\S]+?applyVbaSource/,
+  /EXCEL_AI_VBA_WRITE_TOOL[\s\S]+?writeVbaFromTool/,
   'Copilot VBA write tool is not connected to the shared service',
 );
 assert.ok(

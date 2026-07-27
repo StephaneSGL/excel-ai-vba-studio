@@ -73,6 +73,16 @@ export interface VbaWriteToolInput {
 	source?: string;
 }
 
+export interface VbaToolWriteResult {
+	targetWorkbookPath: string;
+	sourceWorkbookPath: string;
+	convertedToXlsm: boolean;
+	changed: boolean;
+	modifiedModules: string[];
+	workbookSha256: string;
+	backupPath?: string;
+}
+
 export interface ProcessResult {
 	code: number;
 	signal: NodeJS.Signals | null;

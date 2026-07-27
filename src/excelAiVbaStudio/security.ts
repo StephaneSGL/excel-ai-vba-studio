@@ -411,3 +411,23 @@ export function workbookUriFromPathInput(requestedPath: string): vscode.Uri {
 export function pathIsInside(candidatePath: string, rootPath: string): boolean {
 	return isPathInside(path.resolve(candidatePath), path.resolve(rootPath));
 }
+
+export function assertNotManagedBackupPath(candidatePath: string): void {
+	const resolvedPath = path.resolve(candidatePath);
+	const root = path.parse(resolvedPath).root;
+	const components = resolvedPath
+		.slice(root.length)
+		.split(/[\\/]+/)
+		.filter(Boolean);
+	if (
+		components.some(
+			component =>
+				component.toLocaleLowerCase('en-US') ===
+				'.excel-ai-vba-backups'
+		)
+	) {
+		throw new Error(
+			'Un fichier du dossier .excel-ai-vba-backups est une sauvegarde de récupération et ne peut pas recevoir de code VBA.'
+		);
+	}
+}
