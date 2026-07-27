@@ -63,6 +63,14 @@ jobs:
       - name: Rebuild the VBA helper from pinned source
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-vba-writeback.ps1
 
+      - name: Upload canonical VBA helper candidate
+        uses: actions/upload-artifact@v6
+        with:
+          name: vba-writeback-helper-${{ github.sha }}
+          path: bin/win32-x64/excel-ai-vba-writeback.exe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify shipped helper provenance
         shell: pwsh
         run: |
