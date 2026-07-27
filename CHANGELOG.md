@@ -4,6 +4,27 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.2.1] - 2026-07-27
+
+### Added
+
+- Added first-write `.xlsx` to sibling `.xlsm` conversion for standard modules and classes through `#excelVbaWriteModule`.
+- Returned the exact `targetWorkbookPath` so Copilot continues every subsequent write against the created macro-enabled workbook.
+
+### Fixed
+
+- Prevented Copilot from presenting exported `.bas` or `.frm` working-copy files as successful workbook modifications.
+- Replaced the misleading dynamic-UserForm fallback with an explicit refusal: a real new UserForm still requires the native VBE designer and `.frx`.
+
+### Security
+
+- Refused every write path containing the exact `.excel-ai-vba-backups` component.
+- The conversion keeps the `.xlsx` source unchanged, disables macros/events/links, owns and releases the exact hidden Excel process, never changes AccessVBOM, and verifies the persisted `xl/vbaProject.bin`.
+
+### Tests
+
+- Added live Excel coverage for `.bas` and `.cls` persistence, unchanged `.xlsx` hashes, backup-path rejection, and absence of leaked Excel processes.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added

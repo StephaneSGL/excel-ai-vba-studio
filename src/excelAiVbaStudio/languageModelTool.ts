@@ -184,8 +184,14 @@ export function registerExcelAiVbaLanguageModelTool(
 	const writeTool = {
 		async prepareInvocation(options: { input?: unknown }) {
 			const input = parseWriteInput(options?.input);
+			const requestedPath = input.workbookPath?.trim() || '';
+			const conversionNotice = requestedPath
+				.toLocaleLowerCase('en-US')
+				.endsWith('.xlsx')
+				? ' vers une nouvelle copie XLSM voisine'
+				: '';
 			return {
-				invocationMessage: `Réinjection VBA transactionnelle de ${input.componentFile}`
+				invocationMessage: `Réinjection VBA transactionnelle de ${input.componentFile}${conversionNotice}`
 			};
 		},
 
@@ -203,23 +209,11 @@ export function registerExcelAiVbaLanguageModelTool(
 					'Aucun classeur Excel local unique ne peut recevoir le code VBA.'
 				);
 			}
-			const contextResult = await service.exportWorkbook(workbookUri, {
-				open: false,
-				includeVba: true,
-				requestedByTool: true,
-				cancellationToken
-			});
-			if (!contextResult) {
-				throw new Error('Le projet VBA n’a pas pu être préparé.');
-			}
-			if (cancellationToken?.isCancellationRequested) {
-				throw new vscode.CancellationError();
-			}
-			const writeResult = await service.applyVbaSource(
-				contextResult,
+			const writeResult = await service.writeVbaFromTool(
+				workbookUri,
 				input.componentFile as string,
 				input.source as string,
-				true
+				cancellationToken
 			);
 			if (cancellationToken?.isCancellationRequested) {
 				throw new vscode.CancellationError();
@@ -235,6 +229,9 @@ export function registerExcelAiVbaLanguageModelTool(
 				new TextPart(
 					JSON.stringify({
 						ok: true,
+						targetWorkbookPath: writeResult.targetWorkbookPath,
+						sourceWorkbookPath: writeResult.sourceWorkbookPath,
+						convertedToXlsm: writeResult.convertedToXlsm,
 						changed: writeResult.changed,
 						modifiedModules: writeResult.modifiedModules,
 						workbookSha256: writeResult.workbookSha256,
