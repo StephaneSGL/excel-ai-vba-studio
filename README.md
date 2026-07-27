@@ -5,7 +5,7 @@
 <h1 align="center">Excel AI & VBA Studio</h1>
 
 <p align="center">
-  <strong>Excel dans Visual Studio Code, avec un contexte de classeur contrôlé pour l’IA.</strong>
+  <strong>Work with Excel workbooks, VBA projects, and bounded AI context directly in Visual Studio Code.</strong>
 </p>
 
 <p align="center">
@@ -15,197 +15,189 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-7a2f8f" alt="PolyForm Noncommercial"></a>
 </p>
 
-Visualisez et modifiez les formats sûrs dans VS Code, inspectez les valeurs et formules, puis ouvrez un projet VBA structuré — objets Excel, modules, classes et UserForms — sans quitter VS Code.
-
-*View safe spreadsheet formats and work with Excel objects, VBA modules, classes, UserForms, and bounded AI context directly in VS Code.*
+Excel AI & VBA Studio is a preview VS Code extension for inspecting supported spreadsheet formats, editing safe workbook content, and working with Excel objects, VBA modules, classes, and UserForms without leaving VS Code.
 
 > [!IMPORTANT]
-> La grille et le studio VBA sont intégrés à VS Code. Microsoft Excel ne s’ouvre jamais simplement parce qu’un classeur est affiché ou exporté. Les actions explicites **Open in Excel** et **Open native VBE** lancent ou réactivent Excel à la demande.
+> The workbook grid and VBA Studio are integrated into VS Code. Microsoft Excel does not open merely because a workbook is viewed or exported. The explicit **Open in Excel** and **Open native VBE** commands launch or reactivate Excel only when requested.
 
-## Fonctionnalités actuelles
+## Current capabilities
 
-| Format | Grille VS Code | Projet VBA VS Code | Contexte IA |
+| Format | Workbook grid | VBA workspace | Bounded AI context |
 | --- | --- | --- | --- |
-| `.xlsx` | Lecture et édition | Projet de travail sans macro embarquée | Oui |
-| `.csv`, `.tsv` | Lecture et édition | Non applicable | Oui |
-| `.xlsm` | Lecture et édition ciblée des cellules | Oui, si la stratégie Excel l’autorise | Oui |
-| `.xls` | Lecture seule protégée | Oui, si la stratégie Excel l’autorise | Oui |
-| `.xlsb` | Pas de rendu intégré | Oui, si la stratégie Excel l’autorise | Oui |
+| `.xlsx` | Read and edit | Working project without embedded macros | Yes |
+| `.csv`, `.tsv` | Read and edit | Not applicable | Yes |
+| `.xlsm` | Targeted cell editing | Yes, when Excel policy allows it | Yes |
+| `.xls` | Protected read-only view | Yes, when Excel policy allows it | Yes |
+| `.xlsb` | No integrated grid | Yes, when Excel policy allows it | Yes |
 
-- Grille de classeur directement dans un onglet VS Code.
-- Couleurs de thème, mise en forme conditionnelle, commentaires et protection de feuille préservés dans les classeurs `.xlsx`.
-- Aperçu d’impression A4 intégré, avec indicateurs conditionnels et résultats de formules structurées.
-- Explorateur **Projet Excel & VBA** inspiré du VBE, avec **Microsoft Excel Objects**, **UserForms**, **Modules**, **Modules de classe** et **Références**.
-- Panneau **Propriétés VBA** synchronisé avec la sélection.
-- Onglet **VBA Studio** complet dans l’éditeur VS Code : explorateur de projet, propriétés, code, procédures et création de composants dans une seule interface.
-- Thèmes clair, sombre et contraste élevé synchronisés automatiquement avec le thème actif de VS Code.
-- Fichiers `.bas`, `.cls` et `.frm` ouverts dans l’éditeur VS Code, avec aperçu interne des UserForms exportés.
-- Dossier VBA ajouté comme racine de l’espace de travail et instructions `.github/copilot-instructions.md` générées pour que GitHub Copilot puisse indexer les sources.
-- Réinjection automatique et transactionnelle des `.bas`, `.cls` et du code des `.frm` existants à chaque sauvegarde VS Code.
-- Création de modules standards et de classes depuis le studio VBA ou GitHub Copilot.
-- Édition ciblée des valeurs, formules et styles de cellules d’un `.xlsm` via une copie de travail Excel, avec contrôle de concurrence, sauvegarde persistante et remplacement atomique.
-- Passage explicite vers le vrai classeur Microsoft Excel ou son VBE natif, sans confondre ces fenêtres avec le studio intégré à VS Code.
-- Export local borné en Markdown et JSON : valeurs, formules, formats, tableaux, graphiques, noms, liens, validations, commentaires, connexions et métadonnées VBA autorisées.
-- Outil IA référençable `#excelVbaWorkbook`, exécuté uniquement à la demande.
-- Outil IA référençable `#excelVbaWriteModule`, avec sauvegarde, contrôle de concurrence et validation après écriture.
-- Aucune télémétrie de l’extension et aucune clé API gérée par l’extension.
+- Workbook grid in a VS Code editor tab.
+- Theme colors, conditional formatting, comments, and worksheet protection preserved in `.xlsx` workbooks.
+- Integrated A4 print preview, conditional indicators, and structured-formula results.
+- **Excel & VBA Project** explorer with **Microsoft Excel Objects**, **UserForms**, **Modules**, **Class Modules**, and **References**.
+- VBA properties pane synchronized with the selected component.
+- Integrated **VBA Studio** with project explorer, properties, code, procedures, and supported component creation.
+- Light, dark, and high-contrast themes synchronized with the active VS Code theme.
+- `.bas`, `.cls`, and `.frm` editing in VS Code, including an internal preview for exported UserForms.
+- VBA workspace root and generated `.github/copilot-instructions.md` so GitHub Copilot can index exported sources.
+- Automatic transactional reinjection when supported `.bas`, `.cls`, or existing `.frm` code is saved.
+- Standard-module and class creation from VBA Studio or GitHub Copilot.
+- Targeted `.xlsm` value, formula, and cell-style editing through an isolated Excel working copy, with conflict detection, persistent backup, and atomic replacement.
+- Explicit handoff to the real workbook in Microsoft Excel or its native VBE.
+- Bounded local Markdown and JSON exports for values, formulas, formats, tables, charts, names, links, validations, comments, connections, and permitted VBA metadata.
+- Referencable AI tools `#excelVbaWorkbook` and `#excelVbaWriteModule`, invoked only on request.
+- No extension telemetry and no API key management by the extension.
 
-## Installation
+## Install from a VSIX
 
-### Depuis un VSIX
-
-Téléchargez un fichier `excel-ai-vba-studio-win32-x64-<version>.vsix`, puis exécutez :
+Download `excel-ai-vba-studio-win32-x64-<version>.vsix`, then run:
 
 ```powershell
 code --install-extension .\excel-ai-vba-studio-win32-x64-<version>.vsix
 ```
 
-Vous pouvez aussi utiliser **Extensions → … → Installer à partir d’un fichier VSIX** dans VS Code.
+You can also use **Extensions > ... > Install from VSIX** in VS Code.
 
-### Depuis les sources
+## Build from source
 
-Prérequis de construction : Node.js 22, npm, Git et Visual Studio Code 1.95 ou version ultérieure.
+Requirements: Node.js 22, npm, Git, and Visual Studio Code 1.95 or newer.
 
 ```powershell
 git clone https://github.com/StephaneSGL/excel-ai-vba-studio.git
-cd excel-ai-vba-studio
+Set-Location excel-ai-vba-studio
 npm ci
 npm run validate
 npm run package
 ```
 
-Le Marketplace Visual Studio n’est pas encore publié. Le dépôt GitHub public reste pour l’instant la source officielle.
+The Visual Studio Marketplace release is not available yet. This public repository is currently the official source for the preview.
 
-## Démarrage en 60 secondes
+## Quick start
 
-1. Ouvrez un fichier pris en charge dans VS Code.
-2. Utilisez la grille intégrée ou l’explorateur **Excel & VBA**.
-3. Exportez un contexte local si vous souhaitez l’inspecter.
-4. Dans un chat IA compatible avec les outils de modèle VS Code, référencez explicitement `#excelVbaWorkbook`.
-5. Utilisez **Ouvrir le studio VBA dans VS Code** pour afficher le projet et ses fichiers réels.
-6. Modifiez puis enregistrez un `.bas`, `.cls` ou `.frm` existant : l’extension réinjecte le code dans le classeur et conserve une sauvegarde vérifiée.
+1. Open a supported workbook in VS Code.
+2. Use the integrated grid or the **Excel & VBA** explorer.
+3. Export local context only when you need to inspect it.
+4. Reference `#excelVbaWorkbook` explicitly from a compatible VS Code AI chat.
+5. Use **Open VBA Studio in VS Code** to inspect the project and its real source files.
+6. Edit and save a supported `.bas`, `.cls`, or existing `.frm` file. The extension validates the working copy and keeps a verified backup before replacement.
 
-### Ce qui arrive réellement dans le fichier XLSM
+### What changes inside an XLSM
 
-- Un module standard ou une classe créé(e) dans le studio peut être réinjecté(e) dans le projet VBA du `.xlsm`.
-- Le code d’un UserForm existant peut être modifié. Son designer et son fichier `.frx` restent inchangés et sont contrôlés avant écriture.
-- Les UserForms, contrôles et boutons déjà présents sont préservés pendant les éditions de cellules.
-- La création d’un nouveau UserForm complet, de ses contrôles, de son `.frx` ou d’un nouveau bouton de feuille n’est pas encore prise en charge. Pour cela, utilisez **Open native VBE**.
-- **Open in Excel** ouvre le vrai classeur dans Microsoft Excel. **Open native VBE** ouvre Excel puis son éditeur VBA séparé, comme `Alt+F11`. **VBA Studio** reste un onglet VS Code.
+- A standard module or class created in VBA Studio can be inserted into the `.xlsm` VBA project.
+- Existing UserForm code can be updated. Its designer and `.frx` resources remain unchanged and are verified before write-back.
+- Existing UserForms, controls, buttons, ActiveX data, VBA, and opaque OOXML parts are preserved during targeted cell edits.
+- Creating a complete new UserForm, its controls, its `.frx`, or a new worksheet button is not yet supported. Use **Open native VBE** for those operations.
+- **Open in Excel** opens the real workbook. **Open native VBE** opens Excel and its separate VBA editor. **VBA Studio** remains a VS Code editor tab.
 
-### Commandes principales
+### Main commands
 
-| Commande | Fonction |
+| Command ID | Purpose |
 | --- | --- |
-| `Excel AI & VBA Studio : Ouvrir le classeur dans Microsoft Excel` | Lance ou réactive le vrai classeur Excel, uniquement à la demande. |
-| `Excel AI & VBA Studio : Ouvrir le VBE natif d’Excel` | Ouvre le classeur dans Excel puis affiche la fenêtre VBE native. |
-| `Excel AI & VBA Studio : Ouvrir le studio VBA dans VS Code` | Ouvre l’interface VBE intégrée et ses sources VBA réelles dans VS Code. |
-| `Excel AI & VBA Studio : Exporter le contexte du classeur` | Produit les exports Markdown et JSON locaux. |
-| `Excel AI & VBA Studio : Exporter et copier le contexte` | Exporte puis copie un contexte borné. |
-| `Excel AI & VBA Studio : Ouvrir le projet VBA dans VS Code` | Ouvre les fichiers `.bas`, `.cls` et `.frm` et les expose à Copilot. |
-| `Excel AI & VBA Studio : Analyser le classeur et le VBA avec Copilot` | Prépare Copilot Chat avec `#excelVbaWorkbook` et le classeur actif. |
-| `Excel AI & VBA Studio : Nettoyer les exports générés` | Supprime les exports contrôlés par l’extension. |
+| `excelAiVbaStudio.openExcel` | Launches or reactivates the real workbook only on request. |
+| `excelAiVbaStudio.openVbe` | Opens the workbook in Excel, then displays the native VBE. |
+| `excelAiVbaStudio.openVbaDeveloper` | Opens the integrated VBA interface and real exported sources. |
+| `excelAiVbaStudio.exportWorkbook` | Creates local Markdown and JSON exports. |
+| `excelAiVbaStudio.copyWorkbookContext` | Exports and copies bounded workbook context. |
+| `excelAiVbaStudio.openVbaExplorer` | Opens `.bas`, `.cls`, and `.frm` files and exposes them to Copilot. |
+| `excelAiVbaStudio.askCopilotAboutWorkbook` | Prepares Copilot Chat with `#excelVbaWorkbook` and the active workbook. |
+| `excelAiVbaStudio.cleanExports` | Removes exports managed by the extension. |
 
-Raccourcis :
+Shortcut:
 
-- `Ctrl+Alt+F11` : ouvrir le studio VBA dans VS Code.
+- `Ctrl+Alt+F11`: open VBA Studio in VS Code.
 
-### Paramètres
+### Settings
 
-| Paramètre | Défaut | Rôle |
+| Setting | Default | Purpose |
 | --- | ---: | --- |
-| `excelAiVbaStudio.maxRows` | `200` | Nombre maximal de lignes exportées par feuille. |
-| `excelAiVbaStudio.maxColumns` | `50` | Nombre maximal de colonnes exportées par feuille. |
-| `excelAiVbaStudio.includeVba` | `false` | Inclut le code VBA uniquement si Excel l’autorise explicitement. |
+| `excelAiVbaStudio.maxRows` | `200` | Maximum exported rows per worksheet. |
+| `excelAiVbaStudio.maxColumns` | `50` | Maximum exported columns per worksheet. |
+| `excelAiVbaStudio.includeVba` | `false` | Includes VBA only when Excel explicitly permits programmatic access. |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  File["Classeur local"] --> Grid["Grille intégrée VS Code"]
+  File["Local workbook"] --> Grid["Integrated VS Code grid"]
   File --> Host["Extension host"]
-  Explorer["Explorateur Excel & VBA"] --> Host
-  Tool["#excelVbaWorkbook"] --> Host
+  Explorer["Excel & VBA explorer"] --> Host
+  ReadTool["#excelVbaWorkbook"] --> Host
   WriteTool["#excelVbaWriteModule"] --> Host
-  Host --> Bridge["Bridge PowerShell sécurisé"]
-  Bridge --> Excel["Instance Excel COM contrôlée"]
-  Excel --> Export["Projet VBA et contexte local borné"]
-  Export --> Workspace["Racine VBA de l’espace VS Code"]
+  Host --> Bridge["Hardened PowerShell bridge"]
+  Bridge --> Excel["Controlled Excel COM instance"]
+  Excel --> Export["VBA project and bounded local context"]
+  Export --> Workspace["VBA workspace root"]
   Workspace --> Explorer
-  Workspace --> Tool
+  Workspace --> ReadTool
   Workspace --> WriteTool
-  WriteTool --> Writer["Moteur VBA transactionnel local"]
+  WriteTool --> Writer["Transactional VBA writer"]
   Writer --> File
-  Host --> Launcher["Ouverture native explicite"]
-  Launcher --> ExcelUi["Microsoft Excel / VBE"]
-  Tool -. "partage explicite" .-> AI["Fournisseur IA choisi dans VS Code"]
+  Host --> Launcher["Explicit native handoff"]
+  Launcher --> ExcelUi["Microsoft Excel or native VBE"]
+  ReadTool -. "explicit sharing" .-> AI["AI provider selected in VS Code"]
 ```
 
-Le bundle publié démarre dans `src/extension.ts` et n’enregistre que les surfaces Excel/VBA/IA prévues. Le dépôt conserve des sources historiques du projet d’origine qui ne sont pas incluses dans le VSIX ciblé.
+The published bundle starts from `src/extension.ts` and registers only the intended Excel, VBA, and AI surfaces. The repository retains historical upstream sources that are not included in the targeted VSIX.
 
-## Sécurité Excel, VBA et IA
+## Excel, VBA, and AI security
 
-- L’export utilise une instance Excel dédiée et refuse de poursuivre si l’exécution des macros ne peut pas être désactivée.
-- Les événements, la mise à jour des liens et le calcul automatique sont désactivés pendant l’analyse contrôlée.
-- L’extension ne modifie jamais le paramètre **Trust access to the VBA project object model** du Centre de gestion de la confidentialité Excel.
-- `.xls` n’est jamais réécrit par la grille intégrée.
-- Pour un `.xlsm`, seules les modifications de cellules prises en charge sont envoyées à une instance Excel dédiée : Excel ouvre une copie de travail, jamais le fichier original.
-- Le moteur vérifie le hash avant et juste avant la validation, contrôle le paquet OOXML et `vbaProject.bin`, conserve l’original dans `.excel-ai-vba-backups`, puis remplace le fichier atomiquement.
-- La réinjection VBA travaille sur une copie, valide le hash du classeur et des sources, crée une sauvegarde dans `.excel-ai-vba-backups`, puis remplace le fichier atomiquement.
-- La réinjection refuse les projets VBA signés ou protégés, les chemins réseau et points de réanalyse, ainsi que toute modification du designer d’un UserForm.
-- Le moteur de réinjection ne démarre pas Excel et n’exécute jamais une macro.
-- Les exports sont locaux, limités en taille et supprimables.
-- Le contenu du classeur est traité comme une donnée non fiable, pas comme une instruction pour l’IA.
-- Aucun classeur n’est transmis automatiquement à un fournisseur IA.
+- Workbook export uses a dedicated Excel instance and fails closed if macro execution cannot be disabled.
+- Events, link updates, alerts, and automatic calculation are disabled during controlled analysis.
+- The extension never changes Excel's **Trust access to the VBA project object model** setting or the Windows registry.
+- `.xls` is never rewritten by the integrated grid.
+- Supported `.xlsm` cell edits are sent to a dedicated Excel instance operating on a working copy, never directly on the original file.
+- Before committing an `.xlsm` edit, the engine checks source hashes, the OOXML package, `vbaProject.bin`, UserForms, controls, ActiveX data, and opaque resources; it keeps the displaced original in `.excel-ai-vba-backups`.
+- VBA write-back operates on a copy, validates workbook and source hashes, creates a backup, then replaces the workbook atomically.
+- VBA write-back refuses signed or protected projects, network paths, reparse points, and UserForm designer changes.
+- The direct VBA writer does not start Excel and never runs a macro.
+- Exports remain local, size-bounded, and removable.
+- Workbook content is treated as untrusted data, not as instructions for an AI model.
+- No workbook is sent to an AI provider automatically.
 
-Ce mécanisme ne constitue pas un bac à sable réseau : Microsoft Excel, Windows, des compléments installés ou des logiciels de sécurité peuvent avoir leurs propres comportements réseau.
+This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and security software may have their own network behavior. Read [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md) before using real professional workbooks.
 
-Consultez [SECURITY.md](SECURITY.md) et [PRIVACY.md](PRIVACY.md) avant d’utiliser de vrais classeurs professionnels.
+## Preview limitations
 
-## Limites de la Preview
+- Windows x64 only.
+- Microsoft Excel desktop is currently required for COM-based VBA extraction, legacy formats, and targeted `.xlsm` cell editing.
+- Protected, corrupted, or enterprise-restricted workbooks may provide only partial context.
+- VBA source access depends on the Excel Trust Center policy already configured by the user.
+- Existing UserForm code can be reinjected; creating or modifying its designer or `.frx` is intentionally refused.
+- Integrated `.xlsm` editing is limited to supported values, formulas, and cell styles. Worksheet structure, dimensions, merges, objects, controls, buttons, and conditional-format rule changes are refused.
+- Creating a complete new UserForm or a button with a macro assignment still requires the native VBE.
 
-- Windows x64 uniquement.
-- Microsoft Excel desktop est actuellement requis en arrière-plan pour l’extraction COM du VBA et des anciens formats, mais aucune fenêtre Excel n’est ouverte par le studio VBA.
-- Les classeurs protégés, corrompus ou restreints par une politique d’entreprise peuvent ne fournir qu’un contexte partiel.
-- L’accès au code source VBA dépend de la politique du Centre de gestion de la confidentialité Excel.
-- Le code d’un UserForm existant peut être réinjecté ; la création ou la modification de son designer et de son `.frx` reste volontairement refusée.
-- L’édition `.xlsm` intégrée est limitée aux valeurs, formules et styles de cellules pris en charge. Les changements structurels (feuilles, dimensions, fusions, objets, contrôles et boutons) sont refusés.
-- La création d’un nouveau UserForm complet ou d’un bouton avec affectation de macro exige encore le VBE natif.
+## Roadmap
 
-## Feuille de route
+- Improve grid fidelity and accessibility.
+- Expand the integrated Formula, Data, and Developer surfaces.
+- Add synthetic workbooks and regression coverage for unsupported macro and formatting cases.
+- Complete English and French localization.
+- Prepare Marketplace updates after publisher configuration.
 
-- enrichir progressivement l’expérience de grille et son accessibilité ;
-- améliorer les surfaces Formules, Données et Développeur dans VS Code ;
-- étendre les classeurs synthétiques et les tests de non-régression ;
-- préserver le VBA avant toute future édition intégrée des formats macro ;
-- compléter la localisation française et anglaise ;
-- préparer les mises à jour Marketplace après configuration du Publisher.
+The roadmap states direction, not a release date or feature promise.
 
-La feuille de route exprime une direction et ne constitue pas une promesse de date ou de fonctionnalité.
-
-## Développement et contribution
+## Development and contribution
 
 ```powershell
 npm ci
 npm run validate
 ```
 
-Les classeurs de test doivent être entièrement synthétiques. N’envoyez jamais de données d’entreprise, d’identifiants, de secrets ou de code VBA propriétaire.
+Test workbooks must be fully synthetic. Never submit company data, credentials, secrets, or proprietary VBA.
 
-- Bugs reproductibles : [GitHub Issues](https://github.com/StephaneSGL/excel-ai-vba-studio/issues)
-- Questions et idées : [GitHub Discussions](https://github.com/StephaneSGL/excel-ai-vba-studio/discussions)
-- Vulnérabilités : [signalement privé GitHub](https://github.com/StephaneSGL/excel-ai-vba-studio/security/advisories/new)
-- Règles de contribution : [CONTRIBUTING.md](CONTRIBUTING.md)
+- Reproducible bugs: [GitHub Issues](https://github.com/StephaneSGL/excel-ai-vba-studio/issues)
+- Questions and ideas: [GitHub Discussions](https://github.com/StephaneSGL/excel-ai-vba-studio/discussions)
+- Vulnerabilities: [private GitHub reporting](https://github.com/StephaneSGL/excel-ai-vba-studio/security/advisories/new)
+- Contribution rules: [CONTRIBUTING.md](CONTRIBUTING.md)
 
-## Licence et propriété
+## License and ownership
 
-Ce dépôt est **public et source-available**, mais il n’est pas « open source » au sens de l’Open Source Initiative.
+This repository is **public and source-available**, but it is not open source under the Open Source Initiative definition.
 
-- Les contributions et modifications propres à **Excel AI & VBA Studio**, distribuées à partir de la version `0.1.1`, sont proposées sous la [PolyForm Noncommercial License 1.0.0](LICENSE). Leur exploitation commerciale nécessite une autorisation écrite séparée de StephaneSGL.
-- Les portions provenant d’**Office Viewer** par Weijan Chen restent disponibles sous leur licence MIT d’origine.
-- Chaque dépendance tierce conserve sa propre licence.
-- Les versions ou commits déjà distribués sous MIT conservent les droits qui avaient déjà été accordés ; un changement de licence ne peut pas révoquer ces droits antérieurs.
+- Excel AI & VBA Studio-specific contributions distributed from version `0.1.1` are offered under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use requires separate written permission from StephaneSGL.
+- Portions originating from **Office Viewer** by Weijan Chen remain available under their original MIT license.
+- Every third-party dependency retains its own license.
+- Versions or commits already distributed under MIT retain the rights previously granted; a later license change cannot revoke those earlier rights.
 
-La répartition complète est expliquée dans [LICENSING.md](LICENSING.md). Les mentions obligatoires sont conservées dans [NOTICE.md](NOTICE.md), [LICENSES/OFFICE-VIEWER-MIT.txt](LICENSES/OFFICE-VIEWER-MIT.txt) et [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+See [LICENSING.md](LICENSING.md) for the complete allocation. Required notices remain in [NOTICE.md](NOTICE.md), [LICENSES/OFFICE-VIEWER-MIT.txt](LICENSES/OFFICE-VIEWER-MIT.txt), and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Microsoft, Visual Studio, Visual Studio Code, Excel et VBA sont des marques de leurs propriétaires respectifs. Ce projet indépendant n’est ni publié ni approuvé par Microsoft.
+Microsoft, Visual Studio, Visual Studio Code, Excel, and VBA are trademarks of their respective owners. This independent project is not published or endorsed by Microsoft.
