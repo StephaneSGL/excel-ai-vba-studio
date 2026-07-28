@@ -4,6 +4,25 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.5.0] - 2026-07-28
+
+### Added
+
+- Added a visual UserForm designer inside VBA Studio, backed by the guarded Excel COM inventory of real forms and controls. Standard controls can be added, selected, moved on a four-point grid, resized, and edited through a property inspector.
+- Added `updateUserFormControl` to `#excelVbaDesignWorkbook` so GitHub Copilot can reposition or update existing UserForm controls transactionally.
+- Added `setUserFormEventHandler` for complete `Private Sub object_event(...)` procedures, including complex event signatures with MSForms parameters.
+- Added a visual event editor for UserForm and control events. Existing handlers require the explicit `replaceExisting=true` opt-in and a modal confirmation from the visual editor.
+
+### Security
+
+- Event writes accept one bounded, exact event procedure only. They preserve every unrelated procedure, never execute VBA, verify the persisted source in a second Excel instance, and retain the existing atomic backup and rollback guarantees.
+- UserForm geometry comes from the real VBA designer object model rather than inferred workbook serialization.
+
+### Tests
+
+- Added live Excel coverage for control geometry updates, parameterized `KeyDown`, `UserForm_Initialize`, explicit event replacement, replacement refusal, persisted-source verification, and process cleanup.
+- Added a native UserForm inventory regression that verifies all 12 fixture controls and their real geometry.
+
 ## [0.4.0] - 2026-07-28
 
 ### Added

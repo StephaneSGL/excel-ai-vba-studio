@@ -319,6 +319,23 @@ try {
       height: 20,
     },
   ];
+  const keyDownProcedure = [
+    'Private Sub txtGenerated_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)',
+    '    If KeyCode = vbKeyReturn Then',
+    '        Me.Caption = "Validated"',
+    '    End If',
+    'End Sub',
+  ].join('\r\n');
+  const initializeProcedure = [
+    'Private Sub UserForm_Initialize()',
+    '    Me.Caption = "Ready"',
+    'End Sub',
+  ].join('\r\n');
+  const replacedInitializeProcedure = [
+    'Private Sub UserForm_Initialize()',
+    '    Me.Caption = "Ready after replacement"',
+    'End Sub',
+  ].join('\r\n');
   const requestPath = join(temporaryDirectory, 'designer-success.json');
   writeFileSync(
     requestPath,
@@ -354,6 +371,35 @@ try {
             width: 130,
             height: 22,
           },
+        },
+        {
+          kind: 'updateUserFormControl',
+          formName: 'oUserForm',
+          name: 'txtGenerated',
+          changes: {
+            left: 24,
+            top: 196,
+            width: 156,
+            height: 24,
+            enabled: true,
+            visible: true,
+            tabIndex: 0,
+            controlTipText: 'Generated editor',
+          },
+        },
+        {
+          kind: 'setUserFormEventHandler',
+          formName: 'oUserForm',
+          objectName: 'txtGenerated',
+          eventName: 'KeyDown',
+          procedureSource: keyDownProcedure,
+        },
+        {
+          kind: 'setUserFormEventHandler',
+          formName: 'frmGenerated',
+          objectName: 'UserForm',
+          eventName: 'Initialize',
+          procedureSource: initializeProcedure,
         },
         {
           kind: 'createWorksheetButton',
@@ -420,6 +466,11 @@ try {
     ),
     'oUserForm.txtGenerated',
   ]);
+  assert.deepEqual(output.updatedControls, ['oUserForm.txtGenerated']);
+  assert.deepEqual(output.updatedEventHandlers, [
+    'oUserForm.txtGenerated_KeyDown',
+    'frmGenerated.UserForm_Initialize',
+  ]);
   assert.deepEqual(output.createdButtons, ['Data.btnGenerated']);
   assert.deepEqual(output.assignedButtons, []);
   assert.deepEqual(
@@ -446,6 +497,8 @@ try {
   );
   assert.equal(modules.get('frmGenerated')?.componentKind, 'userform');
   assert.equal(modules.get('oUserForm')?.componentKind, 'userform');
+  assert.match(modules.get('frmGenerated')?.source || '', /Ready/);
+  assert.match(modules.get('oUserForm')?.source || '', /txtGenerated_KeyDown/);
   const designerEntries = Object.entries(inspection.designerStreamsSha256);
   assert.ok(
     designerEntries.some(
@@ -472,6 +525,14 @@ try {
           name: 'btnGenerated',
           macroName: 'ShowUserForm',
         },
+        {
+          kind: 'setUserFormEventHandler',
+          formName: 'frmGenerated',
+          objectName: 'UserForm',
+          eventName: 'Initialize',
+          procedureSource: replacedInitializeProcedure,
+          replaceExisting: true,
+        },
       ],
     }),
     'utf8',
@@ -485,10 +546,55 @@ try {
   const assignmentOutput = parseLastJson(assignmentResult.stdout);
   assert.deepEqual(assignmentOutput.createdButtons, []);
   assert.deepEqual(assignmentOutput.assignedButtons, ['Data.btnGenerated']);
+  assert.deepEqual(assignmentOutput.updatedControls, []);
+  assert.deepEqual(assignmentOutput.updatedEventHandlers, [
+    'frmGenerated.UserForm_Initialize',
+  ]);
   assert.deepEqual(assignmentOutput.createdActiveXControls, []);
   assert.deepEqual(assignmentOutput.boundActiveXControls, []);
   assert.equal(sha256File(workbookPath), assignmentOutput.workbookSha256);
   assert.equal(sha256File(assignmentOutput.backupPath), assignmentHash);
+
+  const existingUserFormEventHash = sha256File(workbookPath);
+  const existingUserFormEventRequestPath = join(
+    temporaryDirectory,
+    'designer-existing-userform-event.json',
+  );
+  writeFileSync(
+    existingUserFormEventRequestPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      workbookPath,
+      expectedWorkbookSha256: existingUserFormEventHash,
+      operations: [
+        {
+          kind: 'setUserFormEventHandler',
+          formName: 'frmGenerated',
+          objectName: 'UserForm',
+          eventName: 'Initialize',
+          procedureSource: initializeProcedure,
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const existingUserFormEventResult = runDesigner(
+    existingUserFormEventRequestPath,
+  );
+  assert.notEqual(
+    existingUserFormEventResult.status,
+    0,
+    'existing UserForm event replacement must require explicit opt-in',
+  );
+  assert.match(
+    String(existingUserFormEventResult.stderr),
+    /already exists; set replaceExisting=true/i,
+  );
+  assert.equal(
+    sha256File(workbookPath),
+    existingUserFormEventHash,
+    'existing UserForm event refusal changed the workbook',
+  );
 
   if (activeXAvailable) {
   const existingHandlerHash = sha256File(workbookPath);

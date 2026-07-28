@@ -28,6 +28,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+Add-Type -AssemblyName Microsoft.VisualBasic
 
 $includeVbaNormalized = $IncludeVba.Trim().ToLowerInvariant()
 switch ($includeVbaNormalized) {
@@ -474,6 +475,26 @@ function Get-VbaComponentTypeLabel {
     }
 }
 
+function Get-VbaControlTypeLabel {
+    param([string]$ComTypeName)
+
+    switch -Regex ($ComTypeName) {
+        '^Label$' { return 'label' }
+        '^TextBox$' { return 'textBox' }
+        '^CommandButton$' { return 'commandButton' }
+        '^ComboBox$' { return 'comboBox' }
+        '^ListBox$' { return 'listBox' }
+        '^CheckBox$' { return 'checkBox' }
+        '^OptionButton$' { return 'optionButton' }
+        '^ToggleButton$' { return 'toggleButton' }
+        '^Frame$' { return 'frame' }
+        '^Image$' { return 'image' }
+        '^SpinButton$' { return 'spinButton' }
+        '^ScrollBar$' { return 'scrollBar' }
+        default { return 'customActiveX' }
+    }
+}
+
 function Get-ExcelErrorLabel {
     param(
         [AllowNull()]
@@ -908,6 +929,7 @@ function Get-VbaRecords {
         readmePath = $null
         references = @()
         modules = @()
+        userForms = @()
         worksheetButtons = @()
         worksheetActiveXControls = @()
     }
@@ -928,6 +950,7 @@ function Get-VbaRecords {
     $components = $null
     $referenceRecords = New-Object 'System.Collections.Generic.List[object]'
     $moduleRecords = New-Object 'System.Collections.Generic.List[object]'
+    $userFormRecords = New-Object 'System.Collections.Generic.List[object]'
     $worksheetButtonRecords = New-Object 'System.Collections.Generic.List[object]'
     $worksheetActiveXRecords = New-Object 'System.Collections.Generic.List[object]'
     $remainingVbaCharacters = $MaxVbaSourceCharacters
@@ -1058,6 +1081,87 @@ function Get-VbaRecords {
                 elseif ($rawSource.Length -gt 0) {
                     $source = "' [VBA source omitted: workbook-wide character limit reached]"
                     $sourceTruncated = $true
+                }
+                if ($componentType -eq 'UserForm') {
+                    $designer = $null
+                    $controls = $null
+                    $properties = $null
+                    $widthProperty = $null
+                    $heightProperty = $null
+                    try {
+                        $designer = $component.Designer
+                        $controls = $designer.Controls
+                        $properties = $component.Properties
+                        $widthProperty = $properties.Item('Width')
+                        $heightProperty = $properties.Item('Height')
+                        $controlRecords = New-Object 'System.Collections.Generic.List[object]'
+                        $controlCount = [Math]::Min([int]$controls.Count, 1000)
+                        for ($controlIndex = 0; $controlIndex -lt $controlCount; $controlIndex++) {
+                            $control = $null
+                            try {
+                                $control = $controls.Item($controlIndex)
+                                $comTypeName = [Microsoft.VisualBasic.Information]::TypeName($control)
+                                $controlType = Get-VbaControlTypeLabel $comTypeName
+                                $caption = ''
+                                $enabled = $true
+                                $visible = $true
+                                $tabIndex = $null
+                                $controlTipText = ''
+                                try { $caption = [string]$control.Caption } catch { }
+                                try { $enabled = [bool]$control.Enabled } catch { }
+                                try { $visible = [bool]$control.Visible } catch { }
+                                try { $tabIndex = [int]$control.TabIndex } catch { }
+                                try { $controlTipText = [string]$control.ControlTipText } catch { }
+                                $record = [ordered]@{
+                                    type = $controlType
+                                    typeName = $comTypeName
+                                    name = [string]$control.Name
+                                    caption = $caption
+                                    left = [double]$control.Left
+                                    top = [double]$control.Top
+                                    width = [double]$control.Width
+                                    height = [double]$control.Height
+                                    enabled = $enabled
+                                    visible = $visible
+                                    controlTipText = $controlTipText
+                                }
+                                if ($null -ne $tabIndex) { $record.tabIndex = $tabIndex }
+                                [void]$controlRecords.Add([PSCustomObject]$record)
+                            }
+                            catch {
+                                Add-ExportWarning $Warnings $null 'workbook.vba.userForms.controls' (
+                                    "Control {0} on UserForm {1} could not be inventoried: {2}" -f
+                                        $controlIndex,
+                                        [string]$component.Name,
+                                        $_.Exception.Message
+                                )
+                            }
+                            finally {
+                                Release-ComObject $control
+                            }
+                        }
+                        [void]$userFormRecords.Add([PSCustomObject][ordered]@{
+                            name = [string]$component.Name
+                            caption = [string]$designer.Caption
+                            width = [double]$widthProperty.Value
+                            height = [double]$heightProperty.Value
+                            controls = @($controlRecords.ToArray())
+                        })
+                    }
+                    catch {
+                        Add-ExportWarning $Warnings $null 'workbook.vba.userForms' (
+                            "UserForm {0} designer inventory was unavailable: {1}" -f
+                                [string]$component.Name,
+                                $_.Exception.Message
+                        )
+                    }
+                    finally {
+                        Release-ComObject $heightProperty
+                        Release-ComObject $widthProperty
+                        Release-ComObject $properties
+                        Release-ComObject $controls
+                        Release-ComObject $designer
+                    }
                 }
                 [void]$moduleRecords.Add([PSCustomObject][ordered]@{
                     name = [string]$component.Name
@@ -1242,6 +1346,7 @@ function Get-VbaRecords {
         $result.message = 'VBA references and modules were read through the object model. Macros were not executed.'
         $result.references = @($referenceRecords.ToArray())
         $result.modules = @($moduleRecords.ToArray())
+        $result.userForms = @($userFormRecords.ToArray())
         $result.worksheetButtons = @($worksheetButtonRecords.ToArray())
         $result.worksheetActiveXControls = @($worksheetActiveXRecords.ToArray())
     }

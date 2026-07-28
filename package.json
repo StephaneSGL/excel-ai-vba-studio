@@ -2,7 +2,7 @@
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
   "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -201,8 +201,8 @@
         "toolReferenceName": "excelVbaDesignWorkbook",
         "canBeReferencedInPrompt": true,
         "icon": "$(symbol-interface)",
-        "userDescription": "Crée transactionnellement des UserForms, contrôles MSForms/ActiveX et boutons de feuille, puis affecte des macros vérifiées dans un classeur XLSM existant.",
-        "modelDescription": "Utilise cet outil dans un classeur .xlsm local existant pour créer un UserForm complet avec son designer et ses flux .frx, ajouter des contrôles visuels, créer ou réaffecter un bouton de formulaire, créer un contrôle ActiveX de feuille, ou lier le Click d’un bouton ActiveX à une macro publique sans argument. Un customActiveX exige un ProgID exact déjà autorisé par l’utilisateur dans excelAiVbaStudio.allowedCustomActiveXProgIds. Chaque écriture utilise une copie de travail, crée une sauvegarde, vérifie le résultat, puis remplace le fichier atomiquement. Aucune macro n’est exécutée et AccessVBOM n’est jamais modifié.",
+        "userDescription": "Crée et modifie transactionnellement des UserForms, contrôles, événements VBA, ActiveX et boutons de feuille dans un classeur XLSM existant.",
+        "modelDescription": "Utilise cet outil dans un classeur .xlsm local existant pour créer un UserForm complet avec son designer et ses flux .frx, ajouter ou repositionner des contrôles visuels, affecter une procédure événementielle VBA exacte à un contrôle/UserForm, créer ou réaffecter un bouton de formulaire, créer un contrôle ActiveX de feuille, ou lier le Click d’un bouton ActiveX à une macro publique sans argument. Pour setUserFormEventHandler, fournis une unique procédure Private Sub objectName_eventName(...) terminée par End Sub ; replaceExisting doit être vrai pour remplacer explicitement un gestionnaire existant. Un customActiveX exige un ProgID exact déjà autorisé par l’utilisateur dans excelAiVbaStudio.allowedCustomActiveXProgIds. Chaque écriture utilise une copie de travail, crée une sauvegarde, vérifie le résultat, puis remplace le fichier atomiquement. Aucune macro n’est exécutée et AccessVBOM n’est jamais modifié.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -335,6 +335,121 @@
                     "required": [
                       "kind",
                       "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "updateUserFormControl"
+                        ]
+                      },
+                      "formName": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "changes": {
+                        "type": "object",
+                        "properties": {
+                          "left": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 10000
+                          },
+                          "top": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 10000
+                          },
+                          "width": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 10000
+                          },
+                          "height": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 10000
+                          },
+                          "caption": {
+                            "type": "string",
+                            "maxLength": 1000
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "visible": {
+                            "type": "boolean"
+                          },
+                          "tabIndex": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 32767
+                          },
+                          "controlTipText": {
+                            "type": "string",
+                            "maxLength": 1000
+                          }
+                        },
+                        "minProperties": 1,
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "formName",
+                      "name",
+                      "changes"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "setUserFormEventHandler"
+                        ]
+                      },
+                      "formName": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "objectName": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$",
+                        "description": "Nom du contrôle, ou UserForm pour un événement du formulaire."
+                      },
+                      "eventName": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "procedureSource": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200000,
+                        "description": "Une unique procédure Private Sub nommée objectName_eventName. Les signatures avec paramètres sont acceptées."
+                      },
+                      "replaceExisting": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Doit être vrai pour remplacer explicitement un gestionnaire déjà présent."
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "formName",
+                      "objectName",
+                      "eventName",
+                      "procedureSource"
                     ],
                     "additionalProperties": false
                   },
@@ -798,6 +913,7 @@
     "test:vba-bootstrap": "node test/vba-bootstrap-integration.mjs",
     "test:vba-writeback": "node test/vba-writeback-regression.mjs",
     "test:vba-designer": "node test/vba-designer-integration.mjs",
+    "test:vba-inventory": "node test/vba-userform-inventory.mjs",
     "test:vba-interactions": "node test/vba-interaction-graph.mjs",
     "test:vba-atomic": "python test/atomic-writeback-regression.py",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
@@ -808,7 +924,7 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

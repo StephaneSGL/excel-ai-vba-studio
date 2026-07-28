@@ -11,6 +11,8 @@ import {
 	ExportContext,
 	VbaDesignOperation,
 	VbaDesignToolResult,
+	VbaUserFormControl,
+	VbaUserFormControlChanges,
 	VbaUserFormControlType
 } from './types';
 import {
@@ -60,6 +62,29 @@ interface StudioCategory {
 	components: StudioComponent[];
 }
 
+interface StudioUserFormControl {
+	type: string;
+	typeName: string;
+	name: string;
+	caption: string;
+	left: number;
+	top: number;
+	width: number;
+	height: number;
+	enabled: boolean;
+	visible: boolean;
+	tabIndex?: number;
+	controlTipText: string;
+}
+
+interface StudioUserForm {
+	name: string;
+	caption: string;
+	width: number;
+	height: number;
+	controls: StudioUserFormControl[];
+}
+
 interface StudioProject {
 	workbookName: string;
 	workbookPath: string;
@@ -69,6 +94,7 @@ interface StudioProject {
 	embeddedVba: boolean;
 	sourceDirectory: string;
 	categories: StudioCategory[];
+	userForms: StudioUserForm[];
 	worksheetNames: string[];
 	interactions: VbaInteractionGraph;
 }
@@ -81,6 +107,13 @@ interface WebviewMessage {
 	sheetName?: unknown;
 	controlName?: unknown;
 	macroName?: unknown;
+	formName?: unknown;
+	objectName?: unknown;
+	eventName?: unknown;
+	procedureSource?: unknown;
+	replaceExisting?: unknown;
+	changes?: unknown;
+	control?: unknown;
 }
 
 type DesignWorkbookHandler = (
@@ -94,7 +127,23 @@ type OpenExcelHandler = (
 ) => Promise<void>;
 
 const MAX_SOURCE_CHARACTERS = 2_000_000;
+const MAX_EVENT_SOURCE_CHARACTERS = 200_000;
+const VBA_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,30}$/;
 const SOURCE_EXTENSIONS = new Set(['.bas', '.cls', '.frm', '.txt']);
+const VISUAL_CONTROL_TYPES = new Set<VbaUserFormControlType>([
+	'label',
+	'textBox',
+	'commandButton',
+	'comboBox',
+	'listBox',
+	'checkBox',
+	'optionButton',
+	'toggleButton',
+	'frame',
+	'image',
+	'spinButton',
+	'scrollBar'
+]);
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === 'object' && !Array.isArray(value)
@@ -104,6 +153,98 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string {
 	return value === undefined || value === null ? '' : String(value);
+}
+
+function asFiniteNumber(value: unknown, fallback = 0): number {
+	return typeof value === 'number' && Number.isFinite(value)
+		? value
+		: fallback;
+}
+
+function asBoolean(value: unknown, fallback: boolean): boolean {
+	return typeof value === 'boolean' ? value : fallback;
+}
+
+function designerIdentifier(value: unknown, label: string): string {
+	const identifier = typeof value === 'string' ? value : '';
+	if (!VBA_IDENTIFIER_PATTERN.test(identifier)) {
+		throw new Error(`${label} n’est pas un identifiant VBA valide.`);
+	}
+	return identifier;
+}
+
+function designerNumber(
+	value: unknown,
+	label: string,
+	options: { minimum: number; exclusiveMinimum?: boolean }
+): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		throw new Error(`${label} doit être un nombre fini.`);
+	}
+	if (
+		(options.exclusiveMinimum
+			? value <= options.minimum
+			: value < options.minimum) ||
+		value > 10_000
+	) {
+		throw new Error(`${label} sort des limites autorisées.`);
+	}
+	return value;
+}
+
+function designerText(value: unknown, label: string): string {
+	if (typeof value !== 'string' || value.length > 1_000 || value.includes('\0')) {
+		throw new Error(`${label} doit être un texte valide de 1 000 caractères maximum.`);
+	}
+	return value;
+}
+
+function validateEventProcedureSource(
+	source: unknown,
+	objectName: string,
+	eventName: string
+): string {
+	if (
+		typeof source !== 'string' ||
+		source.length < 1 ||
+		source.length > MAX_EVENT_SOURCE_CHARACTERS ||
+		source.includes('\0')
+	) {
+		throw new Error('Le gestionnaire VBA est vide ou dépasse la limite autorisée.');
+	}
+	const procedureName = `${objectName}_${eventName}`;
+	const escapedName = procedureName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const lines = source
+		.replace(/\r\n?/g, '\n')
+		.split('\n')
+		.map(line => line.replace(/[ \t]+$/g, ''));
+	while (lines.length && !lines[0].trim()) {
+		lines.shift();
+	}
+	while (lines.length && !lines[lines.length - 1].trim()) {
+		lines.pop();
+	}
+	const headerPattern = new RegExp(
+		`^[\\t ]*Private[\\t ]+Sub[\\t ]+${escapedName}[\\t ]*\\([^\\r\\n]*\\)[\\t ]*$`,
+		'i'
+	);
+	if (
+		lines.length < 2 ||
+		!headerPattern.test(lines[0]) ||
+		!/^[\t ]*End[\t ]+Sub[\t ]*$/i.test(lines[lines.length - 1]) ||
+		lines
+			.slice(1, -1)
+			.some(line =>
+				/^[\t ]*(?:(?:Private|Public|Friend|Static)[\t ]+)?(?:Sub|Function|Property[\t ]+(?:Get|Let|Set))\b/i.test(
+					line
+				) || /^[\t ]*End[\t ]+Sub\b/i.test(line)
+			)
+	) {
+		throw new Error(
+			`Le code doit contenir uniquement Private Sub ${procedureName}(...) ... End Sub.`
+		);
+	}
+	return source;
 }
 
 function safeFileStem(value: string, fallback: string): string {
@@ -539,6 +680,47 @@ export class VbaStudioPanel implements vscode.Disposable {
 		const workbookName =
 			asString(workbookRecord.name) ||
 			path.basename(context.workbookUri.fsPath);
+		const vbaRecord = asRecord(workbookRecord.vba) || {};
+		const userForms: StudioUserForm[] = (
+			Array.isArray(vbaRecord.userForms) ? vbaRecord.userForms : []
+		)
+			.slice(0, 200)
+			.map(rawForm => {
+				const form = asRecord(rawForm) || {};
+				const controls: StudioUserFormControl[] = (
+					Array.isArray(form.controls) ? form.controls : []
+				)
+					.slice(0, 1_000)
+					.map(rawControl => {
+						const control = asRecord(rawControl) || {};
+						const tabIndex = asFiniteNumber(control.tabIndex, -1);
+						return {
+							type: asString(control.type) || 'customActiveX',
+							typeName: asString(control.typeName),
+							name: asString(control.name),
+							caption: asString(control.caption),
+							left: asFiniteNumber(control.left),
+							top: asFiniteNumber(control.top),
+							width: Math.max(1, asFiniteNumber(control.width, 72)),
+							height: Math.max(1, asFiniteNumber(control.height, 24)),
+							enabled: asBoolean(control.enabled, true),
+							visible: asBoolean(control.visible, true),
+							...(Number.isInteger(tabIndex) && tabIndex >= 0
+								? { tabIndex }
+								: {}),
+							controlTipText: asString(control.controlTipText)
+						};
+					})
+					.filter(control => control.name);
+				return {
+					name: asString(form.name),
+					caption: asString(form.caption),
+					width: Math.max(120, asFiniteNumber(form.width, 400)),
+					height: Math.max(80, asFiniteNumber(form.height, 300)),
+					controls
+				};
+			})
+			.filter(form => form.name);
 		const interactions = buildVbaInteractionGraph(
 			components.map(component => ({
 				name: component.name,
@@ -556,6 +738,7 @@ export class VbaStudioPanel implements vscode.Disposable {
 			embeddedVba: manifest.status === 'extracted',
 			sourceDirectory: context.paths.vbaDirectory,
 			categories,
+			userForms,
 			worksheetNames,
 			interactions
 		};
@@ -602,6 +785,15 @@ export class VbaStudioPanel implements vscode.Disposable {
 				return;
 			case 'createActiveX':
 				await this.createWorksheetActiveXControl();
+				return;
+			case 'addVisualControl':
+				await this.addVisualControl(message);
+				return;
+			case 'updateVisualControl':
+				await this.updateVisualControl(message);
+				return;
+			case 'setUserFormEvent':
+				await this.setUserFormEvent(message);
 				return;
 			case 'openExcel':
 				if (this.currentContext) {
@@ -708,6 +900,146 @@ export class VbaStudioPanel implements vscode.Disposable {
 				'error',
 				`Transaction refusée : ${(error as Error).message}`
 			);
+		}
+	}
+
+	private async addVisualControl(message: WebviewMessage): Promise<void> {
+		try {
+			const formName = designerIdentifier(message.formName, 'formName');
+			const raw = asRecord(message.control);
+			if (!raw) {
+				throw new Error('Le contrôle visuel est absent.');
+			}
+			const type = asString(raw.type) as VbaUserFormControlType;
+			if (!VISUAL_CONTROL_TYPES.has(type)) {
+				throw new Error('Ce type de contrôle n’est pas disponible dans la palette.');
+			}
+			const control: VbaUserFormControl = {
+				type,
+				name: designerIdentifier(raw.name, 'control.name'),
+				left: designerNumber(raw.left, 'control.left', { minimum: 0 }),
+				top: designerNumber(raw.top, 'control.top', { minimum: 0 }),
+				width: designerNumber(raw.width, 'control.width', {
+					minimum: 0,
+					exclusiveMinimum: true
+				}),
+				height: designerNumber(raw.height, 'control.height', {
+					minimum: 0,
+					exclusiveMinimum: true
+				}),
+				...(raw.caption !== undefined
+					? { caption: designerText(raw.caption, 'control.caption') }
+					: {})
+			};
+			await this.applyDesignerOperations(
+				[{ kind: 'addUserFormControl', formName, control }],
+				`Contrôle ${formName}.${control.name} créé et vérifié.`
+			);
+		} catch (error) {
+			await this.postStatus('error', (error as Error).message);
+		}
+	}
+
+	private async updateVisualControl(message: WebviewMessage): Promise<void> {
+		try {
+			const formName = designerIdentifier(message.formName, 'formName');
+			const name = designerIdentifier(message.controlName, 'controlName');
+			const raw = asRecord(message.changes);
+			if (!raw) {
+				throw new Error('Les propriétés à modifier sont absentes.');
+			}
+			const changes: VbaUserFormControlChanges = {};
+			for (const property of ['left', 'top', 'width', 'height'] as const) {
+				if (raw[property] === undefined) {
+					continue;
+				}
+				changes[property] = designerNumber(
+					raw[property],
+					`changes.${property}`,
+					{
+						minimum: 0,
+						exclusiveMinimum: property === 'width' || property === 'height'
+					}
+				);
+			}
+			for (const property of ['caption', 'controlTipText'] as const) {
+				if (raw[property] !== undefined) {
+					changes[property] = designerText(
+						raw[property],
+						`changes.${property}`
+					);
+				}
+			}
+			for (const property of ['enabled', 'visible'] as const) {
+				if (raw[property] === undefined) {
+					continue;
+				}
+				if (typeof raw[property] !== 'boolean') {
+					throw new Error(`changes.${property} doit être un booléen.`);
+				}
+				changes[property] = raw[property] as boolean;
+			}
+			if (raw.tabIndex !== undefined) {
+				const tabIndex = designerNumber(raw.tabIndex, 'changes.tabIndex', {
+					minimum: 0
+				});
+				if (!Number.isInteger(tabIndex) || tabIndex > 32_767) {
+					throw new Error('changes.tabIndex doit être un entier entre 0 et 32767.');
+				}
+				changes.tabIndex = tabIndex;
+			}
+			if (Object.keys(changes).length === 0) {
+				throw new Error('Aucune propriété de contrôle à modifier.');
+			}
+			await this.applyDesignerOperations(
+				[{ kind: 'updateUserFormControl', formName, name, changes }],
+				`Contrôle ${formName}.${name} mis à jour et vérifié.`
+			);
+		} catch (error) {
+			await this.postStatus('error', (error as Error).message);
+		}
+	}
+
+	private async setUserFormEvent(message: WebviewMessage): Promise<void> {
+		try {
+			const formName = designerIdentifier(message.formName, 'formName');
+			const objectName = designerIdentifier(message.objectName, 'objectName');
+			const eventName = designerIdentifier(message.eventName, 'eventName');
+			const procedureSource = validateEventProcedureSource(
+				message.procedureSource,
+				objectName,
+				eventName
+			);
+			const replaceExisting = message.replaceExisting === true;
+			if (message.replaceExisting !== undefined && typeof message.replaceExisting !== 'boolean') {
+				throw new Error('replaceExisting doit être un booléen.');
+			}
+			if (replaceExisting) {
+				const confirmation = await vscode.window.showWarningMessage(
+					`Remplacer le gestionnaire ${formName}.${objectName}_${eventName} ? Une sauvegarde du classeur sera créée.`,
+					{ modal: true },
+					'Remplacer'
+				);
+				if (confirmation !== 'Remplacer') {
+					await this.postStatus('info', 'Remplacement du gestionnaire annulé.');
+					return;
+				}
+			}
+			await this.applyDesignerOperations(
+				[
+					{
+						kind: 'setUserFormEventHandler',
+						formName,
+						objectName,
+						eventName,
+						procedureSource,
+						replaceExisting
+					}
+				],
+				`Gestionnaire ${formName}.${objectName}_${eventName} affecté et vérifié.`
+			);
+		} catch (error) {
+			await this.postStatus('error', (error as Error).message);
 		}
 	}
 
@@ -1060,7 +1392,9 @@ export class VbaStudioPanel implements vscode.Disposable {
 			`Sources VBA : ${context.paths.vbaDirectory}`,
 			'Lis les fichiers .bas, .cls et .frm de cette racine VS Code.',
 			'Utilise aussi #excelVbaWorkbook avec includeVba: true pour le contexte du classeur.',
-			'N’exécute aucune macro. Modifie uniquement les fichiers source lorsque je te le demande.'
+			'Pour créer un UserForm réel, ajouter ou repositionner ses contrôles, affecter une procédure événementielle complète ou créer un bouton de feuille, utilise #excelVbaDesignWorkbook.',
+			'Pour un événement, setUserFormEventHandler accepte une procédure Private Sub complète, y compris une signature complexe avec paramètres ; replaceExisting doit être explicitement vrai pour remplacer un gestionnaire.',
+			'N’exécute aucune macro. Le test réel des événements reste une action explicite dans Excel.'
 		].join('\n');
 		try {
 			await vscode.commands.executeCommand('workbench.action.chat.open', {
@@ -1253,6 +1587,35 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
 .code:disabled{opacity:.72}
 .controls-view{display:none;min-height:0;overflow:auto;padding:16px;background:var(--studio-bg)}
 .controls-view.visible{display:block;flex:1}
+.designer-view{display:none;min-height:0;flex:1;background:var(--studio-bg)}
+.designer-view.visible{display:block}
+.designer-layout{height:100%;display:grid;grid-template-columns:170px minmax(300px,1fr) 290px}
+.designer-palette,.designer-inspector{min-width:0;overflow:auto;padding:10px;background:var(--studio-surface)}
+.designer-palette{border-right:1px solid var(--studio-border)}
+.designer-inspector{border-left:1px solid var(--studio-border)}
+.designer-palette h3,.designer-inspector h3{margin:3px 0 9px;font-size:12px}
+.palette-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.palette-control{min-height:34px;padding:4px;border:1px solid var(--studio-border);border-radius:3px;color:var(--studio-fg);background:var(--studio-toolbar);cursor:pointer;font-size:11px}
+.palette-control:hover{background:var(--studio-hover)}
+.designer-stage{min-width:0;min-height:0;overflow:auto;padding:24px;background:var(--vscode-editor-background,var(--studio-bg))}
+.userform-canvas{position:relative;min-width:220px;min-height:140px;border:1px solid var(--studio-border);box-shadow:0 8px 28px rgba(0,0,0,.18);background-color:var(--vscode-input-background,#fff);background-image:radial-gradient(var(--studio-border) .8px,transparent .8px);background-size:8px 8px;color:var(--vscode-input-foreground,#111)}
+.userform-caption{position:absolute;left:0;right:0;top:-24px;height:23px;display:flex;align-items:center;padding:0 7px;border:1px solid var(--studio-border);background:var(--studio-toolbar);color:var(--studio-fg);font-weight:600}
+.design-control{position:absolute;display:flex;align-items:center;justify-content:center;box-sizing:border-box;overflow:hidden;border:1px solid #7a7a7a;background:#efefef;color:#111;cursor:move;user-select:none;font-family:Segoe UI,sans-serif;font-size:12px}
+.design-control.input,.design-control.combo,.design-control.list{justify-content:flex-start;padding:2px 5px;background:#fff}
+.design-control.label{justify-content:flex-start;border-color:transparent;background:transparent}
+.design-control.frame{justify-content:flex-start;align-items:flex-start;padding:7px;border-style:groove;background:transparent}
+.design-control.image{border-style:dashed;background:#ddd}
+.design-control.hidden-control{opacity:.45}
+.design-control.selected{outline:2px solid var(--studio-focus);outline-offset:1px;z-index:20}
+.resize-handle{position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border:1px solid #fff;background:var(--studio-focus);cursor:nwse-resize}
+.design-control:not(.selected) .resize-handle{display:none}
+.inspector-grid{display:grid;grid-template-columns:92px 1fr;gap:6px;align-items:center}
+.inspector-grid label{font-size:11px;color:var(--studio-muted)}
+.inspector-grid input,.inspector-grid select,.event-editor textarea{min-width:0;box-sizing:border-box;border:1px solid var(--studio-border);padding:5px;color:var(--vscode-input-foreground,var(--studio-fg));background:var(--vscode-input-background,var(--studio-bg))}
+.inspector-actions{display:flex;gap:6px;margin:10px 0 14px}
+.event-editor{border-top:1px solid var(--studio-border);padding-top:10px}
+.event-editor textarea{width:100%;height:180px;resize:vertical;font-family:var(--vscode-editor-font-family);font-size:12px}
+.event-existing{margin:6px 0;color:var(--vscode-inputValidation-warningForeground,#cca700)}
 .controls-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .metric{padding:7px 10px;border:1px solid var(--studio-border);border-radius:4px;background:var(--studio-surface)}
 .interaction-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
@@ -1284,6 +1647,7 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
     <button class="tool" id="open-file">↗ <span class="label">Éditeur VS Code</span></button>
     <button class="tool" id="reload">⟳ <span class="label">Recharger</span></button>
     <button class="tool" id="controls-tab">Contrôles</button>
+    <button class="tool" id="designer-tab" disabled>Designer</button>
     <button class="tool" id="create-activex">＋ ActiveX</button>
     <button class="tool" id="open-excel">Excel</button>
     <button class="tool" id="open-vbe">VBE</button>
@@ -1314,6 +1678,7 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
         </div>
       </div>
       <div class="controls-view" id="controls-view"></div>
+      <div class="designer-view" id="designer-view"></div>
     </main>
   </div>
   <div class="statusbar">
@@ -1325,7 +1690,13 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
 <script nonce="${nonce}">
 (() => {
   const vscode = acquireVsCodeApi();
-  const state = { project: null, selected: null, dirty: false };
+  const state = {
+    project: null,
+    selected: null,
+    dirty: false,
+    viewMode: 'code',
+    selectedDesignControl: null
+  };
   const tree = document.getElementById('tree');
   const properties = document.getElementById('properties');
   const code = document.getElementById('code');
@@ -1340,6 +1711,8 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
   const codeView = document.getElementById('code-view');
   const controlsView = document.getElementById('controls-view');
   const controlsTab = document.getElementById('controls-tab');
+  const designerView = document.getElementById('designer-view');
+  const designerTab = document.getElementById('designer-tab');
 
   const allComponents = () => state.project
     ? state.project.categories.flatMap(category => category.components)
@@ -1386,10 +1759,13 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
       .replace(/"/g, '&quot;');
   }
 
-  function setControlMode(showControls) {
-    controlsView.classList.toggle('visible', showControls);
-    codeView.classList.toggle('hidden', showControls);
-    controlsTab.textContent = showControls ? 'Code' : 'Contrôles';
+  function setViewMode(mode) {
+    state.viewMode = mode;
+    codeView.classList.toggle('hidden', mode !== 'code');
+    controlsView.classList.toggle('visible', mode === 'controls');
+    designerView.classList.toggle('visible', mode === 'designer');
+    controlsTab.textContent = mode === 'controls' ? 'Code' : 'Contrôles';
+    designerTab.textContent = mode === 'designer' ? 'Code' : 'Designer';
   }
 
   function renderControls(project) {
@@ -1478,6 +1854,361 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
     );
   }
 
+  const visualControlPalette = [
+    ['label', 'Label'],
+    ['textBox', 'TextBox'],
+    ['commandButton', 'Bouton'],
+    ['comboBox', 'ComboBox'],
+    ['listBox', 'ListBox'],
+    ['checkBox', 'CheckBox'],
+    ['optionButton', 'Option'],
+    ['toggleButton', 'Toggle'],
+    ['frame', 'Frame'],
+    ['image', 'Image'],
+    ['spinButton', 'Spin'],
+    ['scrollBar', 'Scroll']
+  ];
+
+  const controlPrefixes = {
+    label: 'lbl',
+    textBox: 'txt',
+    commandButton: 'cmd',
+    comboBox: 'cbo',
+    listBox: 'lst',
+    checkBox: 'chk',
+    optionButton: 'opt',
+    toggleButton: 'tgl',
+    frame: 'fra',
+    image: 'img',
+    spinButton: 'spn',
+    scrollBar: 'scr'
+  };
+
+  const captionControlTypes = new Set([
+    'label', 'commandButton', 'checkBox', 'optionButton', 'toggleButton', 'frame'
+  ]);
+
+  function designControlClass(type) {
+    if (type === 'textBox') return 'input';
+    if (type === 'comboBox') return 'combo';
+    if (type === 'listBox') return 'list';
+    if (type === 'label') return 'label';
+    if (type === 'frame') return 'frame';
+    if (type === 'image') return 'image';
+    return 'button';
+  }
+
+  function escapeRegex(value) {
+    return String(value).replace(/[-/\\\\^$*+?.()|[\\]{}]/g, '\\\\$&');
+  }
+
+  function findEventProcedure(component, objectName, eventName) {
+    const procedureName = objectName + '_' + eventName;
+    const matcher = new RegExp(
+      '^[\\\\t ]*Private[\\\\t ]+Sub[\\\\t ]+' + escapeRegex(procedureName) +
+      '[\\\\t ]*\\\\([^\\\\r\\\\n]*\\\\)[^\\\\r\\\\n]*(?:\\\\r?\\\\n)[\\\\s\\\\S]*?' +
+      '^[\\\\t ]*End[\\\\t ]+Sub\\\\b',
+      'im'
+    );
+    return matcher.exec(component.source || '')?.[0] || '';
+  }
+
+  function eventArguments(eventName) {
+    const normalized = String(eventName).toLowerCase();
+    if (normalized === 'queryclose') return 'Cancel As Integer, CloseMode As Integer';
+    if (normalized === 'beforeupdate') return 'ByVal Cancel As MSForms.ReturnBoolean';
+    if (normalized === 'keydown' || normalized === 'keyup') {
+      return 'ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer';
+    }
+    if (normalized === 'keypress') return 'ByVal KeyAscii As MSForms.ReturnInteger';
+    if (normalized === 'mousedown' || normalized === 'mousemove' || normalized === 'mouseup') {
+      return 'ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single';
+    }
+    return '';
+  }
+
+  function eventSkeleton(objectName, eventName) {
+    return 'Private Sub ' + objectName + '_' + eventName + '(' +
+      eventArguments(eventName) + ')\\r\\n' +
+      "    ' Code VBA ici\\r\\n" +
+      'End Sub';
+  }
+
+  function nextControlName(type, controls) {
+    const prefix = controlPrefixes[type] || 'ctl';
+    const used = new Set(controls.map(control => control.name.toLowerCase()));
+    let index = 1;
+    while (used.has((prefix + index).toLowerCase())) index++;
+    return prefix + index;
+  }
+
+  function defaultControlSize(type) {
+    if (type === 'label') return [110, 20];
+    if (type === 'textBox' || type === 'comboBox') return [130, 24];
+    if (type === 'listBox') return [140, 70];
+    if (type === 'frame') return [180, 100];
+    if (type === 'image') return [90, 70];
+    if (type === 'spinButton') return [20, 40];
+    if (type === 'scrollBar') return [140, 20];
+    return [100, 28];
+  }
+
+  function renderFormEventInspector(form, component) {
+    const host = document.getElementById('designer-inspector-body');
+    if (!host) return;
+    host.innerHTML =
+      '<h3>' + escapeText(form.name) + '</h3>' +
+      '<p>Code événementiel du UserForm. Aucune macro n’est exécutée dans VS Code.</p>' +
+      '<div class="event-editor"><div class="inspector-grid">' +
+      '<label>Objet</label><input value="UserForm" disabled>' +
+      '<label>Événement</label><input id="d-event" list="form-event-list" value="Initialize">' +
+      '<datalist id="form-event-list"><option>Initialize</option><option>Activate</option>' +
+      '<option>Deactivate</option><option>Terminate</option><option>QueryClose</option>' +
+      '<option>Resize</option><option>Click</option><option>DblClick</option>' +
+      '<option>KeyDown</option><option>KeyPress</option><option>KeyUp</option></datalist></div>' +
+      '<div class="event-existing" id="event-existing"></div>' +
+      '<textarea id="event-source" spellcheck="false"></textarea>' +
+      '<label><input id="replace-event" type="checkbox"> Remplacer explicitement si présent</label>' +
+      '<div class="inspector-actions"><button class="tool ai" id="apply-event">Affecter le code</button></div></div>';
+    const eventNameInput = document.getElementById('d-event');
+    const eventSource = document.getElementById('event-source');
+    const existingStatus = document.getElementById('event-existing');
+    const replaceEvent = document.getElementById('replace-event');
+    const refresh = () => {
+      const eventName = eventNameInput.value.trim() || 'Initialize';
+      const existing = findEventProcedure(component, 'UserForm', eventName);
+      eventSource.value = existing || eventSkeleton('UserForm', eventName);
+      existingStatus.textContent = existing
+        ? 'Gestionnaire existant détecté. Cochez le remplacement pour le modifier.'
+        : 'Nouveau gestionnaire du formulaire.';
+      replaceEvent.checked = false;
+    };
+    eventNameInput.onchange = refresh;
+    document.getElementById('apply-event').onclick = () =>
+      vscode.postMessage({
+        type: 'setUserFormEvent',
+        formName: form.name,
+        objectName: 'UserForm',
+        eventName: eventNameInput.value.trim(),
+        procedureSource: eventSource.value,
+        replaceExisting: replaceEvent.checked
+      });
+    refresh();
+  }
+
+  function renderDesignerInspector(form, control, component) {
+    const host = document.getElementById('designer-inspector-body');
+    if (!host || !control) return;
+    const hasCaption = captionControlTypes.has(control.type);
+    host.innerHTML =
+      '<h3>' + escapeText(form.name + '.' + control.name) + '</h3>' +
+      '<div class="inspector-grid">' +
+      '<label>Type</label><input value="' + escapeText(control.typeName || control.type) + '" disabled>' +
+      '<label>Caption</label><input id="d-caption" value="' + escapeText(control.caption || '') + '"' +
+        (hasCaption ? '' : ' disabled') + '>' +
+      '<label>Left</label><input id="d-left" type="number" min="0" max="10000" step="1" value="' + control.left + '">' +
+      '<label>Top</label><input id="d-top" type="number" min="0" max="10000" step="1" value="' + control.top + '">' +
+      '<label>Width</label><input id="d-width" type="number" min="1" max="10000" step="1" value="' + control.width + '">' +
+      '<label>Height</label><input id="d-height" type="number" min="1" max="10000" step="1" value="' + control.height + '">' +
+      '<label>Visible</label><input id="d-visible" type="checkbox"' + (control.visible ? ' checked' : '') + '>' +
+      '<label>Enabled</label><input id="d-enabled" type="checkbox"' + (control.enabled ? ' checked' : '') + '>' +
+      '<label>TabIndex</label><input id="d-tabindex" type="number" min="0" max="32767" step="1" value="' +
+        (control.tabIndex ?? '') + '">' +
+      '<label>Info-bulle</label><input id="d-tip" value="' + escapeText(control.controlTipText || '') + '">' +
+      '</div>' +
+      '<div class="inspector-actions"><button class="tool ai" id="apply-control-props">Appliquer</button></div>' +
+      '<div class="event-editor"><h3>Événement VBA</h3>' +
+      '<div class="inspector-grid"><label>Objet</label><input value="' + escapeText(control.name) + '" disabled>' +
+      '<label>Événement</label><input id="d-event" list="event-list" value="Click">' +
+      '<datalist id="event-list"><option>Click</option><option>Change</option><option>DblClick</option>' +
+      '<option>Enter</option><option>Exit</option><option>BeforeUpdate</option><option>AfterUpdate</option>' +
+      '<option>KeyDown</option><option>KeyPress</option><option>KeyUp</option>' +
+      '<option>MouseDown</option><option>MouseMove</option><option>MouseUp</option></datalist></div>' +
+      '<div class="event-existing" id="event-existing"></div>' +
+      '<textarea id="event-source" spellcheck="false"></textarea>' +
+      '<label><input id="replace-event" type="checkbox"> Remplacer explicitement si présent</label>' +
+      '<div class="inspector-actions"><button class="tool ai" id="apply-event">Affecter le code</button></div>' +
+      '</div>';
+
+    document.getElementById('apply-control-props').onclick = () => {
+      const changes = {
+        left: Number(document.getElementById('d-left').value),
+        top: Number(document.getElementById('d-top').value),
+        width: Number(document.getElementById('d-width').value),
+        height: Number(document.getElementById('d-height').value),
+        visible: document.getElementById('d-visible').checked,
+        enabled: document.getElementById('d-enabled').checked,
+        controlTipText: document.getElementById('d-tip').value
+      };
+      if (hasCaption) changes.caption = document.getElementById('d-caption').value;
+      const tabIndex = document.getElementById('d-tabindex').value;
+      if (tabIndex !== '') changes.tabIndex = Number(tabIndex);
+      vscode.postMessage({
+        type: 'updateVisualControl',
+        formName: form.name,
+        controlName: control.name,
+        changes
+      });
+    };
+
+    const eventNameInput = document.getElementById('d-event');
+    const eventSource = document.getElementById('event-source');
+    const existingStatus = document.getElementById('event-existing');
+    const replaceEvent = document.getElementById('replace-event');
+    const refreshEventEditor = () => {
+      const eventName = eventNameInput.value.trim() || 'Click';
+      const existing = findEventProcedure(component, control.name, eventName);
+      eventSource.value = existing || eventSkeleton(control.name, eventName);
+      existingStatus.textContent = existing
+        ? 'Gestionnaire existant détecté. Cochez le remplacement pour le modifier.'
+        : 'Nouveau gestionnaire. Il sera ajouté sans réécrire les autres procédures.';
+      replaceEvent.checked = false;
+    };
+    eventNameInput.onchange = refreshEventEditor;
+    document.getElementById('apply-event').onclick = () => {
+      const eventName = eventNameInput.value.trim();
+      vscode.postMessage({
+        type: 'setUserFormEvent',
+        formName: form.name,
+        objectName: control.name,
+        eventName,
+        procedureSource: eventSource.value,
+        replaceExisting: replaceEvent.checked
+      });
+    };
+    refreshEventEditor();
+  }
+
+  function selectDesignControl(form, control, component) {
+    state.selectedDesignControl = control.name;
+    designerView.querySelectorAll('.design-control').forEach(element =>
+      element.classList.toggle('selected', element.dataset.name === control.name)
+    );
+    renderDesignerInspector(form, control, component);
+  }
+
+  function bindDesignerDrag(form, component) {
+    designerView.querySelectorAll('.design-control').forEach(element => {
+      const control = form.controls.find(item => item.name === element.dataset.name);
+      if (!control) return;
+      element.addEventListener('pointerdown', event => {
+        event.preventDefault();
+        selectDesignControl(form, control, component);
+        const resizing = event.target.classList.contains('resize-handle');
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startLeft = control.left;
+        const startTop = control.top;
+        const startWidth = control.width;
+        const startHeight = control.height;
+        const move = moveEvent => {
+          const deltaX = moveEvent.clientX - startX;
+          const deltaY = moveEvent.clientY - startY;
+          if (resizing) {
+            const width = Math.max(12, Math.round((startWidth + deltaX) / 4) * 4);
+            const height = Math.max(12, Math.round((startHeight + deltaY) / 4) * 4);
+            element.style.width = Math.min(width, form.width - startLeft) + 'px';
+            element.style.height = Math.min(height, form.height - startTop) + 'px';
+          } else {
+            const left = Math.max(0, Math.round((startLeft + deltaX) / 4) * 4);
+            const top = Math.max(0, Math.round((startTop + deltaY) / 4) * 4);
+            element.style.left = Math.min(left, form.width - startWidth) + 'px';
+            element.style.top = Math.min(top, form.height - startHeight) + 'px';
+          }
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          const changes = resizing
+            ? {
+                width: Number.parseFloat(element.style.width),
+                height: Number.parseFloat(element.style.height)
+              }
+            : {
+                left: Number.parseFloat(element.style.left),
+                top: Number.parseFloat(element.style.top)
+              };
+          vscode.postMessage({
+            type: 'updateVisualControl',
+            formName: form.name,
+            controlName: control.name,
+            changes
+          });
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up, { once: true });
+      });
+    });
+  }
+
+  function renderDesigner(component) {
+    const form = state.project?.userForms?.find(
+      candidate => candidate.name.toLowerCase() === component.name.toLowerCase()
+    );
+    if (!form) {
+      designerView.innerHTML =
+        '<div class="empty-state">Designer COM indisponible pour ce UserForm. Rechargez après export VBA autorisé.</div>';
+      return;
+    }
+    const palette = visualControlPalette.map(item =>
+      '<button class="palette-control" data-control-type="' + item[0] + '">' +
+      escapeText(item[1]) + '</button>'
+    ).join('');
+    const controls = form.controls.map(control =>
+      '<div class="design-control ' + designControlClass(control.type) +
+      (control.visible ? '' : ' hidden-control') + '" data-name="' + escapeText(control.name) +
+      '" title="' + escapeText((control.typeName || control.type) + ': ' + control.name) +
+      '" style="left:' + control.left + 'px;top:' + control.top + 'px;width:' +
+      control.width + 'px;height:' + control.height + 'px">' +
+      '<span>' + escapeText(control.caption || control.name) + '</span>' +
+      '<span class="resize-handle"></span></div>'
+    ).join('');
+    designerView.innerHTML =
+      '<div class="designer-layout">' +
+      '<aside class="designer-palette"><h3>Boîte à outils</h3><div class="palette-grid">' +
+      palette + '</div><div class="inspector-actions"><button class="tool" id="form-events">Événements UserForm</button></div>' +
+      '<p>Ajout transactionnel. Déplacement et taille aimantés sur 4 points.</p></aside>' +
+      '<section class="designer-stage"><div class="userform-canvas" style="width:' +
+      form.width + 'px;height:' + form.height + 'px"><div class="userform-caption">' +
+      escapeText(form.caption || form.name) + '</div>' + controls + '</div></section>' +
+      '<aside class="designer-inspector" id="designer-inspector-body">' +
+      '<div class="empty-state">Sélectionnez un contrôle.</div></aside></div>';
+
+    designerView.querySelectorAll('.palette-control').forEach(button =>
+      button.addEventListener('click', () => {
+        const type = button.dataset.controlType;
+        const name = nextControlName(type, form.controls);
+        const size = defaultControlSize(type);
+        const offset = 12 + (form.controls.length % 8) * 8;
+        vscode.postMessage({
+          type: 'addVisualControl',
+          formName: form.name,
+          control: {
+            type,
+            name,
+            left: Math.min(offset, Math.max(0, form.width - size[0])),
+            top: Math.min(offset, Math.max(0, form.height - size[1])),
+            width: size[0],
+            height: size[1],
+            caption: captionControlTypes.has(type) ? name : ''
+          }
+        });
+      })
+    );
+    document.getElementById('form-events').onclick = () => {
+      state.selectedDesignControl = null;
+      designerView.querySelectorAll('.design-control').forEach(element =>
+        element.classList.remove('selected')
+      );
+      renderFormEventInspector(form, component);
+    };
+    bindDesignerDrag(form, component);
+    const selected = form.controls.find(
+      control => control.name === state.selectedDesignControl
+    ) || form.controls[0];
+    if (selected) selectDesignControl(form, selected, component);
+  }
+
   function selectComponent(id) {
     const component = allComponents().find(item => item.id === id);
     if (!component) return;
@@ -1487,6 +2218,7 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
     code.disabled = !component.editable;
     save.disabled = !component.editable;
     openFile.disabled = !component.file;
+    designerTab.disabled = component.kind !== 'userform';
     objectSelect.value = component.id;
     document.getElementById('properties-title').textContent = 'Propriétés - ' + component.name;
     properties.innerHTML = component.properties.map(property =>
@@ -1500,7 +2232,7 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
     updateLines();
     updatePosition();
     setStatus(component.file ? component.file : component.type);
-    setControlMode(false);
+    setViewMode('code');
   }
 
   function renderProject(project, selectFile) {
@@ -1572,7 +2304,18 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
   openFile.onclick = () => state.selected?.file &&
     vscode.postMessage({ type: 'openFile', file: state.selected.file });
   document.getElementById('reload').onclick = () => vscode.postMessage({ type: 'reload' });
-  controlsTab.onclick = () => setControlMode(!controlsView.classList.contains('visible'));
+  controlsTab.onclick = () => setViewMode(
+    state.viewMode === 'controls' ? 'code' : 'controls'
+  );
+  designerTab.onclick = () => {
+    if (!state.selected || state.selected.kind !== 'userform') return;
+    if (state.viewMode === 'designer') {
+      setViewMode('code');
+      return;
+    }
+    renderDesigner(state.selected);
+    setViewMode('designer');
+  };
   document.getElementById('create-activex').onclick = () =>
     vscode.postMessage({ type: 'createActiveX' });
   document.getElementById('open-excel').onclick = () =>
