@@ -349,6 +349,15 @@ try {
     [void](Start-Process -FilePath $excelPath -ArgumentList @($quotedWorkbookPath) -PassThru)
     Write-Output "EXCEL_LAUNCH_REQUESTED|$resolvedWorkbookPath"
 
+    # A normal user-facing open needs no COM attachment or confirmation. Excel
+    # receives the exact local path through its regular launch path, while VS
+    # Code can release the progress notification immediately. VBE handoff keeps
+    # the stricter exact-window verification below.
+    if (-not $ShowVbe) {
+        Write-Output "EXCEL_FAST_OPEN_REQUESTED|$resolvedWorkbookPath"
+        exit 0
+    }
+
     # COM is used only after the shell launch, and only to find/activate a
     # workbook Excel has already opened. A pre-existing Excel instance is never
     # asked to open the file through automation.

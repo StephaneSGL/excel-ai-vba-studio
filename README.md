@@ -37,7 +37,7 @@ Excel AI & VBA Studio is a preview VS Code extension for inspecting supported sp
 - VBA properties pane synchronized with the selected component.
 - Integrated **VBA Studio** with project explorer, properties, code, procedures, and supported component creation.
 - Light, dark, and high-contrast themes synchronized with the active VS Code theme.
-- `.bas`, `.cls`, and `.frm` editing in VS Code, including an internal preview for exported UserForms.
+- `.bas`, `.cls`, and `.frm` editing in VS Code, including an interactive, non-executing preview for exported UserForms.
 - VBA workspace root and generated `.github/copilot-instructions.md` so GitHub Copilot can index exported sources.
 - Automatic transactional reinjection when supported `.bas`, `.cls`, or existing `.frm` code is saved.
 - Standard-module and class creation from VBA Studio or GitHub Copilot.
@@ -89,6 +89,8 @@ The Visual Studio Marketplace release is not available yet. This public reposito
 - A standard module or class created in VBA Studio can be inserted into the `.xlsm` VBA project.
 - Existing UserForm code can be updated. Its designer and `.frx` resources remain unchanged and are verified before write-back.
 - The separate VBA Designer tool can create a complete UserForm with real designer/`.frx` streams, add supported controls to a new or existing UserForm, and create a worksheet Form Control button with an `OnAction` macro assignment.
+- Supported standard controls are Label, TextBox, CommandButton, ComboBox, ListBox, CheckBox, OptionButton, ToggleButton, Frame, Image, SpinButton, and ScrollBar.
+- UserForm controls can be exercised visually in the VS Code preview without running VBA; **Open in Excel** provides the real clickable controls and macro events.
 - Existing UserForms, controls, buttons, ActiveX data, VBA, and opaque OOXML parts are preserved during targeted cell edits.
 - **Open in Excel** opens the real workbook. **Open native VBE** opens Excel and its separate VBA editor. **VBA Studio** remains a VS Code editor tab.
 
@@ -174,6 +176,7 @@ This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and 
 - VBA source access depends on the Excel Trust Center policy already configured by the user.
 - Creating the first VBA module in `.xlsx` also depends on that preconfigured Trust Center policy; the extension never enables it.
 - UserForm and button creation requires an existing local `.xlsm`, Excel desktop, and VBA project-object-model access already enabled by the user. Signed and protected VBA projects are refused.
+- The interactive VS Code preview simulates control state only and never runs event procedures; real VBA behavior remains an explicit action inside native Excel.
 - Integrated `.xlsm` editing supports values, formulas, cell styles, explicit row heights and column widths, appending the five conditional-formatting presets exposed by the ribbon, and clearing all rules on one sheet. Worksheet structure, implicit dimension resets, merges, objects, controls, buttons, existing-rule edits, rule reordering, and partial rule deletion are refused.
 - There is no drag-and-drop UserForm designer inside VS Code yet. Visual creation is exposed through the bounded AI tool; worksheet button creation currently targets Form Controls, not ActiveX controls.
 

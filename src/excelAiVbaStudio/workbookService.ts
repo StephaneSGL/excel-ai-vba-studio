@@ -1672,7 +1672,11 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		if (
 			path.extname(uri.fsPath).toLocaleLowerCase('en-US') === '.frm'
 		) {
-			await showUserFormPreview(uri, document.getText());
+			await showUserFormPreview(
+				uri,
+				document.getText(),
+				context.workbookUri
+			);
 		}
 	}
 

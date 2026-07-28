@@ -11,6 +11,7 @@ const table = read('src/react/view/excel/x-spreadsheet/component/table.js');
 const excel = read('src/react/view/excel/Excel.tsx');
 const handler = read('src/provider/compress/commonHandler.ts');
 const workbookService = read('src/excelAiVbaStudio/workbookService.ts');
+const excelLauncher = read('scripts/open-excel-developer.ps1');
 
 assert.doesNotMatch(
   ribbon,
@@ -85,6 +86,24 @@ assert.match(
   workbookService,
   /async openExcel\([\s\S]+?showVbe = false[\s\S]+?runExcelLauncher/,
   'the workbook service must implement native Excel and VBE handoff',
+);
+const launchIndex = excelLauncher.indexOf(
+  'Start-Process -FilePath $excelPath',
+);
+const fastOpenIndex = excelLauncher.indexOf('if (-not $ShowVbe)');
+const pollingIndex = excelLauncher.indexOf(
+  'for ($attempt = 0; $attempt -lt 80',
+);
+assert.ok(
+  launchIndex >= 0 &&
+    fastOpenIndex > launchIndex &&
+    pollingIndex > fastOpenIndex,
+  'normal Excel opening must exit before the VBE-only COM polling loop',
+);
+assert.match(
+  excelLauncher,
+  /EXCEL_FAST_OPEN_REQUESTED\|/,
+  'the fast native Excel handoff needs an explicit success marker',
 );
 assert.match(
   workbookService,

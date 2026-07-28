@@ -32,7 +32,27 @@ assert.ok(
 const script = readFileSync(scriptPath, 'utf8');
 assert.match(script, /AutomationSecurity\s*=\s*3/);
 assert.match(script, /\[IO\.File\]::Replace/);
+assert.match(
+  script,
+  /\$backupHash\s*=\s*Get-Sha256\s+\$backupPath[\s\S]+?\$backupHash\s+-cne\s+\$originalHash/,
+  'designer commit must verify the displaced backup hash',
+);
+assert.match(
+  script,
+  /\$commitCompleted\s*=\s*\$true[\s\S]+?\$rollbackStagingPath[\s\S]+?\[IO\.File\]::Replace\([\s\S]+?\$rollbackStagingPath,[\s\S]+?\$workbookPath,[\s\S]+?\$failedReplacementPath[\s\S]+?ROLLBACK_OK/,
+  'designer must restore the original after any post-replacement failure',
+);
 assert.match(script, /designerStreamsSha256/);
+assert.match(
+  script,
+  /function Assert-MacroProcedureExists[\s\S]+?Public macro procedure[\s\S]+?Assert-MacroProcedureExists \$components \$macroName/,
+  'worksheet buttons must target an existing public standard-module macro',
+);
+assert.match(
+  script,
+  /\$expectedButtons\s*=\s*\[System\.Collections\.Generic\.List\[object\]\]::new\(\)[\s\S]+?expectedButton\.sheetName/,
+  'button verification must preserve worksheet names containing dots',
+);
 assert.match(script, /OWNED_EXCEL_PID\|/);
 assert.match(script, /requestSize\s+-gt\s+1MB/);
 assert.doesNotMatch(script, /\.Run\s*\(/i, 'designer must never run a macro');

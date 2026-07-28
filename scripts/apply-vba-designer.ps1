@@ -94,6 +94,57 @@ function Assert-IsValidMacroName {
     foreach ($p in $parts) { Assert-IsValidIdentifier $p }
 }
 
+function Assert-MacroProcedureExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Components,
+
+        [Parameter(Mandatory = $true)]
+        [string]$MacroName
+    )
+
+    $parts = $MacroName.Split('.')
+    $requestedModule = if ($parts.Length -eq 2) { $parts[0] } else { $null }
+    $requestedProcedure = $parts[$parts.Length - 1]
+    $procedurePattern = "(?im)^\s*(?:Public\s+)?(?:Static\s+)?Sub\s+" +
+        [Regex]::Escape($requestedProcedure) +
+        "\s*(?:\(\s*\))?\s*(?:'.*)?$"
+
+    for ($index = 1; $index -le $Components.Count; $index++) {
+        $component = $null
+        $codeModule = $null
+        try {
+            $component = $Components.Item($index)
+            if ($component.Type -ne 1) {
+                continue
+            }
+            if (
+                $requestedModule -and
+                -not [StringComparer]::OrdinalIgnoreCase.Equals(
+                    [string]$component.Name,
+                    $requestedModule
+                )
+            ) {
+                continue
+            }
+            $codeModule = $component.CodeModule
+            $lineCount = [int]$codeModule.CountOfLines
+            if ($lineCount -le 0) {
+                continue
+            }
+            $source = [string]$codeModule.Lines(1, $lineCount)
+            if ($source -match $procedurePattern) {
+                return
+            }
+        } finally {
+            Release-ComObject $codeModule
+            Release-ComObject $component
+        }
+    }
+
+    throw "Public macro procedure '$MacroName' was not found in a standard module"
+}
+
 function Assert-NoNulString {
     param([string]$Value)
     if ($Value -and $Value.Contains("`0")) { throw "String contains NUL character" }
@@ -472,9 +523,13 @@ $operationError = $null
 $createdForms = [System.Collections.Generic.List[string]]::new()
 $createdControls = [System.Collections.Generic.List[string]]::new()
 $createdButtons = [System.Collections.Generic.List[string]]::new()
+$backupPath = $null
+$commitCompleted = $false
+$rollbackCompleted = $false
+$rollbackError = $null
 
-# For verification we need to store expected button properties
-$expectedButtonProps = @{}  # key $sheetName.$name -> @{caption= ; onAction= }
+# Keep structured verification data because worksheet names may contain dots.
+$expectedButtons = [System.Collections.Generic.List[object]]::new()
 
 try {
     # First Excel instance for modifications
@@ -703,6 +758,8 @@ try {
                 $width = [double]$op.width
                 $height = [double]$op.height
 
+                Assert-MacroProcedureExists $components $macroName
+
                 $ws = $null; $btns = $null; $btn = $null
                 try {
                     $ws = $wbStaging.Worksheets.Item($sheetName)
@@ -715,8 +772,12 @@ try {
                     $originalWorkbookName = [IO.Path]::GetFileNameWithoutExtension($workbookPath) + '.xlsm'
                     $btn.OnAction = "'$originalWorkbookName'!$macroName"
                     $createdButtons.Add("$sheetName.$name")
-                    # Store expected properties for verification
-                    $expectedButtonProps["$sheetName.$name"] = @{ caption = $caption; onAction = $btn.OnAction }
+                    $expectedButtons.Add([pscustomobject]@{
+                        sheetName = $sheetName
+                        name = $name
+                        caption = $caption
+                        onAction = [string]$btn.OnAction
+                    })
                 } finally {
                     Release-ComObject $btn
                     Release-ComObject $btns
@@ -794,9 +855,10 @@ try {
         }
 
         # Verify buttons
-        foreach ($btnKey in $createdButtons) {
-            $parts = $btnKey.Split('.')
-            $sheetName = $parts[0]; $btnName = $parts[1]
+        foreach ($expectedButton in $expectedButtons) {
+            $sheetName = [string]$expectedButton.sheetName
+            $btnName = [string]$expectedButton.name
+            $btnKey = "$sheetName.$btnName"
             $ws = $null; $btns = $null; $btn = $null
             try {
                 $ws = $wbVerify.Worksheets.Item($sheetName)
@@ -809,9 +871,8 @@ try {
                         $b = $btns.Item($j+1)
                         if ($b.Name -ieq $btnName) {
                             # Verify Caption and OnAction
-                            $expected = $expectedButtonProps[$btnKey]
-                            if ($b.Caption -cne $expected.caption) { throw "Button '$btnKey' caption mismatch" }
-                            if ($b.OnAction -cne $expected.onAction) { throw "Button '$btnKey' OnAction mismatch" }
+                            if ($b.Caption -cne $expectedButton.caption) { throw "Button '$btnKey' caption mismatch" }
+                            if ($b.OnAction -cne $expectedButton.onAction) { throw "Button '$btnKey' OnAction mismatch" }
                             $btnFound = $true; break
                         }
                     } finally { Release-ComObject $b }
@@ -908,9 +969,20 @@ try {
 
     # Commit: replace original with staging, using backup
     [IO.File]::Replace($stagingPath, $workbookPath, $backupPath)
+    $commitCompleted = $true
 
-    # Compute final hash of original (now replaced)
+    # Verify both sides of the atomic replacement before reporting success.
+    if (-not (Test-Path -LiteralPath $backupPath)) {
+        throw "Atomic replacement did not create the recovery backup"
+    }
+    $backupHash = Get-Sha256 $backupPath
+    if ($backupHash -cne $originalHash) {
+        throw "Atomic replacement backup does not match the original workbook"
+    }
     $finalHash = Get-Sha256 $workbookPath
+    if ($finalHash -cne $postInspect.workbookSha256) {
+        throw "Committed workbook hash does not match the verified staging workbook"
+    }
 
     # Build success output
     $result = [ordered]@{
@@ -962,6 +1034,47 @@ try {
         try { Stop-Process -Id $excel2Pid -Force -ErrorAction SilentlyContinue } catch { }
     }
 
+    # A failure after File.Replace must restore the verified displaced original.
+    # Keep the persistent backup intact by replacing from a same-directory copy.
+    if ($null -ne $operationError -and $commitCompleted) {
+        $rollbackGuid = Get-GuidString
+        $rollbackStagingPath = [IO.Path]::Combine(
+            $workbookDir,
+            "rollback_$rollbackGuid.xlsm"
+        )
+        $failedReplacementPath = [IO.Path]::Combine(
+            $backupDir,
+            "failed_$rollbackGuid.xlsm"
+        )
+        try {
+            if (-not $backupPath -or -not (Test-Path -LiteralPath $backupPath)) {
+                throw "Recovery backup is unavailable after commit failure"
+            }
+            if ((Get-Sha256 $backupPath) -cne $originalHash) {
+                throw "Recovery backup hash changed after commit failure"
+            }
+            Copy-Item -LiteralPath $backupPath -Destination $rollbackStagingPath
+            [IO.File]::Replace(
+                $rollbackStagingPath,
+                $workbookPath,
+                $failedReplacementPath
+            )
+            if ((Get-Sha256 $workbookPath) -cne $originalHash) {
+                throw "Restored workbook does not match the original hash"
+            }
+            $rollbackCompleted = $true
+            if (Test-Path -LiteralPath $failedReplacementPath) {
+                Remove-Item -LiteralPath $failedReplacementPath -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+            $rollbackError = $_
+        } finally {
+            if (Test-Path -LiteralPath $rollbackStagingPath) {
+                Remove-Item -LiteralPath $rollbackStagingPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     # Cleanup staging and backup on precommit failure
     if ($null -ne $operationError) {
         if (Test-Path -LiteralPath $stagingPath) { Remove-Item -LiteralPath $stagingPath -Force -ErrorAction SilentlyContinue }
@@ -972,6 +1085,11 @@ try {
 if ($null -ne $operationError) {
     $errMsg = $operationError.Exception.Message
     $stackTrace = $operationError.ScriptStackTrace
+    if ($null -ne $rollbackError) {
+        $errMsg += "`nROLLBACK_FAILED: $($rollbackError.Exception.Message)`nRecovery backup: $backupPath"
+    } elseif ($rollbackCompleted) {
+        $errMsg += "`nROLLBACK_OK: the original workbook hash was restored."
+    }
     Write-Error "$errMsg`n$stackTrace" -ErrorAction Continue
     exit 1
 }

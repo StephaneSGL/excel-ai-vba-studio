@@ -4,32 +4,53 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.3.0] - 2026-07-28
+
+### Added
+
+- Added `#excelVbaDesignWorkbook` for creating complete UserForms with real designer/`.frx` streams, adding supported visual controls, and creating worksheet Form Control buttons with macro assignments in existing `.xlsm` workbooks.
+- Added an interactive UserForm preview for standard controls, with explicit native Excel/VBE handoff and no VBA execution inside VS Code.
+- Added native `.xlsm` persistence for explicit row heights, column widths, the five conditional-formatting presets exposed by the ribbon, and explicit worksheet-wide conditional-rule clearing.
+
+### Fixed
+
+- Kept fake `.frm` creation refused in the source-only writer and routed real UserForm creation through the separate verified VBA Designer transaction.
+- Refused worksheet-button creation unless its `OnAction` target is an existing public, zero-argument standard-module macro.
+- Preserved worksheet names containing dots during native button verification.
+- Made normal **Open in Excel** return immediately after the verified launch request; exact-window polling remains limited to native VBE handoff.
+
+### Security
+
+- The VBA Designer rejects stale, signed, protected, network, reparse-point, and oversized requests; uses same-directory staging; verifies native UserForm streams; preserves the displaced original; and never runs a macro or changes AccessVBOM.
+- A post-replacement failure restores the verified displaced workbook while retaining its persistent recovery backup.
+- Native formatting operations use a strict allowlist, reject arbitrary formulas and ambiguous resets, append rules without rebuilding existing ones, and retain the existing VBA/OOXML fingerprint and rollback transaction.
+
+### Tests
+
+- Added live Excel coverage for all 12 supported standard UserForm controls, new designer/`.frx` streams, controls on existing forms, verified worksheet-button macro assignment, exact backup hashes, native post-inspection, stale-write rollback, and absence of leaked Excel processes.
+- Extended live Excel coverage to row/column dimensions, all five supported conditional-rule families, full rule clearing, exact backups, button/opaque-part preservation, and absence of leaked Excel processes.
+
 ## [0.2.1] - 2026-07-27
 
 ### Added
 
 - Added first-write `.xlsx` to sibling `.xlsm` conversion for standard modules and classes through `#excelVbaWriteModule`.
 - Returned the exact `targetWorkbookPath` so Copilot continues every subsequent write against the created macro-enabled workbook.
-- Added `#excelVbaDesignWorkbook` for creating complete UserForms with real designer/`.frx` streams, adding supported visual controls, and creating worksheet Form Control buttons with macro assignments in existing `.xlsm` workbooks.
-- Added native `.xlsm` persistence for explicit row heights, column widths, the five conditional-formatting presets exposed by the ribbon, and explicit worksheet-wide conditional-rule clearing.
 
 ### Fixed
 
 - Prevented Copilot from presenting exported `.bas` or `.frm` working-copy files as successful workbook modifications.
-- Kept fake `.frm` creation refused in the source-only writer and routed real UserForm creation through the separate verified VBA Designer transaction.
+- Replaced the misleading dynamic-UserForm fallback with an explicit refusal: a real new UserForm still requires the native VBE designer and `.frx`.
+- Corrected stale English and French warnings so only legacy `.xls`, not editable `.xlsm`, is described as read-only.
 
 ### Security
 
 - Refused every write path containing the exact `.excel-ai-vba-backups` component.
 - The conversion keeps the `.xlsx` source unchanged, disables macros/events/links, owns and releases the exact hidden Excel process, never changes AccessVBOM, and verifies the persisted `xl/vbaProject.bin`.
-- The VBA Designer rejects stale, signed, protected, network, reparse-point, and oversized requests; uses same-directory staging; verifies native UserForm streams; preserves the displaced original; and never runs a macro or changes AccessVBOM.
-- Native formatting operations use a strict allowlist, reject arbitrary formulas and ambiguous resets, append rules without rebuilding existing ones, and retain the existing VBA/OOXML fingerprint and rollback transaction.
 
 ### Tests
 
 - Added live Excel coverage for `.bas` and `.cls` persistence, unchanged `.xlsx` hashes, backup-path rejection, and absence of leaked Excel processes.
-- Added live Excel coverage for new UserForm designer/`.frx` streams, controls on new and existing forms, worksheet button assignment, exact backup hashes, native post-inspection, stale-write rollback, and absence of leaked Excel processes.
-- Extended live Excel coverage to row/column dimensions, all five supported conditional-rule families, full rule clearing, exact backups, button/opaque-part preservation, and absence of leaked Excel processes.
 
 ## [0.2.0] - 2026-07-26
 

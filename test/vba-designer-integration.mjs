@@ -173,6 +173,110 @@ try {
   const workbookPath = join(temporaryDirectory, 'designer-success.xlsm');
   copyFileSync(fixture, workbookPath);
   const originalHash = sha256File(workbookPath);
+  const generatedControls = [
+    {
+      type: 'label',
+      name: 'lblTitle',
+      caption: 'Generated safely',
+      left: 18,
+      top: 16,
+      width: 180,
+      height: 20,
+    },
+    {
+      type: 'textBox',
+      name: 'txtValue',
+      left: 18,
+      top: 48,
+      width: 130,
+      height: 22,
+    },
+    {
+      type: 'commandButton',
+      name: 'cmdClose',
+      caption: 'Close',
+      left: 164,
+      top: 46,
+      width: 90,
+      height: 28,
+    },
+    {
+      type: 'comboBox',
+      name: 'cboChoice',
+      left: 18,
+      top: 84,
+      width: 130,
+      height: 22,
+    },
+    {
+      type: 'listBox',
+      name: 'lstChoice',
+      left: 164,
+      top: 84,
+      width: 130,
+      height: 54,
+    },
+    {
+      type: 'checkBox',
+      name: 'chkEnabled',
+      caption: 'Enabled',
+      left: 18,
+      top: 122,
+      width: 100,
+      height: 20,
+    },
+    {
+      type: 'optionButton',
+      name: 'optMode',
+      caption: 'Mode',
+      left: 18,
+      top: 150,
+      width: 100,
+      height: 20,
+    },
+    {
+      type: 'toggleButton',
+      name: 'tglState',
+      caption: 'Toggle',
+      left: 164,
+      top: 150,
+      width: 90,
+      height: 26,
+    },
+    {
+      type: 'frame',
+      name: 'fraGroup',
+      caption: 'Group',
+      left: 18,
+      top: 188,
+      width: 130,
+      height: 70,
+    },
+    {
+      type: 'image',
+      name: 'imgPreview',
+      left: 164,
+      top: 188,
+      width: 70,
+      height: 60,
+    },
+    {
+      type: 'spinButton',
+      name: 'spnValue',
+      left: 18,
+      top: 276,
+      width: 20,
+      height: 48,
+    },
+    {
+      type: 'scrollBar',
+      name: 'scrValue',
+      left: 54,
+      top: 286,
+      width: 200,
+      height: 20,
+    },
+  ];
   const requestPath = join(temporaryDirectory, 'designer-success.json');
   writeFileSync(
     requestPath,
@@ -185,8 +289,8 @@ try {
           kind: 'createUserForm',
           name: 'frmGenerated',
           caption: 'Generated form',
-          width: 360,
-          height: 240,
+          width: 420,
+          height: 380,
           source: [
             'Option Explicit',
             '',
@@ -194,26 +298,7 @@ try {
             '    Unload Me',
             'End Sub',
           ].join('\r\n'),
-          controls: [
-            {
-              type: 'label',
-              name: 'lblTitle',
-              caption: 'Generated safely',
-              left: 18,
-              top: 16,
-              width: 180,
-              height: 20,
-            },
-            {
-              type: 'commandButton',
-              name: 'cmdClose',
-              caption: 'Close',
-              left: 110,
-              top: 150,
-              width: 90,
-              height: 28,
-            },
-          ],
+          controls: generatedControls,
         },
         {
           kind: 'addUserFormControl',
@@ -232,7 +317,7 @@ try {
           sheetName: 'Data',
           name: 'btnGenerated',
           caption: 'Run generated',
-          macroName: 'mCode.Test',
+          macroName: 'mCode.ShowUserForm',
           left: 20,
           top: 20,
           width: 120,
@@ -254,8 +339,9 @@ try {
   assert.equal(output.changed, true);
   assert.deepEqual(output.createdUserForms, ['frmGenerated']);
   assert.deepEqual(output.addedControls, [
-    'frmGenerated.lblTitle',
-    'frmGenerated.cmdClose',
+    ...generatedControls.map(
+      control => `frmGenerated.${control.name}`,
+    ),
     'oUserForm.txtGenerated',
   ]);
   assert.deepEqual(output.createdButtons, ['Data.btnGenerated']);
@@ -322,9 +408,57 @@ try {
     'failed transaction changed the workbook',
   );
 
+  const missingMacroWorkbookPath = join(
+    temporaryDirectory,
+    'designer-missing-macro.xlsm',
+  );
+  copyFileSync(fixture, missingMacroWorkbookPath);
+  const missingMacroHash = sha256File(missingMacroWorkbookPath);
+  const missingMacroRequestPath = join(
+    temporaryDirectory,
+    'designer-missing-macro.json',
+  );
+  writeFileSync(
+    missingMacroRequestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      workbookPath: missingMacroWorkbookPath,
+      expectedWorkbookSha256: missingMacroHash,
+      operations: [
+        {
+          kind: 'createWorksheetButton',
+          sheetName: 'Data',
+          name: 'btnMissingMacro',
+          caption: 'Must fail',
+          macroName: 'mCode.DoesNotExist',
+          left: 20,
+          top: 20,
+          width: 120,
+          height: 28,
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const missingMacroResult = runDesigner(missingMacroRequestPath);
+  assert.notEqual(
+    missingMacroResult.status,
+    0,
+    'missing macro assignment must fail',
+  );
+  assert.match(
+    String(missingMacroResult.stderr),
+    /Public macro\s+procedure 'mCode\.DoesNotExist' was not found/,
+  );
+  assert.equal(
+    sha256File(missingMacroWorkbookPath),
+    missingMacroHash,
+    'missing macro validation changed the workbook',
+  );
+
   assertNoNewExcelProcess(excelBefore);
   console.log(
-    'VBA designer integration passed: UserForm/.frx, controls, worksheet button, backup, native verification and rollback.',
+    'VBA designer integration passed: 12 standard controls, UserForm/.frx, verified worksheet button macro, backup, native verification and rollback.',
   );
 } finally {
   let processError;
