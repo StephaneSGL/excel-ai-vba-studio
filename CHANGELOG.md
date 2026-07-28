@@ -4,6 +4,18 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.5.1] - 2026-07-28
+
+### Fixed
+
+- Fixed `createWorksheetButton` and `assignWorksheetButtonMacro` verification when Excel normalizes workbook or VBA identifier casing in `OnAction`. Verification still requires the same workbook and macro target.
+- Kept machine-readable PowerShell export JSON in the output log instead of replacing the user-facing export progress message with the raw payload.
+- Removed the XLSX-to-XLSM bootstrap dependency on PowerShell module autoloading by using a self-contained SHA-256 implementation.
+
+### Tests
+
+- Added live Excel coverage using a deliberately case-varied qualified macro name and static guards against case-sensitive `OnAction` verification.
+
 ## [0.5.0] - 2026-07-28
 
 ### Added

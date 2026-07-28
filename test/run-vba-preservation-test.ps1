@@ -24,6 +24,22 @@ function Get-EntryHash {
     }
 }
 
+function Get-Sha256 {
+    param([string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString(
+            $sha256.ComputeHash($stream)
+        ).Replace('-', '').ToLowerInvariant())
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Get-WorkbookEvidence {
     param(
         [string]$Path,
@@ -129,9 +145,7 @@ $backupPath = $null
 try {
     Copy-Item -LiteralPath $fixturePath -Destination $workingPath
     $before = Get-WorkbookEvidence $workingPath $beforeVbaPath
-    $expectedWorkbookSha256 = (
-        Get-FileHash -LiteralPath $workingPath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
+    $expectedWorkbookSha256 = Get-Sha256 $workingPath
 
     @{
         version = 2
@@ -171,8 +185,7 @@ try {
     if (
         $result.ok -ne $true -or
         -not (Test-Path -LiteralPath $backupPath -PathType Leaf) -or
-        (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).
-            Hash.ToLowerInvariant() -cne $expectedWorkbookSha256
+        (Get-Sha256 $backupPath) -cne $expectedWorkbookSha256
     ) {
         throw "Native bridge returned an invalid persistent backup: $resultLine"
     }

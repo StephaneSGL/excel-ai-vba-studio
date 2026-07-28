@@ -198,6 +198,7 @@ This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and 
 
 | Version | Summary |
 | --- | --- |
+| `0.5.1` | Fixes worksheet button verification after Excel normalizes `OnAction` casing and keeps raw export JSON out of progress notifications. |
 | `0.5.0` | Adds the visual UserForm canvas, native form/control inventory, control positioning and property updates, plus bounded complex VBA event assignment for Copilot and the visual editor. |
 | `0.4.0` | Adds the worksheet Controls view, static button-to-macro-to-UserForm graph, Form Control reassignment, permitted ActiveX creation/binding, and a separate VS Code Developer window. It also fixes false `.xlsm` `worksheet-features` save refusals caused by grid hydration. |
 | `0.3.0` | Introduced real UserForm designer/`.frx` creation, 12 standard controls, worksheet Form Control creation, and broader native formatting edits. These operations are transactional and verified against a live Excel copy. |

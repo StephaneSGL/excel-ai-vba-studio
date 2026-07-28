@@ -13,13 +13,28 @@ function Release-ComObject {
     }
 }
 
+function Get-Sha256 {
+    param([string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString(
+            $sha256.ComputeHash($stream)
+        ).Replace('-', '').ToLowerInvariant())
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Invoke-NativeEdit {
     param(
         [string]$TargetPath,
         [object[]]$Operations
     )
-    $expectedHash = (Get-FileHash -LiteralPath $TargetPath -Algorithm SHA256).
-        Hash.ToLowerInvariant()
+    $expectedHash = Get-Sha256 $TargetPath
     $transactionId = [Guid]::NewGuid().ToString('D')
     $payloadPath = Join-Path ([IO.Path]::GetTempPath()) (
         'excel-native-test-' + [Guid]::NewGuid().ToString('N') + '.json'
@@ -475,8 +490,7 @@ try {
     )
     [void]$backupPaths.Add([string]$firstResult.backupPath)
 
-    $hashBeforeSecondEdit = (Get-FileHash -LiteralPath $workingPath -Algorithm SHA256).
-        Hash.ToLowerInvariant()
+    $hashBeforeSecondEdit = Get-Sha256 $workingPath
     $secondResult = Invoke-NativeEdit $workingPath @(
         @{
             sheetName = 'Donnees'
@@ -581,8 +595,7 @@ try {
             Count -eq 0
     )
 
-    $hashBeforeClear = (Get-FileHash -LiteralPath $workingPath -Algorithm SHA256).
-        Hash.ToLowerInvariant()
+    $hashBeforeClear = Get-Sha256 $workingPath
     $thirdResult = Invoke-NativeEdit $workingPath @(
         @{
             kind = 'clearConditionalFormatting'
@@ -628,12 +641,10 @@ try {
         ).Count -eq 3
     )
     Test-Condition 'Second backup matches pre-edit workbook' (
-        (Get-FileHash -LiteralPath $secondResult.backupPath -Algorithm SHA256).
-            Hash.ToLowerInvariant() -ceq $hashBeforeSecondEdit
+        (Get-Sha256 $secondResult.backupPath) -ceq $hashBeforeSecondEdit
     )
     Test-Condition 'Clear backup matches pre-clear workbook' (
-        (Get-FileHash -LiteralPath $thirdResult.backupPath -Algorithm SHA256).
-            Hash.ToLowerInvariant() -ceq $hashBeforeClear
+        (Get-Sha256 $thirdResult.backupPath) -ceq $hashBeforeClear
     )
 }
 finally {

@@ -1290,7 +1290,6 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		paths: ExportPaths,
 		settings: ExcelAiSettings,
 		includeVba: boolean,
-		progress: vscode.Progress<{ message?: string }>,
 		cancellationToken: vscode.CancellationToken
 	): Promise<void> {
 		const { exportsRoot } = await this.ensureStorage();
@@ -1325,7 +1324,6 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			],
 			paths.outputDirectory,
 			{
-				progress,
 				cancellationToken,
 				timeoutMs: EXPORT_TIMEOUT_MS,
 				cleanupOwnedExcel: true
@@ -1447,7 +1445,6 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 								paths,
 								settings,
 								includeVba,
-								progress,
 								linkedCancellation.token
 							);
 						} finally {

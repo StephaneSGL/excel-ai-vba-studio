@@ -128,6 +128,25 @@ function Release-ComObject {
     }
 }
 
+function Get-Sha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString(
+            $sha256.ComputeHash($stream)
+        ).Replace('-', '').ToLowerInvariant())
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Remove-CreatedTarget {
     param(
         [string]$TargetPath,
@@ -291,9 +310,7 @@ Assert-NoReparsePointChain $stagingPath | Out-Null
 if (Test-Path -LiteralPath $stagingPath) {
     throw "Le fichier temporaire existe deja : $stagingPath"
 }
-$sourceSha256Before = (
-    Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256
-).Hash.ToLowerInvariant()
+$sourceSha256Before = Get-Sha256 $sourcePath
 
 $excel = $null
 $workbooks = $null
@@ -362,7 +379,7 @@ try {
         $component.Name -cne $moduleName -or
         [int]$codeModule.CountOfLines -le 0
     ) {
-        throw 'Excel n’a pas confirme le composant VBA ajoute.'
+        throw "Excel n'a pas confirme le composant VBA ajoute."
     }
     $workbook.Save()
 }
@@ -422,7 +439,7 @@ $verificationError = $null
 try {
     Assert-NoReparsePointChain $stagingPath | Out-Null
     if (-not (Test-Path -LiteralPath $stagingPath -PathType Leaf)) {
-        throw 'Excel n’a pas cree le classeur XLSM attendu.'
+        throw "Excel n'a pas cree le classeur XLSM attendu."
     }
     $archive = [IO.Compression.ZipFile]::OpenRead($stagingPath)
     try {
@@ -434,9 +451,7 @@ try {
     finally {
         $archive.Dispose()
     }
-    $sourceSha256After = (
-        Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
+    $sourceSha256After = Get-Sha256 $sourcePath
     if ($sourceSha256After -cne $sourceSha256Before) {
         throw 'Le classeur XLSX source a change pendant la conversion.'
     }
@@ -466,9 +481,7 @@ if ($null -ne $verificationError) {
     exit 1
 }
 
-$workbookSha256 = (
-    Get-FileHash -LiteralPath $targetPath -Algorithm SHA256
-).Hash.ToLowerInvariant()
+$workbookSha256 = Get-Sha256 $targetPath
 [ordered]@{
     ok = $true
     targetWorkbookPath = [IO.Path]::GetFullPath($targetPath)

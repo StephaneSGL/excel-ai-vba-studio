@@ -94,6 +94,76 @@ function Assert-IsValidMacroName {
     foreach ($p in $parts) { Assert-IsValidIdentifier $p }
 }
 
+function ConvertTo-WorksheetButtonOnActionIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OnAction
+    )
+
+    $value = $OnAction.Trim()
+    $separator = $value.LastIndexOf('!')
+    if ($separator -le 0 -or $separator -ge ($value.Length - 1)) {
+        throw "Invalid worksheet button OnAction: '$OnAction'"
+    }
+
+    $workbookTarget = $value.Substring(0, $separator).Trim()
+    if (
+        $workbookTarget.Length -ge 2 -and
+        $workbookTarget[0] -eq [char]39 -and
+        $workbookTarget[$workbookTarget.Length - 1] -eq [char]39
+    ) {
+        $workbookTarget = $workbookTarget.Substring(
+            1,
+            $workbookTarget.Length - 2
+        ).Replace("''", "'")
+    }
+
+    $bracketedWorkbook = [regex]::Matches(
+        $workbookTarget,
+        '\[(?<name>[^\[\]]+)\]'
+    )
+    $workbookName = if ($bracketedWorkbook.Count -gt 0) {
+        $bracketedWorkbook[$bracketedWorkbook.Count - 1].Groups['name'].Value
+    } else {
+        [IO.Path]::GetFileName($workbookTarget)
+    }
+    $macroName = $value.Substring($separator + 1).Trim()
+    if (
+        [string]::IsNullOrWhiteSpace($workbookName) -or
+        [string]::IsNullOrWhiteSpace($macroName)
+    ) {
+        throw "Invalid worksheet button OnAction: '$OnAction'"
+    }
+
+    return [pscustomobject]@{
+        workbookName = $workbookName
+        macroName = $macroName
+    }
+}
+
+function Test-WorksheetButtonOnActionEquivalent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Actual,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Expected
+    )
+
+    $actualIdentity = ConvertTo-WorksheetButtonOnActionIdentity $Actual
+    $expectedIdentity = ConvertTo-WorksheetButtonOnActionIdentity $Expected
+    return (
+        [StringComparer]::OrdinalIgnoreCase.Equals(
+            [string]$actualIdentity.workbookName,
+            [string]$expectedIdentity.workbookName
+        ) -and
+        [StringComparer]::OrdinalIgnoreCase.Equals(
+            [string]$actualIdentity.macroName,
+            [string]$expectedIdentity.macroName
+        )
+    )
+}
+
 function Assert-MacroProcedureExists {
     param(
         [Parameter(Mandatory = $true)]
@@ -1493,7 +1563,13 @@ End Sub
                         if ($b.Name -ieq $btnName) {
                             # Verify Caption and OnAction
                             if ($null -ne $expectedButton.caption -and $b.Caption -cne $expectedButton.caption) { throw "Button '$btnKey' caption mismatch" }
-                            if ($b.OnAction -cne $expectedButton.onAction) { throw "Button '$btnKey' OnAction mismatch" }
+                            if (
+                                -not (Test-WorksheetButtonOnActionEquivalent `
+                                    ([string]$b.OnAction) `
+                                    ([string]$expectedButton.onAction))
+                            ) {
+                                throw "Button '$btnKey' OnAction mismatch"
+                            }
                             $btnFound = $true; break
                         }
                     } finally { Release-ComObject $b }

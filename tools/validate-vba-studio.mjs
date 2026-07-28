@@ -30,6 +30,19 @@ const interactionGraph = readFileSync(
 const manifest = JSON.parse(
   readFileSync(resolve(root, 'package.json'), 'utf8'),
 );
+const runExporterStart = workbookService.indexOf('private async runExporter(');
+const runExporterEnd = workbookService.indexOf(
+  '\n\tprivate async validateContextOutputs(',
+  runExporterStart,
+);
+assert.ok(
+  runExporterStart >= 0 && runExporterEnd > runExporterStart,
+  'runExporter method is missing',
+);
+const runExporterSource = workbookService.slice(
+  runExporterStart,
+  runExporterEnd,
+);
 
 const htmlMarker = 'return `<!doctype html>';
 const htmlStart = panel.indexOf(htmlMarker);
@@ -154,6 +167,16 @@ assert.match(
 assert.match(workbookService, /DEVELOPER_MARKER_NAME/);
 assert.match(workbookService, /pathIsInside\(workspaceDirectory,\s*exportsRoot\)/);
 assert.match(workbookService, /workbookSha256/);
+assert.doesNotMatch(
+  runExporterSource,
+  /\bprogress\b/,
+  'exporter machine stdout must not replace the human progress notification with raw JSON',
+);
+assert.match(
+  workbookService,
+  /progress\.report\(\{[\s\S]+?Lecture des données et du projet VBA autorisé/,
+  'export must keep a human-readable progress message',
+);
 assert.ok(
   manifest.activationEvents.includes(
     'workspaceContains:.excel-ai-vba-studio-project.json',

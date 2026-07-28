@@ -32,6 +32,7 @@ for (const [pattern, message] of [
   [/\.VBComponents/, 'VBComponent insertion is missing'],
   [/xl\/vbaProject\.bin/, 'persisted VBA package verification is missing'],
   [/sourceSha256Before/, 'source-preservation hash gate is missing'],
+  [/function Get-Sha256[\s\S]+?SHA256\]::Create/, 'self-contained SHA-256 implementation is missing'],
   [/\[IO\.File\]::Move\(\$stagingPath,\s*\$targetPath\)/, 'non-overwriting atomic target commit is missing'],
   [/FinalReleaseComObject/, 'deterministic COM release is missing'],
 ]) {
@@ -42,6 +43,11 @@ assert.doesNotMatch(
   script,
   /Set-ItemProperty|New-ItemProperty|reg\.exe|ExecuteExcel4Macro|\.Run\(/i,
   'bootstrap must not edit registry settings or execute macros',
+);
+assert.doesNotMatch(
+  script,
+  /Get-FileHash/,
+  'bootstrap must not depend on PowerShell module autoloading for SHA-256',
 );
 assert.match(
   security,

@@ -406,7 +406,7 @@ try {
           sheetName: 'Data',
           name: 'btnGenerated',
           caption: 'Run generated',
-          macroName: 'mCode.ShowUserForm',
+          macroName: 'mcode.showuserform',
           left: 20,
           top: 20,
           width: 120,
