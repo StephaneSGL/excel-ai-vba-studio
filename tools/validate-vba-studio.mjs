@@ -19,6 +19,10 @@ const writeback = readFileSync(
   resolve(root, 'src/excelAiVbaStudio/vbaWritebackService.ts'),
   'utf8',
 );
+const userFormPreview = readFileSync(
+  resolve(root, 'src/excelAiVbaStudio/userFormPreview.ts'),
+  'utf8',
+);
 
 assert.doesNotMatch(
   workbookService,
@@ -55,6 +59,45 @@ assert.match(panel, /MAX_SOURCE_CHARACTERS/, 'VBA source writes must remain boun
 assert.match(writeback, /expectedWorkbookSha256/, 'write-back must reject stale workbook baselines');
 assert.match(writeback, /excel-ai-vba-writeback\.exe/, 'the bundled binary write-back helper is missing');
 assert.match(writeback, /designerSha256/, 'UserForm designer changes must be detected');
+assert.match(
+  userFormPreview,
+  /Content-Security-Policy[\s\S]+?script-src 'nonce-\$\{nonce\}'/,
+  'interactive UserForm preview must keep a nonce-scoped CSP',
+);
+assert.match(
+  userFormPreview,
+  /enableScripts:\s*true[\s\S]+?localResourceRoots:\s*\[\]/,
+  'interactive UserForm preview must deny local-resource access',
+);
+assert.match(
+  userFormPreview,
+  /Aucun code VBA exécuté/,
+  'interactive preview must state that it never executes VBA',
+);
+for (const controlType of [
+  'type="text"',
+  'type="checkbox"',
+  'type="radio"',
+  'type="number"',
+  'type="range"',
+  '<select',
+  '<fieldset',
+]) {
+  assert.ok(
+    userFormPreview.includes(controlType),
+    `interactive UserForm preview is missing ${controlType}`,
+  );
+}
+assert.match(
+  userFormPreview,
+  /openExcel[\s\S]+?excelAiVbaStudio\.openExcel[\s\S]+?openVbe[\s\S]+?excelAiVbaStudio\.openVbe/,
+  'UserForm preview must hand real event testing to native Excel/VBE',
+);
+assert.match(
+  workbookService,
+  /showUserFormPreview\([\s\S]+?context\.workbookUri/,
+  'UserForm preview must receive the exact source workbook',
+);
 assert.match(
   exporter,
   /previous exporter manifest[\s\S]+?managedNames/,

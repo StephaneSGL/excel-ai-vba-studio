@@ -27,6 +27,7 @@ export interface NativeExcelStylePatch {
 }
 
 export interface NativeExcelCellEdit {
+    kind?: 'cell';
     sheetName: string;
     row: number;
     column: number;
@@ -34,11 +35,74 @@ export interface NativeExcelCellEdit {
     style?: NativeExcelStylePatch;
 }
 
+export interface NativeExcelColumnWidthEdit {
+    kind: 'columnWidth';
+    sheetName: string;
+    column: number;
+    widthPx: number;
+}
+
+export interface NativeExcelRowHeightEdit {
+    kind: 'rowHeight';
+    sheetName: string;
+    row: number;
+    heightPx: number;
+}
+
+export type NativeExcelConditionalFormattingRule =
+    | {
+        type: 'cellIs';
+        operator: 'greaterThan' | 'lessThan' | 'equal';
+        operand: string | number;
+        fillColor: string;
+        fontColor: string;
+        bold: boolean;
+    }
+    | {
+        type: 'containsText';
+        text: string;
+        fillColor: string;
+        fontColor: string;
+        bold: boolean;
+    }
+    | {
+        type: 'colorScale';
+        colors: [string, string, string];
+    }
+    | {
+        type: 'dataBar';
+        color: string;
+    }
+    | {
+        type: 'iconSet';
+        iconSet: '3TrafficLights1';
+        thresholds: [33, 67];
+    };
+
+export interface NativeExcelAddConditionalFormattingEdit {
+    kind: 'addConditionalFormatting';
+    sheetName: string;
+    rangeRef: string;
+    rule: NativeExcelConditionalFormattingRule;
+}
+
+export interface NativeExcelClearConditionalFormattingEdit {
+    kind: 'clearConditionalFormatting';
+    sheetName: string;
+}
+
+export type NativeExcelEditOperation =
+    | NativeExcelCellEdit
+    | NativeExcelColumnWidthEdit
+    | NativeExcelRowHeightEdit
+    | NativeExcelAddConditionalFormattingEdit
+    | NativeExcelClearConditionalFormattingEdit;
+
 export interface NativeExcelEditPayload {
     version: 2;
     transactionId: string;
     expectedWorkbookSha256: string;
-    operations: NativeExcelCellEdit[];
+    operations: NativeExcelEditOperation[];
 }
 
 export interface NativeExcelEditResult {

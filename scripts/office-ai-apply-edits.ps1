@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $MaxOperations = 10000
+$MaxConditionalFormattingAddsPerSheet = 64
 $MaxPayloadBytes = 4MB
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -726,12 +727,17 @@ function Apply-CellOperation {
         [object]$Operation
     )
 
-    $sheetName = [string](Get-RequiredProperty $Operation 'sheetName')
-    $row = [int](Get-RequiredProperty $Operation 'row')
-    $column = [int](Get-RequiredProperty $Operation 'column')
-    if ($row -lt 1 -or $row -gt 1048576 -or $column -lt 1 -or $column -gt 16384) {
-        throw "Cell target outside Excel limits: $sheetName!R${row}C${column}"
-    }
+    $sheetName = Get-OperationSheetName $Operation
+    $row = Get-NativeInteger `
+        (Get-RequiredProperty $Operation 'row') `
+        'Native cell row' `
+        1 `
+        1048576
+    $column = Get-NativeInteger `
+        (Get-RequiredProperty $Operation 'column') `
+        'Native cell column' `
+        1 `
+        16384
 
     $worksheet = $null
     $cell = $null
@@ -885,6 +891,535 @@ function Apply-CellOperation {
     }
 }
 
+function Assert-AllowedProperties {
+    param(
+        [object]$Value,
+        [string[]]$Allowed,
+        [string]$Label
+    )
+    foreach ($property in $Value.PSObject.Properties) {
+        if ($Allowed -notcontains $property.Name) {
+            throw "$Label contains an unknown property: $($property.Name)"
+        }
+    }
+}
+
+function Get-OperationSheetName {
+    param([object]$Operation)
+
+    $value = Get-RequiredProperty $Operation 'sheetName'
+    if (
+        $value -isnot [string] -or
+        [string]::IsNullOrWhiteSpace([string]$value) -or
+        ([string]$value).Length -gt 31
+    ) {
+        throw 'Native edit operation contains an invalid worksheet name.'
+    }
+    return [string]$value
+}
+
+function Assert-NativeColor {
+    param(
+        [AllowNull()][object]$Value,
+        [string]$Label
+    )
+    if ($Value -isnot [string] -or [string]$Value -cnotmatch '^#[0-9a-f]{6}$') {
+        throw "$Label must be a lowercase #rrggbb color."
+    }
+}
+
+function Assert-NativeShortText {
+    param(
+        [AllowNull()][object]$Value,
+        [string]$Label
+    )
+    if (
+        $Value -isnot [string] -or
+        [string]::IsNullOrEmpty([string]$Value) -or
+        ([string]$Value).Length -gt 255 -or
+        ([string]$Value).Contains([char]0)
+    ) {
+        throw "$Label must contain 1-255 characters without NUL."
+    }
+}
+
+function Test-NativeNumber {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return $false
+    }
+    $typeCode = [Type]::GetTypeCode($Value.GetType())
+    return @(
+        [TypeCode]::Byte,
+        [TypeCode]::Decimal,
+        [TypeCode]::Double,
+        [TypeCode]::Int16,
+        [TypeCode]::Int32,
+        [TypeCode]::Int64,
+        [TypeCode]::SByte,
+        [TypeCode]::Single,
+        [TypeCode]::UInt16,
+        [TypeCode]::UInt32,
+        [TypeCode]::UInt64
+    ) -contains $typeCode
+}
+
+function Get-NativeInteger {
+    param(
+        [AllowNull()][object]$Value,
+        [string]$Label,
+        [int]$Minimum,
+        [int]$Maximum
+    )
+
+    if (-not (Test-NativeNumber $Value)) {
+        throw "$Label must be an integer."
+    }
+    $number = [double]$Value
+    if (
+        [double]::IsNaN($number) -or
+        [double]::IsInfinity($number) -or
+        [Math]::Truncate($number) -ne $number -or
+        $number -lt $Minimum -or
+        $number -gt $Maximum
+    ) {
+        throw "$Label is outside Excel limits."
+    }
+    return [int]$number
+}
+
+function Convert-ExcelColumnLettersToNumber {
+    param([string]$Letters)
+
+    $number = 0
+    foreach ($character in $Letters.ToCharArray()) {
+        $number = ($number * 26) + ([int]$character - [int][char]'A') + 1
+    }
+    return $number
+}
+
+function Get-NormalizedRangeRef {
+    param([AllowNull()][object]$Value)
+
+    if ($Value -isnot [string]) {
+        throw 'Native conditional-formatting range is invalid.'
+    }
+    $normalized = ([string]$Value).ToUpperInvariant()
+    $match = [regex]::Match(
+        $normalized,
+        '^([A-Z]{1,3})([1-9][0-9]{0,6})(?::([A-Z]{1,3})([1-9][0-9]{0,6}))?$'
+    )
+    if (-not $match.Success) {
+        throw 'Native conditional-formatting range is invalid.'
+    }
+    $columns = @($match.Groups[1].Value)
+    $rows = @([int]$match.Groups[2].Value)
+    if ($match.Groups[3].Success) {
+        $columns += $match.Groups[3].Value
+        $rows += [int]$match.Groups[4].Value
+    }
+    foreach ($letters in $columns) {
+        if ((Convert-ExcelColumnLettersToNumber $letters) -gt 16384) {
+            throw 'Native conditional-formatting range exceeds Excel limits.'
+        }
+    }
+    foreach ($row in $rows) {
+        if ($row -gt 1048576) {
+            throw 'Native conditional-formatting range exceeds Excel limits.'
+        }
+    }
+    return $normalized
+}
+
+function Apply-ColumnWidthOperation {
+    param(
+        [object]$Workbook,
+        [object]$Operation
+    )
+
+    Assert-AllowedProperties `
+        $Operation `
+        @('kind', 'sheetName', 'column', 'widthPx') `
+        'Native column-width operation'
+    $sheetName = Get-OperationSheetName $Operation
+    $column = Get-NativeInteger `
+        (Get-RequiredProperty $Operation 'column') `
+        'Native column-width column' `
+        1 `
+        16384
+    $widthValue = Get-RequiredProperty $Operation 'widthPx'
+    if (-not (Test-NativeNumber $widthValue)) {
+        throw 'Native column width must be numeric.'
+    }
+    $widthPx = [double]$widthValue
+    if (
+        [double]::IsNaN($widthPx) -or
+        [double]::IsInfinity($widthPx) -or
+        $widthPx -le 5 -or
+        $widthPx -gt 1790
+    ) {
+        throw 'Native column-width operation is outside Excel limits.'
+    }
+
+    $worksheet = $null
+    $columns = $null
+    $targetColumn = $null
+    try {
+        $worksheet = $Workbook.Worksheets.Item($sheetName)
+        $columns = $worksheet.Columns
+        $targetColumn = $columns.Item($column)
+        $targetColumn.ColumnWidth = [Math]::Max(($widthPx - 5) / 7, 0)
+    }
+    finally {
+        Release-ComObject $targetColumn
+        Release-ComObject $columns
+        Release-ComObject $worksheet
+    }
+}
+
+function Apply-RowHeightOperation {
+    param(
+        [object]$Workbook,
+        [object]$Operation
+    )
+
+    Assert-AllowedProperties `
+        $Operation `
+        @('kind', 'sheetName', 'row', 'heightPx') `
+        'Native row-height operation'
+    $sheetName = Get-OperationSheetName $Operation
+    $row = Get-NativeInteger `
+        (Get-RequiredProperty $Operation 'row') `
+        'Native row-height row' `
+        1 `
+        1048576
+    $heightValue = Get-RequiredProperty $Operation 'heightPx'
+    if (-not (Test-NativeNumber $heightValue)) {
+        throw 'Native row height must be numeric.'
+    }
+    $heightPx = [double]$heightValue
+    if (
+        [double]::IsNaN($heightPx) -or
+        [double]::IsInfinity($heightPx) -or
+        $heightPx -le 0 -or
+        $heightPx -gt 546
+    ) {
+        throw 'Native row-height operation is outside Excel limits.'
+    }
+
+    $worksheet = $null
+    $rows = $null
+    $targetRow = $null
+    try {
+        $worksheet = $Workbook.Worksheets.Item($sheetName)
+        $rows = $worksheet.Rows
+        $targetRow = $rows.Item($row)
+        $targetRow.RowHeight = $heightPx * 72 / 96
+    }
+    finally {
+        Release-ComObject $targetRow
+        Release-ComObject $rows
+        Release-ComObject $worksheet
+    }
+}
+
+function Apply-ClearConditionalFormattingOperation {
+    param(
+        [object]$Workbook,
+        [object]$Operation
+    )
+
+    Assert-AllowedProperties `
+        $Operation `
+        @('kind', 'sheetName') `
+        'Native clear-conditional-formatting operation'
+    $sheetName = Get-OperationSheetName $Operation
+
+    $worksheet = $null
+    $cells = $null
+    $conditions = $null
+    try {
+        $worksheet = $Workbook.Worksheets.Item($sheetName)
+        $cells = $worksheet.Cells
+        $conditions = $cells.FormatConditions
+        $conditions.Delete()
+    }
+    finally {
+        Release-ComObject $conditions
+        Release-ComObject $cells
+        Release-ComObject $worksheet
+    }
+}
+
+function Apply-ConditionalFormattingOperation {
+    param(
+        [object]$Workbook,
+        [object]$Operation
+    )
+
+    Assert-AllowedProperties `
+        $Operation `
+        @('kind', 'sheetName', 'rangeRef', 'rule') `
+        'Native conditional-formatting operation'
+    $sheetName = Get-OperationSheetName $Operation
+    $rangeRef = Get-NormalizedRangeRef (
+        Get-RequiredProperty $Operation 'rangeRef'
+    )
+    $rule = Get-RequiredProperty $Operation 'rule'
+    $ruleType = [string](Get-RequiredProperty $rule 'type')
+
+    $worksheet = $null
+    $range = $null
+    $conditions = $null
+    $formatCondition = $null
+    $interior = $null
+    $font = $null
+    $criteria = $null
+    $criterion1 = $null
+    $criterion2 = $null
+    $criterion3 = $null
+    $formatColor1 = $null
+    $formatColor2 = $null
+    $formatColor3 = $null
+    $minPoint = $null
+    $maxPoint = $null
+    $barColor = $null
+    $iconSets = $null
+    $iconSet = $null
+    try {
+        $worksheet = $Workbook.Worksheets.Item($sheetName)
+        $range = $worksheet.Range($rangeRef)
+        $conditions = $range.FormatConditions
+
+        switch ($ruleType) {
+            'cellIs' {
+                Assert-AllowedProperties `
+                    $rule `
+                    @(
+                        'type',
+                        'operator',
+                        'operand',
+                        'fillColor',
+                        'fontColor',
+                        'bold'
+                    ) `
+                    'Native cellIs rule'
+                $operatorName = [string](
+                    Get-RequiredProperty $rule 'operator'
+                )
+                $operator = switch ($operatorName) {
+                    'equal' { 3 }
+                    'greaterThan' { 5 }
+                    'lessThan' { 6 }
+                    default { throw 'Native cellIs operator is invalid.' }
+                }
+                $operand = Get-RequiredProperty $rule 'operand'
+                if ($operand -is [string]) {
+                    Assert-NativeShortText $operand 'Native cellIs operand'
+                    if ([string]$operand -match '^=') {
+                        throw 'Native cellIs operand cannot be an Excel formula.'
+                    }
+                }
+                elseif (-not (Test-NativeNumber $operand)) {
+                    throw 'Native cellIs operand is invalid.'
+                }
+                elseif (
+                    [double]::IsNaN([double]$operand) -or
+                    [double]::IsInfinity([double]$operand)
+                ) {
+                    throw 'Native cellIs operand must be finite.'
+                }
+                Assert-NativeColor `
+                    (Get-RequiredProperty $rule 'fillColor') `
+                    'Native cellIs fill'
+                Assert-NativeColor `
+                    (Get-RequiredProperty $rule 'fontColor') `
+                    'Native cellIs font'
+                $bold = Get-RequiredProperty $rule 'bold'
+                if ($bold -isnot [bool] -or $bold -ne $true) {
+                    throw 'Native cellIs bold style is invalid.'
+                }
+                $formatCondition = $conditions.Add(1, $operator, $operand)
+                $interior = $formatCondition.Interior
+                $interior.Color = Convert-HexToOleColor ([string]$rule.fillColor)
+                $font = $formatCondition.Font
+                $font.Color = Convert-HexToOleColor ([string]$rule.fontColor)
+                $font.Bold = $true
+            }
+            'containsText' {
+                Assert-AllowedProperties `
+                    $rule `
+                    @('type', 'text', 'fillColor', 'fontColor', 'bold') `
+                    'Native containsText rule'
+                Assert-NativeShortText `
+                    (Get-RequiredProperty $rule 'text') `
+                    'Native containsText value'
+                Assert-NativeColor `
+                    (Get-RequiredProperty $rule 'fillColor') `
+                    'Native containsText fill'
+                Assert-NativeColor `
+                    (Get-RequiredProperty $rule 'fontColor') `
+                    'Native containsText font'
+                $bold = Get-RequiredProperty $rule 'bold'
+                if ($bold -isnot [bool] -or $bold -ne $true) {
+                    throw 'Native containsText bold style is invalid.'
+                }
+                $missing = [Type]::Missing
+                $formatCondition = $conditions.Add(
+                    9,
+                    $missing,
+                    $missing,
+                    $missing,
+                    [string]$rule.text,
+                    0,
+                    $missing,
+                    $missing
+                )
+                $interior = $formatCondition.Interior
+                $interior.Color = Convert-HexToOleColor ([string]$rule.fillColor)
+                $font = $formatCondition.Font
+                $font.Color = Convert-HexToOleColor ([string]$rule.fontColor)
+                $font.Bold = $true
+            }
+            'colorScale' {
+                Assert-AllowedProperties `
+                    $rule `
+                    @('type', 'colors') `
+                    'Native colorScale rule'
+                $colors = @(Get-RequiredProperty $rule 'colors')
+                if ($colors.Count -ne 3) {
+                    throw 'Native colorScale rule requires three colors.'
+                }
+                foreach ($color in $colors) {
+                    Assert-NativeColor $color 'Native colorScale color'
+                }
+                $formatCondition = $conditions.AddColorScale(3)
+                $criteria = $formatCondition.ColorScaleCriteria
+                $criterion1 = $criteria.Item(1)
+                $criterion2 = $criteria.Item(2)
+                $criterion3 = $criteria.Item(3)
+                $criterion1.Type = 1
+                $criterion2.Type = 5
+                $criterion2.Value = 50
+                $criterion3.Type = 2
+                $formatColor1 = $criterion1.FormatColor
+                $formatColor2 = $criterion2.FormatColor
+                $formatColor3 = $criterion3.FormatColor
+                $formatColor1.Color = Convert-HexToOleColor ([string]$colors[0])
+                $formatColor2.Color = Convert-HexToOleColor ([string]$colors[1])
+                $formatColor3.Color = Convert-HexToOleColor ([string]$colors[2])
+            }
+            'dataBar' {
+                Assert-AllowedProperties `
+                    $rule `
+                    @('type', 'color') `
+                    'Native dataBar rule'
+                Assert-NativeColor `
+                    (Get-RequiredProperty $rule 'color') `
+                    'Native dataBar color'
+                $formatCondition = $conditions.AddDatabar()
+                $minPoint = $formatCondition.MinPoint
+                $maxPoint = $formatCondition.MaxPoint
+                $minPoint.Modify(1)
+                $maxPoint.Modify(2)
+                $barColor = $formatCondition.BarColor
+                $barColor.Color = Convert-HexToOleColor ([string]$rule.color)
+            }
+            'iconSet' {
+                Assert-AllowedProperties `
+                    $rule `
+                    @('type', 'iconSet', 'thresholds') `
+                    'Native iconSet rule'
+                if ([string](Get-RequiredProperty $rule 'iconSet') -cne '3TrafficLights1') {
+                    throw 'Native iconSet name is invalid.'
+                }
+                $thresholds = @(Get-RequiredProperty $rule 'thresholds')
+                if (
+                    $thresholds.Count -ne 2 -or
+                    -not (Test-NativeNumber $thresholds[0]) -or
+                    -not (Test-NativeNumber $thresholds[1]) -or
+                    [double]$thresholds[0] -ne 33 -or
+                    [double]$thresholds[1] -ne 67
+                ) {
+                    throw 'Native iconSet thresholds must be 33 and 67.'
+                }
+                $formatCondition = $conditions.AddIconSetCondition()
+                $iconSets = $Workbook.IconSets
+                $iconSet = $iconSets.Item(4)
+                $formatCondition.IconSet = $iconSet
+                $criteria = $formatCondition.IconCriteria
+                $criterion2 = $criteria.Item(2)
+                $criterion3 = $criteria.Item(3)
+                $criterion2.Type = 3
+                $criterion2.Value = 33
+                $criterion2.Operator = 7
+                $criterion3.Type = 3
+                $criterion3.Value = 67
+                $criterion3.Operator = 7
+            }
+            default {
+                throw "Unsupported native conditional-formatting rule: $ruleType"
+            }
+        }
+        $formatCondition.SetLastPriority()
+    }
+    finally {
+        Release-ComObject $iconSet
+        Release-ComObject $iconSets
+        Release-ComObject $barColor
+        Release-ComObject $maxPoint
+        Release-ComObject $minPoint
+        Release-ComObject $formatColor3
+        Release-ComObject $formatColor2
+        Release-ComObject $formatColor1
+        Release-ComObject $criterion3
+        Release-ComObject $criterion2
+        Release-ComObject $criterion1
+        Release-ComObject $criteria
+        Release-ComObject $font
+        Release-ComObject $interior
+        Release-ComObject $formatCondition
+        Release-ComObject $conditions
+        Release-ComObject $range
+        Release-ComObject $worksheet
+    }
+}
+
+function Apply-NativeOperation {
+    param(
+        [object]$Workbook,
+        [object]$ExcelApplication,
+        [object]$Operation
+    )
+
+    $kind = if (Has-Property $Operation 'kind') {
+        [string]$Operation.kind
+    } else {
+        'cell'
+    }
+    switch ($kind) {
+        'cell' {
+            Apply-CellOperation $Workbook $ExcelApplication $Operation
+        }
+        'columnWidth' {
+            Apply-ColumnWidthOperation $Workbook $Operation
+        }
+        'rowHeight' {
+            Apply-RowHeightOperation $Workbook $Operation
+        }
+        'addConditionalFormatting' {
+            Apply-ConditionalFormattingOperation $Workbook $Operation
+        }
+        'clearConditionalFormatting' {
+            Apply-ClearConditionalFormattingOperation $Workbook $Operation
+        }
+        default {
+            throw "Unsupported native edit operation: $kind"
+        }
+    }
+}
+
 $workbookFullPath = Assert-LocalPath $WorkbookPath
 $operationsFullPath = Assert-LocalPath $OperationsPath
 if ([IO.Path]::GetExtension($workbookFullPath) -ine '.xlsm') {
@@ -929,6 +1464,32 @@ if ($expectedWorkbookSha256 -notmatch '^[0-9a-f]{64}$') {
 $operations = @(Get-RequiredProperty $payload 'operations')
 if ($operations.Count -lt 1 -or $operations.Count -gt $MaxOperations) {
     throw "Operation count must be between 1 and $MaxOperations."
+}
+$conditionalAddsBySheet = @{}
+foreach ($operation in $operations) {
+    $kind = if (Has-Property $operation 'kind') {
+        [string]$operation.kind
+    } else {
+        'cell'
+    }
+    if ($kind -cne 'addConditionalFormatting') {
+        continue
+    }
+    $sheetName = Get-OperationSheetName $operation
+    $currentCount = if ($conditionalAddsBySheet.ContainsKey($sheetName)) {
+        [int]$conditionalAddsBySheet[$sheetName]
+    } else {
+        0
+    }
+    $currentCount++
+    if ($currentCount -gt $MaxConditionalFormattingAddsPerSheet) {
+        throw (
+            'Native edit cannot append more than ' +
+            "$MaxConditionalFormattingAddsPerSheet conditional-formatting " +
+            'rules per worksheet.'
+        )
+    }
+    $conditionalAddsBySheet[$sheetName] = $currentCount
 }
 
 $workbookDirectory = [IO.Path]::GetDirectoryName($workbookFullPath)
@@ -1022,7 +1583,7 @@ try {
         $workbook = $workbooks.Open($workPath, 0, $false)
 
         foreach ($operation in $operations) {
-            Apply-CellOperation $workbook $excel $operation
+            Apply-NativeOperation $workbook $excel $operation
         }
 
         $workbook.Save()
@@ -1081,7 +1642,29 @@ try {
         Compare-PackagePreservationState $sourcePackageState $workPackageState
     )
     if ($packageDifferences.Count -gt 0) {
+        $hasDimensionOperation = @(
+            $operations | Where-Object {
+                (Has-Property $_ 'kind') -and
+                ([string]$_.kind -in @('columnWidth', 'rowHeight'))
+            }
+        ).Count -gt 0
+        $hasVmlDifference = @(
+            $packageDifferences | Where-Object {
+                [string]$_ -match '(?i)\.vml\s+\('
+            }
+        ).Count -gt 0
+        $dimensionGuidance = if (
+            $hasDimensionOperation -and
+            $hasVmlDifference
+        ) {
+            'The dimension change would move a protected worksheet control ' +
+            'or drawing; resize outside its anchored rows/columns or use ' +
+            'native Excel. '
+        } else {
+            ''
+        }
         throw (
+            $dimensionGuidance +
             'Excel changed protected XLSM package content; save was refused: ' +
             ($packageDifferences -join ', ')
         )

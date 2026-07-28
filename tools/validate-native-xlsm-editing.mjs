@@ -7,6 +7,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relativePath) => readFile(path.join(root, relativePath), 'utf8');
 
 const [
+  nativeTypes,
+  nativeDiff,
   bridge,
   commonHandler,
   officeProvider,
@@ -16,6 +18,8 @@ const [
   script,
   vbaCli,
 ] = await Promise.all([
+  read('src/common/nativeExcelEdits.ts'),
+  read('src/react/view/excel/native_edit_diff.ts'),
   read('src/provider/nativeExcelBridge.ts'),
   read('src/provider/compress/commonHandler.ts'),
   read('src/provider/officeViewerProvider.ts'),
@@ -26,7 +30,23 @@ const [
   read('native/vba-writeback/cli.py'),
 ]);
 
+assert.match(nativeTypes, /type NativeExcelEditOperation/);
+assert.match(nativeTypes, /kind:\s*'columnWidth'/);
+assert.match(nativeTypes, /kind:\s*'rowHeight'/);
+assert.match(nativeTypes, /kind:\s*'addConditionalFormatting'/);
+assert.match(nativeTypes, /kind:\s*'clearConditionalFormatting'/);
+assert.match(nativeTypes, /NativeExcelConditionalFormattingRule/);
+assert.match(nativeDiff, /buildConditionalFormattingOperations/);
+assert.match(nativeDiff, /normalizeConditionalRule/);
+assert.match(nativeDiff, /conditionalFormattings:\s*_conditionalFormattings/);
+assert.match(nativeDiff, /conditional-formatting/);
+assert.match(nativeDiff, /kind:\s*'columnWidth'/);
+assert.match(nativeDiff, /kind:\s*'rowHeight'/);
 assert.match(bridge, /MAX_NATIVE_EDIT_OPERATIONS\s*=\s*10_000/);
+assert.match(
+  bridge,
+  /MAX_CONDITIONAL_FORMATTING_ADDS_PER_SHEET\s*=\s*64/,
+);
 assert.match(bridge, /MAX_NATIVE_EDIT_PAYLOAD_BYTES\s*=\s*4 \* 1024 \* 1024/);
 assert.match(bridge, /extname\(workbookPath\).*\.xlsm/s);
 assert.match(bridge, /windowsHide:\s*true/);
@@ -39,6 +59,9 @@ assert.match(bridge, /getFileSha256/);
 assert.match(bridge, /parseNativeEditResult/);
 assert.match(bridge, /must change a value or style/);
 assert.match(bridge, /contains an invalid value/);
+assert.match(bridge, /normalizeRangeRef/);
+assert.match(bridge, /assertAllowedKeys/);
+assert.match(bridge, /NativeExcelEditOperation/);
 assert.match(
   commonHandler,
   /nativeLoadGeneration\s*=\s*supportsNativeMacroEditing\(uri\)[\s\S]+?randomUUID\(\)/,
@@ -114,6 +137,15 @@ assert.match(script, /Network and UNC paths are not supported/);
 assert.match(script, /NumberFormatLocal/);
 assert.match(script, /International\(32\)/);
 assert.match(script, /ColorIndex\s*=\s*-4105/);
+assert.match(script, /Apply-ColumnWidthOperation/);
+assert.match(script, /Apply-RowHeightOperation/);
+assert.match(script, /Apply-ConditionalFormattingOperation/);
+assert.match(script, /Apply-ClearConditionalFormattingOperation/);
+assert.match(script, /SetLastPriority/);
+assert.match(script, /AddColorScale\(3\)/);
+assert.match(script, /AddDatabar\(\)/);
+assert.match(script, /AddIconSetCondition\(\)/);
+assert.match(script, /protected worksheet control/);
 assert.doesNotMatch(script, /jj\/mm\/aaaa/);
 assert.doesNotMatch(script, /\.SaveCopyAs\(/);
 assert.doesNotMatch(script, /Copy-Item[\s\S]+?-Destination\s+\$workbookFullPath/);

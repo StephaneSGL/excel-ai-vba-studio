@@ -1,19 +1,25 @@
 import type {
     NativeExcelCellEdit,
     NativeExcelCellValue,
+    NativeExcelConditionalFormattingRule,
+    NativeExcelEditOperation,
     NativeExcelStylePatch,
 } from '@/common/nativeExcelEdits';
 import type {
     CellData,
     CellStyle,
     RowData,
+    SheetConditionalFormatting,
+    SheetConditionalFormattingRule,
     SheetData,
 } from './x-spreadsheet/index';
 
 type CellPosition = { row: number; column: number };
 
+const MAX_CONDITIONAL_FORMATTING_ADDS_PER_SHEET = 64;
+
 export interface NativeExcelEditPlan {
-    operations: NativeExcelCellEdit[];
+    operations: NativeExcelEditOperation[];
     unsupportedChanges: string[];
 }
 
@@ -67,14 +73,47 @@ function sheetFeatureSnapshot(sheet: SheetData): Record<string, unknown> {
         styles: _styles,
         rows: _rows,
         cols: _cols,
+        conditionalFormattings: _conditionalFormattings,
         ...features
     } = sheet;
     return features;
 }
 
-function columnDimensionSnapshot(sheet: SheetData): Record<string, unknown> {
-    const { len: _len, ...dimensions } = sheet.cols ?? {};
-    return dimensions;
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOnlyKeys(
+    value: Record<string, unknown>,
+    allowedKeys: readonly string[]
+): boolean {
+    const allowed = new Set(allowedKeys);
+    return Object.keys(value).every(key => allowed.has(key));
+}
+
+function columnIndexes(sheet: SheetData | undefined): Set<number> {
+    const indexes = new Set<number>();
+    for (const key of Object.keys(sheet?.cols ?? {})) {
+        const index = Number(key);
+        if (key !== 'len' && Number.isInteger(index) && index >= 0) {
+            indexes.add(index);
+        }
+    }
+    return indexes;
+}
+
+function getColumnWidth(
+    sheet: SheetData | undefined,
+    column: number
+): number | undefined {
+    const dimension = sheet?.cols?.[column];
+    return (
+        dimension &&
+        typeof dimension === 'object' &&
+        hasOnlyKeys(dimension as unknown as Record<string, unknown>, ['width'])
+    )
+        ? dimension.width
+        : undefined;
 }
 
 function rowIndexes(sheet: SheetData | undefined): Set<number> {
@@ -85,6 +124,232 @@ function rowIndexes(sheet: SheetData | undefined): Set<number> {
         }
     }
     return indexes;
+}
+
+const SIMPLE_A1_RANGE =
+    /^[A-Z]{1,3}[1-9][0-9]{0,6}(?::[A-Z]{1,3}[1-9][0-9]{0,6})?$/;
+
+function exactArgb(value: unknown, expected: string): boolean {
+    return (
+        isRecord(value) &&
+        hasOnlyKeys(value, ['argb']) &&
+        value.argb === expected
+    );
+}
+
+function hasGeneratedHighlightStyle(
+    rule: Record<string, unknown>
+): boolean {
+    if (!isRecord(rule.style) || !hasOnlyKeys(rule.style, ['fill', 'font'])) {
+        return false;
+    }
+    const fill = rule.style.fill;
+    const font = rule.style.font;
+    if (
+        !isRecord(fill) ||
+        !hasOnlyKeys(fill, ['type', 'pattern', 'fgColor']) ||
+        fill.type !== 'pattern' ||
+        fill.pattern !== 'solid' ||
+        !exactArgb(fill.fgColor, 'FFFFC7CE') ||
+        !isRecord(font) ||
+        !hasOnlyKeys(font, ['color']) ||
+        !exactArgb(font.color, 'FF9C0006')
+    ) {
+        return false;
+    }
+    const displayStyle = rule.displayStyle;
+    return (
+        isRecord(displayStyle) &&
+        hasOnlyKeys(displayStyle, ['bgcolor', 'color', 'font']) &&
+        displayStyle.bgcolor === '#ffc7ce' &&
+        displayStyle.color === '#9c0006' &&
+        isRecord(displayStyle.font) &&
+        hasOnlyKeys(displayStyle.font, ['bold']) &&
+        displayStyle.font.bold === true
+    );
+}
+
+function normalizeConditionalRule(
+    rule: SheetConditionalFormattingRule
+): NativeExcelConditionalFormattingRule | undefined {
+    const value = rule as Record<string, unknown>;
+    if (value.type === 'cellIs') {
+        if (
+            !hasOnlyKeys(value, [
+                'type',
+                'operator',
+                'formulae',
+                'style',
+                'displayStyle',
+                'priority',
+            ]) ||
+            !['greaterThan', 'lessThan', 'equal'].includes(
+                String(value.operator)
+            ) ||
+            !Array.isArray(value.formulae) ||
+            value.formulae.length !== 1 ||
+            !hasGeneratedHighlightStyle(value)
+        ) {
+            return undefined;
+        }
+        const operand = value.formulae[0];
+        if (
+            !(
+                (typeof operand === 'number' && Number.isFinite(operand)) ||
+                (typeof operand === 'string' &&
+                    operand.length > 0 &&
+                    operand.length <= 255 &&
+                    !operand.includes('\0') &&
+                    !operand.startsWith('='))
+            )
+        ) {
+            return undefined;
+        }
+        return {
+            type: 'cellIs',
+            operator: value.operator as 'greaterThan' | 'lessThan' | 'equal',
+            operand,
+            fillColor: '#ffc7ce',
+            fontColor: '#9c0006',
+            bold: true,
+        };
+    }
+
+    if (value.type === 'containsText') {
+        if (
+            !hasOnlyKeys(value, [
+                'type',
+                'operator',
+                'text',
+                'formulae',
+                'style',
+                'displayStyle',
+                'priority',
+            ]) ||
+            value.operator !== 'containsText' ||
+            typeof value.text !== 'string' ||
+            value.text.length === 0 ||
+            value.text.length > 255 ||
+            value.text.includes('\0') ||
+            !Array.isArray(value.formulae) ||
+            value.formulae.length !== 1 ||
+            value.formulae[0] !== value.text ||
+            !hasGeneratedHighlightStyle(value)
+        ) {
+            return undefined;
+        }
+        return {
+            type: 'containsText',
+            text: value.text,
+            fillColor: '#ffc7ce',
+            fontColor: '#9c0006',
+            bold: true,
+        };
+    }
+
+    if (value.type === 'colorScale') {
+        if (
+            !hasOnlyKeys(value, ['type', 'cfvo', 'color', 'priority']) ||
+            !sameValue(value.cfvo, [
+                { type: 'min' },
+                { type: 'percentile', value: 50 },
+                { type: 'max' },
+            ]) ||
+            !sameValue(value.color, [
+                { argb: 'FFF8696B' },
+                { argb: 'FFFFEB84' },
+                { argb: 'FF63BE7B' },
+            ])
+        ) {
+            return undefined;
+        }
+        return {
+            type: 'colorScale',
+            colors: ['#f8696b', '#ffeb84', '#63be7b'],
+        };
+    }
+
+    if (value.type === 'dataBar') {
+        if (
+            !hasOnlyKeys(value, ['type', 'cfvo', 'color', 'priority']) ||
+            !sameValue(value.cfvo, [{ type: 'min' }, { type: 'max' }]) ||
+            !exactArgb(value.color, 'FF5B9BD5')
+        ) {
+            return undefined;
+        }
+        return { type: 'dataBar', color: '#5b9bd5' };
+    }
+
+    if (value.type === 'iconSet') {
+        if (
+            !hasOnlyKeys(value, [
+                'type',
+                'iconSet',
+                'cfvo',
+                'priority',
+            ]) ||
+            value.iconSet !== '3TrafficLights1' ||
+            !sameValue(value.cfvo, [
+                { type: 'min' },
+                { type: 'percent', value: 33 },
+                { type: 'percent', value: 67 },
+            ])
+        ) {
+            return undefined;
+        }
+        return {
+            type: 'iconSet',
+            iconSet: '3TrafficLights1',
+            thresholds: [33, 67],
+        };
+    }
+    return undefined;
+}
+
+function buildConditionalFormattingOperations(
+    sheetName: string,
+    beforeDefinitions: SheetConditionalFormatting[] | undefined,
+    afterDefinitions: SheetConditionalFormatting[] | undefined
+): NativeExcelEditOperation[] | undefined {
+    const before = beforeDefinitions ?? [];
+    const after = afterDefinitions ?? [];
+    if (sameValue(before, after)) {
+        return [];
+    }
+    if (before.length > 0 && after.length === 0) {
+        return [{ kind: 'clearConditionalFormatting', sheetName }];
+    }
+    if (
+        after.length <= before.length ||
+        after.length - before.length >
+            MAX_CONDITIONAL_FORMATTING_ADDS_PER_SHEET ||
+        !sameValue(before, after.slice(0, before.length))
+    ) {
+        return undefined;
+    }
+
+    const operations: NativeExcelEditOperation[] = [];
+    for (const definition of after.slice(before.length)) {
+        const rangeRef = definition.ref?.toUpperCase();
+        if (
+            !rangeRef ||
+            !SIMPLE_A1_RANGE.test(rangeRef) ||
+            definition.rules?.length !== 1
+        ) {
+            return undefined;
+        }
+        const rule = normalizeConditionalRule(definition.rules[0]);
+        if (!rule) {
+            return undefined;
+        }
+        operations.push({
+            kind: 'addConditionalFormatting',
+            sheetName,
+            rangeRef,
+            rule,
+        });
+    }
+    return operations;
 }
 
 function toNativeValue(text: string | undefined): NativeExcelCellValue {
@@ -170,7 +435,7 @@ export function buildNativeExcelEditPlan(
             )
             .map(sheet => [sheet.name, sheet] as const)
     );
-    const operations: NativeExcelCellEdit[] = [];
+    const operations: NativeExcelEditOperation[] = [];
 
     for (const afterSheet of afterSheets) {
         if (!afterSheet.name) {
@@ -190,13 +455,34 @@ export function buildNativeExcelEditPlan(
         ) {
             unsupportedChanges.add(`${afterSheet.name}:worksheet-features`);
         }
-        if (
-            !sameValue(
-                columnDimensionSnapshot(beforeSheet),
-                columnDimensionSnapshot(afterSheet)
-            )
-        ) {
-            unsupportedChanges.add(`${afterSheet.name}:column-dimensions`);
+        const columns = columnIndexes(beforeSheet);
+        for (const column of columnIndexes(afterSheet)) {
+            columns.add(column);
+        }
+        for (const column of columns) {
+            const beforeDimension = beforeSheet.cols?.[column];
+            const afterDimension = afterSheet.cols?.[column];
+            if (sameValue(beforeDimension, afterDimension)) {
+                continue;
+            }
+            const widthPx = getColumnWidth(afterSheet, column);
+            if (
+                typeof widthPx === 'number' &&
+                Number.isFinite(widthPx) &&
+                widthPx > 5 &&
+                widthPx <= 1_790
+            ) {
+                operations.push({
+                    kind: 'columnWidth',
+                    sheetName: afterSheet.name,
+                    column: column + 1,
+                    widthPx,
+                });
+            } else {
+                unsupportedChanges.add(
+                    `${afterSheet.name}:column-dimensions`
+                );
+            }
         }
 
         const rows = rowIndexes(beforeSheet);
@@ -213,8 +499,37 @@ export function buildNativeExcelEditPlan(
                 ? afterRow.height
                 : undefined;
             if (!sameValue(beforeHeight, afterHeight)) {
-                unsupportedChanges.add(`${afterSheet.name}:row-dimensions`);
+                if (
+                    typeof afterHeight === 'number' &&
+                    Number.isFinite(afterHeight) &&
+                    afterHeight > 0 &&
+                    afterHeight <= 546
+                ) {
+                    operations.push({
+                        kind: 'rowHeight',
+                        sheetName: afterSheet.name,
+                        row: row + 1,
+                        heightPx: afterHeight,
+                    });
+                } else {
+                    unsupportedChanges.add(
+                        `${afterSheet.name}:row-dimensions`
+                    );
+                }
             }
+        }
+
+        const conditionalOperations = buildConditionalFormattingOperations(
+            afterSheet.name,
+            beforeSheet.conditionalFormattings,
+            afterSheet.conditionalFormattings
+        );
+        if (conditionalOperations) {
+            operations.push(...conditionalOperations);
+        } else {
+            unsupportedChanges.add(
+                `${afterSheet.name}:conditional-formatting`
+            );
         }
 
         const positions = cellPositions(beforeSheet);
@@ -262,5 +577,9 @@ export function buildNativeCellEditOperations(
     beforeSheets: SheetData[],
     afterSheets: SheetData[]
 ): NativeExcelCellEdit[] {
-    return buildNativeExcelEditPlan(beforeSheets, afterSheets).operations;
+    return buildNativeExcelEditPlan(beforeSheets, afterSheets)
+        .operations
+        .filter((operation): operation is NativeExcelCellEdit =>
+            operation.kind === undefined || operation.kind === 'cell'
+        );
 }

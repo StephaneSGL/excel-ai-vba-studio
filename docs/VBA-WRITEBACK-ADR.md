@@ -16,11 +16,12 @@ manual edit.
 
 ## Decision
 
-### Targeted cell edits
+### Targeted cell and formatting edits
 
 For a local, writable `.xlsm`, the editor computes a bounded diff containing
-only cell values, formulas, number formats, fonts, alignment, fills, and
-borders.
+cell values, formulas, number formats, fonts, alignment, fills, borders,
+explicit row heights and column widths, supported new conditional-formatting
+rules, and explicit worksheet-wide rule clearing.
 
 The editor records the workbook SHA-256 when the grid is loaded. A PowerShell
 helper then:
@@ -82,7 +83,7 @@ No macro-enabled write path falls back to generic OOXML serialization.
 | Stale VS Code grid overwrites a newer workbook | SHA-256 captured at load, checked under a writer-excluding handle | Refuse and require reload |
 | Concurrent local writer replaces the path during commit | Atomic replacement captures the exact displaced file; any unexpected version is restored without blind overwrite | Refuse the edit and retain recovery evidence |
 | UNC, mapped network, device, symlink, junction, or reparse redirection | Canonical local-drive and full path-chain checks | Refuse |
-| Malformed or oversized AI/tool operations | Protocol schema, UUID, size, count, cell bounds, and value/style allowlist | Refuse |
+| Malformed or oversized AI/tool operations | Protocol schema, UUID, size, count, worksheet/range bounds, and per-operation allowlists | Refuse |
 | Workbook macros, events, prompts, or external-link updates | `AutomationSecurity = 3`, events/alerts/link updates disabled before open | Work copy only; refuse on automation failure |
 | Excel changes VBA, UserForms, references, controls, or opaque resources | All logical CFB streams fingerprinted; protected OOXML resources hashed; entry set fixed | Refuse before replacement |
 | Signed VBA project would lose trust | Signature detection in direct writer | Refuse VBA modification |
@@ -123,7 +124,7 @@ directs the user to native Excel or the VBE.
 - Windows CI tests the tracked VBA helper, rebuilds it reproducibly from the
   pinned Python toolchain, requires a byte-for-byte binary match, and tests the
   rebuilt helper again.
-- Manual Excel Desktop evidence on 2026-07-27: 20/20 targeted-edit checks,
+- Manual Excel Desktop evidence on 2026-07-27: 31/31 targeted-edit checks,
   4/4 real UserForm/VBA preservation checks, 22 logical VBA streams unchanged,
   and no orphan Excel process.
 - Hosted CI does not contain Microsoft Excel. The COM suite remains a Windows
@@ -131,10 +132,18 @@ directs the user to native Excel or the VBE.
 
 ## Current limits
 
-- Existing UserForm code can be edited; designers, FRX resources, controls,
-  worksheet buttons, and ActiveX objects are preserved but not created.
-- Worksheet creation/removal, dimensions, merges, sheet features, and
-  conditional-format rule changes are detected and refused.
+- The source-only VBA writer edits existing UserForm code while preserving its
+  designer. The separate bounded VBA Designer can create UserForms, supported
+  controls, and worksheet Form Control buttons in an existing `.xlsm`; it does
+  not provide drag-and-drop editing or ActiveX-button creation.
+- Explicit row heights and column widths are supported; implicit dimension
+  resets remain refused. A resize that would move a protected control/drawing
+  and rewrite its VML anchor also remains refused with explicit guidance.
+- The five conditional-formatting presets created by the ribbon can be
+  appended, and all rules on one worksheet can be cleared explicitly. Existing
+  rule edits, reordering, partial deletion, expressions, and arbitrary formulas
+  remain refused.
+- Worksheet creation/removal, merges, and other sheet features remain refused.
 - `.xls` remains read-only.
 
 ## Tracking

@@ -145,7 +145,7 @@ export default {
     macroReadonlyBanner: 'VBA protection — legacy .xls workbooks are view-only here so macros and workbook records are not lost.',
     macroWriteBlocked: 'This workbook cannot be edited or saved in the embedded viewer because doing so could remove VBA macros or legacy workbook records. Open it in Microsoft Excel.',
     nativeReloadRequired: 'The workbook is still loading. Wait for the current version before saving.',
-    nativeUnsupportedChange: 'This XLSM change is not supported by safe native saving yet: {}. Cell values, formulas, number formats, fonts, alignment, fills, and borders are supported.',
+    nativeUnsupportedChange: 'This XLSM change is not supported by safe native saving yet: {}. Values, formulas, cell styles, explicit dimensions, and the ribbon conditional-formatting presets are supported.',
     openVbaDeveloper: 'Open VBA Studio in VS Code',
     formatCannotPreserveTitle: 'Formatting cannot be preserved',
     formatCannotPreserveContent: '{} cannot preserve styles, merges, formulas, etc. Save as xlsx instead?',

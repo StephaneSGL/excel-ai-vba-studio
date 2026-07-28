@@ -97,11 +97,16 @@ expect(
 );
 
 const tools = manifest.contributes?.languageModelTools ?? [];
-expect(tools.length === 2, 'exactly two language-model tools must be declared');
+expect(tools.length === 3, 'exactly three language-model tools must be declared');
 const readTool = tools.find(({ name }) => name === 'excel_ai_vba_readWorkbook');
 const writeTool = tools.find(({ name }) => name === 'excel_ai_vba_writeModule');
+const designTool = tools.find(({ name }) => name === 'excel_ai_vba_designWorkbook');
 expect(readTool?.toolReferenceName === 'excelVbaWorkbook', 'unexpected workbook read tool reference');
 expect(writeTool?.toolReferenceName === 'excelVbaWriteModule', 'unexpected VBA write tool reference');
+expect(
+  designTool?.toolReferenceName === 'excelVbaDesignWorkbook',
+  'unexpected VBA designer tool reference',
+);
 expect(
   tools.every(({ canBeReferencedInPrompt }) => canBeReferencedInPrompt === true),
   'language-model tools must be prompt-referenceable',
@@ -109,6 +114,16 @@ expect(
 expect(
   JSON.stringify(writeTool?.inputSchema?.required) === JSON.stringify(['componentFile', 'source']),
   'VBA write tool must require componentFile and source',
+);
+expect(
+  JSON.stringify(designTool?.inputSchema?.required) === JSON.stringify(['operations']),
+  'VBA designer tool must require operations',
+);
+expect(
+  designTool?.inputSchema?.properties?.operations?.minItems === 1
+    && designTool?.inputSchema?.properties?.operations?.maxItems === 100
+    && designTool?.inputSchema?.properties?.operations?.items?.oneOf?.length === 3,
+  'VBA designer operations schema must expose the three bounded operation kinds',
 );
 
 const settings = manifest.contributes?.configuration?.properties ?? {};
