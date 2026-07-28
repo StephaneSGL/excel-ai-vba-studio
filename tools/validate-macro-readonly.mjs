@@ -14,6 +14,8 @@ const [
   spreadsheetOptions,
   toolbar,
   sheet,
+  englishLocale,
+  frenchLocale,
 ] = await Promise.all([
   read('src/provider/handlers/officeContent.ts'),
   read('src/provider/compress/commonHandler.ts'),
@@ -21,6 +23,8 @@ const [
   read('src/react/view/excel/x-spreadsheet/index.ts'),
   read('src/react/view/excel/x-spreadsheet/component/toolbar/index.js'),
   read('src/react/view/excel/x-spreadsheet/component/sheet.js'),
+  read('src/react/view/excel/x-spreadsheet/locale/en.js'),
+  read('src/react/view/excel/x-spreadsheet/locale/fr.js'),
 ]);
 
 const protectedSet = officeContent.match(
@@ -57,6 +61,42 @@ assert.match(
   officeContent,
   /readOnly:\s*false,\s*readOnlyReason:\s*'native-excel-editing'/,
   'writable .xlsm files must open in editable native mode'
+);
+for (const [language, locale] of [
+  ['English', englishLocale],
+  ['French', frenchLocale],
+]) {
+  const banner = locale.match(
+    /macroReadonlyBanner:\s*(['"])(.*?)\1/
+  )?.[2] ?? '';
+  assert.ok(banner, `${language} macro-preservation banner is missing`);
+  assert.match(
+    banner,
+    /\.xls\b/,
+    `${language} macro-preservation banner must identify legacy .xls`
+  );
+  assert.doesNotMatch(
+    banner,
+    /\.xlsm\b/,
+    `${language} macro-preservation banner must not label .xlsm read-only`
+  );
+}
+const macroWriteBlockedMessage = commonHandler.match(
+  /const MACRO_WRITE_BLOCKED_MESSAGE\s*=\s*(['"])(.*?)\1;/s
+)?.[2] ?? '';
+assert.ok(
+  macroWriteBlockedMessage,
+  'legacy macro-preservation warning is missing'
+);
+assert.match(
+  macroWriteBlockedMessage,
+  /\.xls\b/,
+  'legacy macro-preservation warning must identify .xls'
+);
+assert.doesNotMatch(
+  macroWriteBlockedMessage,
+  /\.xlsm\b/,
+  'legacy macro-preservation warning must not label .xlsm read-only'
 );
 assert.match(
   officeContent,

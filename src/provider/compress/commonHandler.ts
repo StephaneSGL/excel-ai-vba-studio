@@ -19,7 +19,7 @@ import { Uri, workspace } from 'vscode';
 const fileSaveTimes: Record<string, number> = {};
 const INTERNAL_SAVE_CHANGE_WINDOW_MS = 1500;
 const MACRO_WRITE_BLOCKED_MESSAGE =
-    'Protection VBA : les fichiers .xlsm et .xls sont en lecture seule dans l’éditeur intégré afin de préserver leurs macros et données héritées. Ouvrez le fichier dans Microsoft Excel pour le modifier.';
+    'Protection VBA : les anciens classeurs .xls restent en lecture seule dans l’éditeur intégré afin de préserver leurs macros et données héritées. Ouvrez le fichier dans Microsoft Excel pour le modifier.';
 const NATIVE_BINARY_WRITE_BLOCKED_MESSAGE =
     'La sauvegarde XLSM complète est bloquée pour préserver le projet VBA. Utilisez la sauvegarde native ciblée de l’extension.';
 const SAVE_FORMATS: Record<string, { label: string; exts: string[] }> = {
