@@ -23,6 +23,28 @@ export interface NativeExcelEditPlan {
     unsupportedChanges: string[];
 }
 
+interface NativeEditSheetAdapter {
+    loadData(sheets: SheetData[]): unknown;
+    getData(): SheetData[];
+}
+
+function cloneSheets(sheets: SheetData[]): SheetData[] {
+    return JSON.parse(JSON.stringify(sheets)) as SheetData[];
+}
+
+export function initializeNativeEditSheets(
+    spreadsheet: NativeEditSheetAdapter,
+    sourceSheets: SheetData[],
+    restoredSheets: SheetData[] | null = null
+): SheetData[] {
+    spreadsheet.loadData(sourceSheets);
+    const baseline = cloneSheets(spreadsheet.getData());
+    if (restoredSheets) {
+        spreadsheet.loadData(restoredSheets);
+    }
+    return baseline;
+}
+
 function isRowData(value: RowData | number | undefined): value is RowData {
     return Boolean(value && typeof value === 'object' && 'cells' in value);
 }

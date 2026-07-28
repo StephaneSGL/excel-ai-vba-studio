@@ -4,6 +4,31 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [0.4.0] - 2026-07-28
+
+### Added
+
+- Added a VBA Controls view that inventories worksheet Form Control buttons and worksheet ActiveX controls during the existing guarded Excel export pass.
+- Added a static, non-executing button-to-macro-to-UserForm graph, macro reassignment for existing Form Control buttons, and verified `Click` binding for supported worksheet ActiveX buttons.
+- Added bounded worksheet ActiveX creation for built-in MSForms controls. Third-party controls require an exact ProgID already present in the user-owned `excelAiVbaStudio.allowedCustomActiveXProgIds` allowlist.
+- Added an isolated VBA Developer workspace opened in a separate VS Code window, with an extension-owned marker, path and hash validation, exported sources, workbook metadata, and automatic VBA Studio opening.
+
+### Fixed
+
+- Fixed false `worksheet-features` rejections when the embedded grid normalized existing images, page setup, links, or other read-only sheet metadata during `.xlsm` loading. The native edit baseline is now captured after grid hydration, while actual unsupported edits remain refused.
+- Routed real UserForm, worksheet-button, and worksheet-ActiveX operations through the transactional VBA Designer instead of generic workbook serialization.
+
+### Security
+
+- Macro relationships are parsed statically; the VS Code simulation never executes VBA.
+- ActiveX insertion remains subject to the user's Excel Trust Center and organization policy. The extension never changes ActiveX, AccessVBOM, registry, or macro-security settings.
+- Existing ActiveX event handlers are never overwritten, and custom ProgIDs are denied by default.
+
+### Tests
+
+- Added graph-resolution tests for Form Controls and ActiveX `Click` handlers, plus a regression test for feature-rich `.xlsm` sheets that receive supported cell edits.
+- Extended live Excel tests with Form Control reassignment, ActiveX creation and binding where Office permits it, custom-ProgID allowlisting, policy-blocked insertion refusal, rollback, native inspection, and process-leak checks.
+
 ## [0.3.0] - 2026-07-28
 
 ### Added

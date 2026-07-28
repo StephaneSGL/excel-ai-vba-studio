@@ -79,7 +79,7 @@ export function registerExcelAiVbaStudio(
 		),
 		vscode.commands.registerCommand(
 			EXCEL_AI_COMMANDS.openVbaDeveloper,
-			(candidate?: unknown) => service.openVbaExplorer(candidate)
+			(candidate?: unknown) => service.openVbaDeveloperWindow(candidate)
 		),
 		vscode.commands.registerCommand(
 			EXCEL_AI_COMMANDS.openVbaExplorer,
@@ -120,6 +120,7 @@ export function registerExcelAiVbaStudio(
 			`[config] maxRows=${settings.maxRows}, maxColumns=${settings.maxColumns}, includeVba=${settings.includeVba}`
 		);
 	registerExcelAiVbaLanguageModelTool(context, service);
+	void service.openDeveloperWorkspaceIfPresent();
 }
 
 export {

@@ -122,8 +122,8 @@ expect(
 expect(
   designTool?.inputSchema?.properties?.operations?.minItems === 1
     && designTool?.inputSchema?.properties?.operations?.maxItems === 100
-    && designTool?.inputSchema?.properties?.operations?.items?.oneOf?.length === 3,
-  'VBA designer operations schema must expose the three bounded operation kinds',
+    && designTool?.inputSchema?.properties?.operations?.items?.oneOf?.length === 5,
+  'VBA designer operations schema must expose the five bounded operation shapes',
 );
 
 const settings = manifest.contributes?.configuration?.properties ?? {};
@@ -132,6 +132,13 @@ expect(settings['excelAiVbaStudio.maxRows']?.maximum === 5000, 'maxRows maximum 
 expect(settings['excelAiVbaStudio.maxColumns']?.default === 50, 'maxColumns default must be 50');
 expect(settings['excelAiVbaStudio.maxColumns']?.maximum === 256, 'maxColumns maximum must be 256');
 expect(settings['excelAiVbaStudio.includeVba']?.default === false, 'includeVba must be opt-in');
+expect(
+  Array.isArray(settings['excelAiVbaStudio.allowedCustomActiveXProgIds']?.default)
+    && settings['excelAiVbaStudio.allowedCustomActiveXProgIds'].default.length === 0
+    && settings['excelAiVbaStudio.allowedCustomActiveXProgIds']?.maxItems === 32
+    && settings['excelAiVbaStudio.allowedCustomActiveXProgIds']?.uniqueItems === true,
+  'custom ActiveX ProgIDs must use an empty, bounded, unique opt-in allowlist',
+);
 expect(!JSON.stringify(settings).toLowerCase().includes('telemetry'), 'telemetry setting must not exist');
 
 const allDependencies = {

@@ -44,6 +44,10 @@ const EXCEL_LAUNCH_TIMEOUT_MS = 45_000;
 const VBA_BOOTSTRAP_TIMEOUT_MS = 90_000;
 const VBA_DESIGN_TIMEOUT_MS = 120_000;
 const MAX_VBA_DESIGN_REQUEST_BYTES = 1024 * 1024;
+const MAX_CUSTOM_ACTIVEX_PROGIDS = 32;
+const ACTIVEX_PROGID_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{1,127}$/;
+const DEVELOPER_MARKER_NAME = '.excel-ai-vba-studio-project.json';
+const MAX_DEVELOPER_MARKER_BYTES = 64 * 1024;
 
 interface PowerShellRunOptions {
 	progress?: vscode.Progress<{ message?: string }>;
@@ -73,11 +77,25 @@ interface VbaDesignerProcessResult {
 	createdUserForms?: unknown;
 	addedControls?: unknown;
 	createdButtons?: unknown;
+	assignedButtons?: unknown;
+	createdActiveXControls?: unknown;
+	boundActiveXControls?: unknown;
 	workbookSha256?: unknown;
 	backupPath?: unknown;
 	macrosExecuted?: unknown;
 	accessVbomChanged?: unknown;
 	designerVerified?: unknown;
+}
+
+interface DeveloperWorkspaceMarker {
+	schemaVersion: 1;
+	workbookPath: string;
+	workbookSha256: string;
+	baseName: string;
+	outputDirectory: string;
+	markdownPath: string;
+	jsonPath: string;
+	vbaDirectory: string;
 }
 
 function isUri(value: unknown): value is vscode.Uri {
@@ -223,6 +241,33 @@ function isStringArray(value: unknown): value is string[] {
 	);
 }
 
+function allowedCustomActiveXProgIds(resource: vscode.Uri): string[] {
+	const configured = vscode.workspace
+		.getConfiguration('excelAiVbaStudio', resource)
+		.get<unknown>('allowedCustomActiveXProgIds', []);
+	if (!Array.isArray(configured) || configured.length > MAX_CUSTOM_ACTIVEX_PROGIDS) {
+		throw new Error(
+			`excelAiVbaStudio.allowedCustomActiveXProgIds doit contenir au maximum ${MAX_CUSTOM_ACTIVEX_PROGIDS} ProgID.`
+		);
+	}
+	const unique = new Set<string>();
+	for (const value of configured) {
+		if (typeof value !== 'string' || !ACTIVEX_PROGID_PATTERN.test(value)) {
+			throw new Error(
+				'excelAiVbaStudio.allowedCustomActiveXProgIds contient un ProgID invalide.'
+			);
+		}
+		const key = value.toLocaleLowerCase('en-US');
+		if (unique.has(key)) {
+			throw new Error(
+				'excelAiVbaStudio.allowedCustomActiveXProgIds contient un doublon.'
+			);
+		}
+		unique.add(key);
+	}
+	return configured as string[];
+}
+
 async function terminateExactProcess(processId: number): Promise<void> {
 	if (
 		process.platform !== 'win32' ||
@@ -268,7 +313,12 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		);
 		this.vbaStudioPanel = new VbaStudioPanel(
 			this.outputChannel,
-			this.vbaWritebackService
+			this.vbaWritebackService,
+			(workbookUri, operations) =>
+				this.designVbaFromTool(workbookUri, operations),
+			async (workbookUri, showVbe) => {
+				await this.openExcel(workbookUri, showVbe);
+			}
 		);
 	}
 
@@ -442,9 +492,10 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		);
 		await assertNoReparsePointChain(requestPath, requestDirectory);
 		const requestJson = JSON.stringify({
-			schemaVersion: 1,
+			schemaVersion: 2,
 			workbookPath: canonicalUri.fsPath,
 			expectedWorkbookSha256,
+			allowedCustomActiveXProgIds: allowedCustomActiveXProgIds(canonicalUri),
 			operations
 		});
 		if (
@@ -519,7 +570,10 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				typeof parsed.backupPath !== 'string' ||
 				!isStringArray(parsed.createdUserForms) ||
 				!isStringArray(parsed.addedControls) ||
-				!isStringArray(parsed.createdButtons)
+				!isStringArray(parsed.createdButtons) ||
+				!isStringArray(parsed.assignedButtons) ||
+				!isStringArray(parsed.createdActiveXControls) ||
+				!isStringArray(parsed.boundActiveXControls)
 			) {
 				throw new Error('Le moteur VBA Designer a renvoyé un résultat incomplet.');
 			}
@@ -580,6 +634,9 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				createdUserForms: parsed.createdUserForms,
 				addedControls: parsed.addedControls,
 				createdButtons: parsed.createdButtons,
+				assignedButtons: parsed.assignedButtons,
+				createdActiveXControls: parsed.createdActiveXControls,
+				boundActiveXControls: parsed.boundActiveXControls,
 				workbookSha256: parsed.workbookSha256,
 				backupPath,
 				macrosExecuted: false,
@@ -935,8 +992,9 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			`Classeur source : ${context.workbookUri.fsPath}`,
 			'Ne jamais utiliser un chemin contenant un composant exact .excel-ai-vba-backups : ce dossier contient uniquement des sauvegardes de récupération.',
 			'Pour écrire un module .bas ou une classe .cls, appeler #excelVbaWriteModule. Si le classeur est .xlsx, la première écriture crée une nouvelle copie .xlsm voisine ; utiliser ensuite uniquement le targetWorkbookPath renvoyé.',
-			'Un .frm existant dans un .xlsm peut recevoir du code, mais ne jamais inventer un nouveau .frm, un designer, des contrôles ou un .frx. MsgBox et InputBox ne sont pas des UserForms.',
-			'Ne déclarer une écriture réussie qu’après le résultat de #excelVbaWriteModule, puis indiquer exactement targetWorkbookPath.',
+			'Un .frm existant peut recevoir du code via #excelVbaWriteModule. Pour créer un vrai UserForm, ses contrôles, un bouton de feuille ou un ActiveX autorisé, utiliser #excelVbaDesignWorkbook ; ne jamais fabriquer un faux .frm/.frx.',
+			'Un customActiveX exige un ProgID déjà présent dans excelAiVbaStudio.allowedCustomActiveXProgIds. Ne jamais proposer de modifier cette liste sans demande explicite de l’utilisateur.',
+			'Ne déclarer une écriture réussie qu’après le résultat de #excelVbaWriteModule ou #excelVbaDesignWorkbook, puis indiquer exactement targetWorkbookPath.',
 			'Les fichiers de ce dossier restent une copie de travail tant qu’aucun outil d’écriture ou enregistrement synchronisé n’a confirmé la modification du classeur.'
 		];
 		await fs.promises.writeFile(
@@ -953,7 +1011,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				'',
 				`- Classeur source : \`${context.workbookUri.fsPath}\``,
 				'- Macros exécutées pendant l’extraction : **non**',
-				'- Outils Copilot : `#excelVbaWorkbook` pour lire, `#excelVbaWriteModule` pour écrire',
+				'- Outils Copilot : `#excelVbaWorkbook` pour lire, `#excelVbaWriteModule` pour le code et `#excelVbaDesignWorkbook` pour les UserForms/contrôles/boutons',
 				'',
 				'## Composants',
 				'',
@@ -1619,6 +1677,163 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		}
 	}
 
+	private async writeDeveloperWorkspaceMarker(
+		context: ExportContext
+	): Promise<vscode.Uri> {
+		const { exportsRoot } = await this.ensureStorage();
+		await assertOwnedDirectory(context.paths.outputDirectory, exportsRoot);
+		await assertOwnedDirectory(
+			context.paths.vbaDirectory,
+			context.paths.outputDirectory
+		);
+		const markerPath = path.join(
+			context.paths.vbaDirectory,
+			DEVELOPER_MARKER_NAME
+		);
+		await assertNoReparsePointChain(
+			markerPath,
+			context.paths.vbaDirectory
+		);
+		const marker: DeveloperWorkspaceMarker = {
+			schemaVersion: 1,
+			workbookPath: context.workbookUri.fsPath,
+			workbookSha256: await hashFileSha256(context.workbookUri.fsPath),
+			baseName: context.paths.baseName,
+			outputDirectory: context.paths.outputDirectory,
+			markdownPath: context.paths.markdownPath,
+			jsonPath: context.paths.jsonPath,
+			vbaDirectory: context.paths.vbaDirectory
+		};
+		const serialized = JSON.stringify(marker, null, 2);
+		if (Buffer.byteLength(serialized, 'utf8') > MAX_DEVELOPER_MARKER_BYTES) {
+			throw new Error('Le marqueur du mode Développeur dépasse 64 Kio.');
+		}
+		await fs.promises.writeFile(markerPath, serialized, {
+			encoding: 'utf8',
+			flag: 'w'
+		});
+		return vscode.Uri.file(context.paths.vbaDirectory);
+	}
+
+	async openVbaDeveloperWindow(candidate?: unknown): Promise<void> {
+		const result = await this.exportWorkbook(candidate, {
+			open: false,
+			includeVba: true
+		});
+		if (!result) {
+			return;
+		}
+		await this.writeCopilotWorkspaceFiles(result);
+		const workspaceUri = await this.writeDeveloperWorkspaceMarker(result);
+		await vscode.commands.executeCommand(
+			'vscode.openFolder',
+			workspaceUri,
+			{ forceNewWindow: true, noRecentEntry: true }
+		);
+	}
+
+	async openDeveloperWorkspaceIfPresent(): Promise<void> {
+		const folders = vscode.workspace.workspaceFolders || [];
+		if (folders.length !== 1 || folders[0].uri.scheme !== 'file') {
+			return;
+		}
+		const workspaceDirectory = folders[0].uri.fsPath;
+		const { exportsRoot } = await this.ensureStorage();
+		if (!pathIsInside(workspaceDirectory, exportsRoot)) {
+			return;
+		}
+		const markerPath = path.join(workspaceDirectory, DEVELOPER_MARKER_NAME);
+		try {
+			await assertNoReparsePointChain(markerPath, workspaceDirectory);
+			const markerStat = await fs.promises.lstat(markerPath);
+			if (
+				!markerStat.isFile() ||
+				markerStat.isSymbolicLink() ||
+				markerStat.size > MAX_DEVELOPER_MARKER_BYTES
+			) {
+				return;
+			}
+			const parsed = JSON.parse(
+				await fs.promises.readFile(markerPath, 'utf8')
+			) as Partial<DeveloperWorkspaceMarker>;
+			if (
+				parsed.schemaVersion !== 1 ||
+				typeof parsed.workbookPath !== 'string' ||
+				typeof parsed.workbookSha256 !== 'string' ||
+				!/^[0-9a-f]{64}$/.test(parsed.workbookSha256) ||
+				typeof parsed.baseName !== 'string' ||
+				typeof parsed.outputDirectory !== 'string' ||
+				typeof parsed.markdownPath !== 'string' ||
+				typeof parsed.jsonPath !== 'string' ||
+				typeof parsed.vbaDirectory !== 'string'
+			) {
+				throw new Error('Marqueur Développeur invalide.');
+			}
+			if (!sameFile(parsed.vbaDirectory, workspaceDirectory)) {
+				throw new Error('Le marqueur cible un autre dossier VBA.');
+			}
+			await assertOwnedDirectory(parsed.outputDirectory, exportsRoot);
+			await assertOwnedDirectory(
+				parsed.vbaDirectory,
+				parsed.outputDirectory
+			);
+			for (const generatedPath of [
+				parsed.markdownPath,
+				parsed.jsonPath
+			]) {
+				if (!pathIsInside(generatedPath, parsed.outputDirectory)) {
+					throw new Error('Le marqueur contient un chemin de sortie inattendu.');
+				}
+				await assertNoReparsePointChain(
+					generatedPath,
+					parsed.outputDirectory
+				);
+				await fs.promises.access(generatedPath, fs.constants.R_OK);
+			}
+			const workbookUri = await canonicalizeWorkbookUri(
+				vscode.Uri.file(parsed.workbookPath)
+			);
+			assertNotManagedBackupPath(workbookUri.fsPath);
+			if (
+				(await hashFileSha256(workbookUri.fsPath)) !==
+				parsed.workbookSha256
+			) {
+				throw new Error(
+					'Le classeur a changé depuis la création de la fenêtre Développeur. Rouvrez-la depuis le classeur.'
+				);
+			}
+			const context: ExportContext = {
+				workbookUri,
+				markdownUri: vscode.Uri.file(parsed.markdownPath),
+				jsonUri: vscode.Uri.file(parsed.jsonPath),
+				paths: {
+					workbookPath: workbookUri.fsPath,
+					canonicalWorkbookPath: workbookUri.fsPath,
+					baseName: parsed.baseName,
+					outputDirectory: parsed.outputDirectory,
+					markdownPath: parsed.markdownPath,
+					markdownUri: vscode.Uri.file(parsed.markdownPath),
+					jsonPath: parsed.jsonPath,
+					jsonUri: vscode.Uri.file(parsed.jsonPath),
+					vbaDirectory: parsed.vbaDirectory,
+					vbaDirectoryUri: vscode.Uri.file(parsed.vbaDirectory)
+				},
+				includeVba: true
+			};
+			this.lastContext = context;
+			this.contextChangeEmitter.fire();
+			await this.vbaStudioPanel.prepare(context);
+			await this.vbaStudioPanel.open(context);
+		} catch (error) {
+			this.outputChannel.appendLine(
+				`[vba developer] ${(error as Error).message}`
+			);
+			await vscode.window.showErrorMessage(
+				`Mode Développeur non ouvert : ${(error as Error).message}`
+			);
+		}
+	}
+
 	async openVbaExplorer(candidate?: unknown): Promise<void> {
 		const result = await this.exportWorkbook(candidate, {
 			open: false,
@@ -1713,7 +1928,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			'Commence par résumer les objets Excel, les modules, les classes et les UserForms.',
 			'Ne cible jamais un chemin contenant le composant exact .excel-ai-vba-backups.',
 			'Pour appliquer un .bas ou .cls, utilise #excelVbaWriteModule. Sur un .xlsx, reprends ensuite le targetWorkbookPath .xlsm renvoyé pour toutes les écritures suivantes.',
-			'Ne crée jamais de faux UserForm .frm ou .frx. Un nouveau UserForm avec designer doit être créé dans le VBE natif ; MsgBox et InputBox ne sont pas des UserForms.',
+			'Ne crée jamais de faux UserForm .frm ou .frx. Pour un nouveau UserForm réel, ses contrôles, boutons ou ActiveX autorisés, utilise #excelVbaDesignWorkbook ; MsgBox et InputBox ne sont pas des UserForms.',
 			'Ne confirme une modification du classeur qu’après le succès de #excelVbaWriteModule et donne le targetWorkbookPath exact.',
 			...(requestedTask ? [`Tâche demandée depuis le ruban : ${requestedTask}`] : []),
 			'N’exécute aucune macro : analyse uniquement le code et les données.'

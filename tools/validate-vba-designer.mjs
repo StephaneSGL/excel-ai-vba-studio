@@ -53,6 +53,14 @@ assert.match(
   /\$expectedButtons\s*=\s*\[System\.Collections\.Generic\.List\[object\]\]::new\(\)[\s\S]+?expectedButton\.sheetName/,
   'button verification must preserve worksheet names containing dots',
 );
+assert.match(script, /assignWorksheetButtonMacro/);
+assert.match(script, /createWorksheetActiveXControl/);
+assert.match(script, /bindWorksheetActiveXMacro/);
+assert.match(script, /allowedCustomActiveXProgIds/);
+assert.match(script, /Custom ActiveX ProgID is not allowlisted/);
+assert.match(script, /ActiveX event handler[\s\S]+?refusing to overwrite/);
+assert.match(script, /expectedActiveXControls/);
+assert.match(script, /expectedActiveXBindings/);
 assert.match(script, /OWNED_EXCEL_PID\|/);
 assert.match(script, /requestSize\s+-gt\s+1MB/);
 assert.doesNotMatch(script, /\.Run\s*\(/i, 'designer must never run a macro');
@@ -89,12 +97,18 @@ const operationsSchema = inputSchema.properties.operations;
 assert.equal(operationsSchema.type, 'array');
 assert.equal(operationsSchema.minItems, 1);
 assert.equal(operationsSchema.maxItems, 100);
-assert.equal(operationsSchema.items.oneOf.length, 3);
+assert.equal(operationsSchema.items.oneOf.length, 5);
 for (const operationSchema of operationsSchema.items.oneOf) {
   assert.equal(operationSchema.type, 'object');
   assert.equal(operationSchema.additionalProperties, false);
 }
-const [createFormSchema, addControlSchema, createButtonSchema] =
+const [
+  createFormSchema,
+  addControlSchema,
+  createButtonSchema,
+  assignOrBindSchema,
+  createActiveXSchema,
+] =
   operationsSchema.items.oneOf;
 assert.deepEqual(createFormSchema.properties.kind.enum, ['createUserForm']);
 assert.equal(
@@ -108,11 +122,26 @@ assert.equal(addControlSchema.properties.control.additionalProperties, false);
 assert.deepEqual(createButtonSchema.properties.kind.enum, [
   'createWorksheetButton',
 ]);
+assert.deepEqual(assignOrBindSchema.properties.kind.enum, [
+  'assignWorksheetButtonMacro',
+  'bindWorksheetActiveXMacro',
+]);
+assert.deepEqual(createActiveXSchema.properties.kind.enum, [
+  'createWorksheetActiveXControl',
+]);
+assert.equal(
+  createActiveXSchema.properties.control.additionalProperties,
+  false,
+);
 
 assert.match(types, /EXCEL_AI_VBA_DESIGN_TOOL/);
 assert.match(types, /VbaUserFormControlType/);
 assert.match(types, /VbaDesignToolInput/);
 assert.match(types, /designerVerified:\s*true/);
+assert.match(types, /customActiveX/);
+assert.match(types, /assignedButtons/);
+assert.match(types, /createdActiveXControls/);
+assert.match(types, /boundActiveXControls/);
 assert.match(languageTool, /parseDesignInput/);
 assert.match(languageTool, /MAX_VBA_DESIGN_OPERATIONS\s*=\s*100/);
 assert.match(
@@ -127,6 +156,7 @@ assert.match(service, /apply-vba-designer\.ps1/);
 assert.match(service, /cleanupOwnedExcel:\s*true/);
 assert.match(service, /hashFileSha256\(backupPath\)/);
 assert.match(service, /includeVba:\s*true/);
+assert.match(service, /allowedCustomActiveXProgIds/);
 assert.match(service, /stdout\.matchAll\(\/OWNED_EXCEL_PID/);
 
 assert.equal(

@@ -295,7 +295,7 @@ Assert-NoReparsePointChain $helperPath
 # Read and parse request
 $requestJson = [IO.File]::ReadAllText($requestPath, [Text.UTF8Encoding]::new($false))
 $request = $requestJson | ConvertFrom-Json
-if (-not $request -or ($request.schemaVersion -ne 1)) { throw "Invalid request JSON or schemaVersion" }
+if (-not $request -or ([int]$request.schemaVersion -notin @(1, 2))) { throw "Invalid request JSON or schemaVersion" }
 
 # Validate required properties
 if (-not (Test-ObjectProperty $request 'workbookPath') -or -not $request.workbookPath) { throw "Missing workbookPath in request" }
@@ -325,6 +325,9 @@ if ($originalHash -cne $expectedSha256) { throw "Workbook SHA256 does not match 
 $seenFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $seenControlKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $seenButtonKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$seenButtonAssignmentKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$seenActiveXKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$seenActiveXBindingKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
 # Helper to validate a control object (for nested or standalone)
 $controlTypeMap = @{
@@ -342,6 +345,52 @@ $controlTypeMap = @{
     'scrollBar'    = 'Forms.ScrollBar.1'
 }
 
+$allowedCustomActiveXProgIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+if (Test-ObjectProperty $request 'allowedCustomActiveXProgIds') {
+    $customProgIds = @($request.allowedCustomActiveXProgIds)
+    if ($customProgIds.Count -gt 32) {
+        throw "allowedCustomActiveXProgIds cannot contain more than 32 items"
+    }
+    foreach ($customProgIdValue in $customProgIds) {
+        if ($customProgIdValue -isnot [string]) { throw "Custom ActiveX ProgID must be a string" }
+        $customProgId = [string]$customProgIdValue
+        Assert-NoNulString $customProgId
+        if ($customProgId -notmatch '^[A-Za-z][A-Za-z0-9_.-]{1,127}$') {
+            throw "Invalid custom ActiveX ProgID: $customProgId"
+        }
+        if (-not $allowedCustomActiveXProgIds.Add($customProgId)) {
+            throw "Duplicate custom ActiveX ProgID: $customProgId"
+        }
+    }
+}
+
+function Resolve-ControlProgId {
+    param([Parameter(Mandatory = $true)][object]$Control)
+
+    $typeStr = [string]$Control.type
+    if ($typeStr -ieq 'customActiveX') {
+        if (-not (Test-ObjectProperty $Control 'progId') -or -not $Control.progId) {
+            throw "customActiveX control requires progId"
+        }
+        $progId = [string]$Control.progId
+        Assert-NoNulString $progId
+        if ($progId -notmatch '^[A-Za-z][A-Za-z0-9_.-]{1,127}$') {
+            throw "Invalid custom ActiveX ProgID: $progId"
+        }
+        if (-not $allowedCustomActiveXProgIds.Contains($progId)) {
+            throw "Custom ActiveX ProgID is not allowlisted: $progId"
+        }
+        return $progId
+    }
+    if (Test-ObjectProperty $Control 'progId') {
+        throw "progId is accepted only for customActiveX controls"
+    }
+    if (-not $controlTypeMap.ContainsKey($typeStr)) {
+        throw "Unknown control type: $typeStr"
+    }
+    return [string]$controlTypeMap[$typeStr]
+}
+
 function Validate-Control {
     param(
         [object]$Control,
@@ -357,7 +406,7 @@ function Validate-Control {
 
     if (-not (Test-ObjectProperty $Control 'type') -or -not $Control.type) { throw "Control $ctrlName missing type" }
     $typeStr = [string]$Control.type
-    if (-not $controlTypeMap.ContainsKey($typeStr.ToLowerInvariant())) { throw "Unknown control type: $typeStr" }
+    [void](Resolve-ControlProgId $Control)
 
     $left = if (Test-ObjectProperty $Control 'left') { [double]($Control.left) } else { throw "Control $ctrlName missing left" }
     $top = if (Test-ObjectProperty $Control 'top') { [double]($Control.top) } else { throw "Control $ctrlName missing top" }
@@ -479,6 +528,42 @@ foreach ($op in $operations) {
             $key = "$sheetName.$name"
             if (-not $seenButtonKeys.Add($key)) { throw "Duplicate button key in request: $key" }
         }
+        'assignWorksheetButtonMacro' {
+            if (-not (Test-ObjectProperty $op 'sheetName') -or -not $op.sheetName) { throw "assignWorksheetButtonMacro missing sheetName" }
+            $sheetName = [string]$op.sheetName
+            Assert-NoNulString $sheetName
+            if ($sheetName.Length -gt 1000) { throw "sheetName too long" }
+            if (-not (Test-ObjectProperty $op 'name') -or -not $op.name) { throw "assignWorksheetButtonMacro missing name" }
+            $name = [string]$op.name
+            Assert-IsValidIdentifier $name
+            if (-not (Test-ObjectProperty $op 'macroName') -or -not $op.macroName) { throw "assignWorksheetButtonMacro missing macroName" }
+            $macroName = [string]$op.macroName
+            Assert-IsValidMacroName $macroName
+            $key = "$sheetName.$name"
+            if (-not $seenButtonAssignmentKeys.Add($key)) { throw "Duplicate button assignment in request: $key" }
+        }
+        'createWorksheetActiveXControl' {
+            if (-not (Test-ObjectProperty $op 'sheetName') -or -not $op.sheetName) { throw "createWorksheetActiveXControl missing sheetName" }
+            $sheetName = [string]$op.sheetName
+            Assert-NoNulString $sheetName
+            if ($sheetName.Length -gt 1000) { throw "sheetName too long" }
+            if (-not (Test-ObjectProperty $op 'control')) { throw "createWorksheetActiveXControl missing control" }
+            Validate-Control $op.control $seenActiveXKeys $sheetName
+        }
+        'bindWorksheetActiveXMacro' {
+            if (-not (Test-ObjectProperty $op 'sheetName') -or -not $op.sheetName) { throw "bindWorksheetActiveXMacro missing sheetName" }
+            $sheetName = [string]$op.sheetName
+            Assert-NoNulString $sheetName
+            if ($sheetName.Length -gt 1000) { throw "sheetName too long" }
+            if (-not (Test-ObjectProperty $op 'name') -or -not $op.name) { throw "bindWorksheetActiveXMacro missing name" }
+            $name = [string]$op.name
+            Assert-IsValidIdentifier $name
+            if (-not (Test-ObjectProperty $op 'macroName') -or -not $op.macroName) { throw "bindWorksheetActiveXMacro missing macroName" }
+            $macroName = [string]$op.macroName
+            Assert-IsValidMacroName $macroName
+            $key = "$sheetName.$name"
+            if (-not $seenActiveXBindingKeys.Add($key)) { throw "Duplicate ActiveX binding in request: $key" }
+        }
         default { throw "Unknown operation kind: $opKind" }
     }
 }
@@ -523,6 +608,9 @@ $operationError = $null
 $createdForms = [System.Collections.Generic.List[string]]::new()
 $createdControls = [System.Collections.Generic.List[string]]::new()
 $createdButtons = [System.Collections.Generic.List[string]]::new()
+$assignedButtons = [System.Collections.Generic.List[string]]::new()
+$createdActiveXControls = [System.Collections.Generic.List[string]]::new()
+$boundActiveXControls = [System.Collections.Generic.List[string]]::new()
 $backupPath = $null
 $commitCompleted = $false
 $rollbackCompleted = $false
@@ -530,6 +618,8 @@ $rollbackError = $null
 
 # Keep structured verification data because worksheet names may contain dots.
 $expectedButtons = [System.Collections.Generic.List[object]]::new()
+$expectedActiveXControls = [System.Collections.Generic.List[object]]::new()
+$expectedActiveXBindings = [System.Collections.Generic.List[object]]::new()
 
 try {
     # First Excel instance for modifications
@@ -595,6 +685,7 @@ try {
 
     # Enumerate existing worksheet buttons
     $existingButtonKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $existingActiveXKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $sheets = $wbStaging.Worksheets
     $sheetCount = $sheets.Count
     for ($i = 0; $i -lt $sheetCount; $i++) {
@@ -615,6 +706,20 @@ try {
                     }
                 }
             } finally { Release-ComObject $btns }
+            $oleObjects = $null
+            try {
+                $oleObjects = $ws.OLEObjects()
+                if ($oleObjects) {
+                    $oleCount = [int]$oleObjects.Count
+                    for ($j = 1; $j -le $oleCount; $j++) {
+                        $oleObject = $null
+                        try {
+                            $oleObject = $oleObjects.Item($j)
+                            $existingActiveXKeys.Add("$($ws.Name).$($oleObject.Name)") > $null
+                        } finally { Release-ComObject $oleObject }
+                    }
+                }
+            } finally { Release-ComObject $oleObjects }
         } finally { Release-ComObject $ws }
     }
 
@@ -623,6 +728,10 @@ try {
         if ($op.kind -eq 'createWorksheetButton') {
             $key = "$($op.sheetName).$($op.name)"
             if ($existingButtonKeys.Contains($key)) { throw "Button '$key' already exists in workbook" }
+        }
+        if ($op.kind -eq 'createWorksheetActiveXControl') {
+            $key = "$($op.sheetName).$($op.control.name)"
+            if ($existingActiveXKeys.Contains($key)) { throw "ActiveX control '$key' already exists in workbook" }
         }
     }
 
@@ -663,15 +772,16 @@ try {
                         $nestedControls = @($op.controls)
                         foreach ($ctrl in $nestedControls) {
                             $ctrlName = $ctrl.name
-                            $typeStr = $ctrl.type.ToString().ToLowerInvariant()
-                            $progId = $controlTypeMap[$typeStr]
+                            $progId = Resolve-ControlProgId $ctrl
                             $left = [double]$ctrl.left
                             $top = [double]$ctrl.top
                             $widthCtrl = [double]$ctrl.width
                             $heightCtrl = [double]$ctrl.height
                             $captionCtrl = if (Test-ObjectProperty $ctrl 'caption') { [string]$ctrl.caption } else { '' }
-                            $enabledCtrl = if (Test-ObjectProperty $ctrl 'enabled') { [bool]$ctrl.enabled } else { $true }
-                            $visibleCtrl = if (Test-ObjectProperty $ctrl 'visible') { [bool]$ctrl.visible } else { $true }
+                            $enabledSpecified = Test-ObjectProperty $ctrl 'enabled'
+                            $enabledCtrl = if ($enabledSpecified) { [bool]$ctrl.enabled } else { $true }
+                            $visibleSpecified = Test-ObjectProperty $ctrl 'visible'
+                            $visibleCtrl = if ($visibleSpecified) { [bool]$ctrl.visible } else { $true }
                             $tabIndexCtrl = if (Test-ObjectProperty $ctrl 'tabIndex') { [int]$ctrl.tabIndex } else { $null }
                             $tipCtrl = if (Test-ObjectProperty $ctrl 'controlTipText') { [string]$ctrl.controlTipText } else { '' }
 
@@ -684,8 +794,8 @@ try {
                                 $ctrlObj.Width = $widthCtrl
                                 $ctrlObj.Height = $heightCtrl
                                 if ($captionCtrl) { $ctrlObj.Caption = $captionCtrl }
-                                $ctrlObj.Enabled = $enabledCtrl
-                                $ctrlObj.Visible = $visibleCtrl
+                                if ($ctrl.type -ine 'customActiveX' -or $enabledSpecified) { $ctrlObj.Enabled = $enabledCtrl }
+                                if ($ctrl.type -ine 'customActiveX' -or $visibleSpecified) { $ctrlObj.Visible = $visibleCtrl }
                                 if ($null -ne $tabIndexCtrl) { $ctrlObj.TabIndex = $tabIndexCtrl }
                                 if ($tipCtrl) { $ctrlObj.ControlTipText = $tipCtrl }
                                 $createdControls.Add("$name.$ctrlName")
@@ -708,15 +818,16 @@ try {
                 $formName = [string]$op.formName
                 $ctrl = $op.control
                 $ctrlName = $ctrl.name
-                $typeStr = $ctrl.type.ToString().ToLowerInvariant()
-                $progId = $controlTypeMap[$typeStr]
+                $progId = Resolve-ControlProgId $ctrl
                 $left = [double]$ctrl.left
                 $top = [double]$ctrl.top
                 $widthCtrl = [double]$ctrl.width
                 $heightCtrl = [double]$ctrl.height
                 $captionCtrl = if (Test-ObjectProperty $ctrl 'caption') { [string]$ctrl.caption } else { '' }
-                $enabledCtrl = if (Test-ObjectProperty $ctrl 'enabled') { [bool]$ctrl.enabled } else { $true }
-                $visibleCtrl = if (Test-ObjectProperty $ctrl 'visible') { [bool]$ctrl.visible } else { $true }
+                $enabledSpecified = Test-ObjectProperty $ctrl 'enabled'
+                $enabledCtrl = if ($enabledSpecified) { [bool]$ctrl.enabled } else { $true }
+                $visibleSpecified = Test-ObjectProperty $ctrl 'visible'
+                $visibleCtrl = if ($visibleSpecified) { [bool]$ctrl.visible } else { $true }
                 $tabIndexCtrl = if (Test-ObjectProperty $ctrl 'tabIndex') { [int]$ctrl.tabIndex } else { $null }
                 $tipCtrl = if (Test-ObjectProperty $ctrl 'controlTipText') { [string]$ctrl.controlTipText } else { '' }
 
@@ -734,8 +845,8 @@ try {
                         $ctrlObj.Width = $widthCtrl
                         $ctrlObj.Height = $heightCtrl
                         if ($captionCtrl) { $ctrlObj.Caption = $captionCtrl }
-                        $ctrlObj.Enabled = $enabledCtrl
-                        $ctrlObj.Visible = $visibleCtrl
+                        if ($ctrl.type -ine 'customActiveX' -or $enabledSpecified) { $ctrlObj.Enabled = $enabledCtrl }
+                        if ($ctrl.type -ine 'customActiveX' -or $visibleSpecified) { $ctrlObj.Visible = $visibleCtrl }
                         if ($null -ne $tabIndexCtrl) { $ctrlObj.TabIndex = $tabIndexCtrl }
                         if ($tipCtrl) { $ctrlObj.ControlTipText = $tipCtrl }
                         $createdControls.Add("$formName.$ctrlName")
@@ -781,6 +892,156 @@ try {
                 } finally {
                     Release-ComObject $btn
                     Release-ComObject $btns
+                    Release-ComObject $ws
+                }
+            }
+            'assignWorksheetButtonMacro' {
+                $sheetName = [string]$op.sheetName
+                $name = [string]$op.name
+                $macroName = [string]$op.macroName
+                Assert-MacroProcedureExists $components $macroName
+
+                $ws = $null; $btns = $null; $btn = $null
+                try {
+                    $ws = $wbStaging.Worksheets.Item($sheetName)
+                    if (-not $ws) { throw "Worksheet '$sheetName' not found" }
+                    $btns = $ws.Buttons()
+                    $btn = $btns.Item($name)
+                    if (-not $btn) { throw "Button '$name' not found on sheet '$sheetName'" }
+                    $originalWorkbookName = [IO.Path]::GetFileNameWithoutExtension($workbookPath) + '.xlsm'
+                    $btn.OnAction = "'$originalWorkbookName'!$macroName"
+                    $assignedButtons.Add("$sheetName.$name")
+                    $expectedButtons.Add([pscustomobject]@{
+                        sheetName = $sheetName
+                        name = $name
+                        caption = $null
+                        onAction = [string]$btn.OnAction
+                    })
+                } finally {
+                    Release-ComObject $btn
+                    Release-ComObject $btns
+                    Release-ComObject $ws
+                }
+            }
+            'createWorksheetActiveXControl' {
+                $sheetName = [string]$op.sheetName
+                $ctrl = $op.control
+                $ctrlName = [string]$ctrl.name
+                $progId = Resolve-ControlProgId $ctrl
+                $left = [double]$ctrl.left
+                $top = [double]$ctrl.top
+                $widthCtrl = [double]$ctrl.width
+                $heightCtrl = [double]$ctrl.height
+                $captionCtrl = if (Test-ObjectProperty $ctrl 'caption') { [string]$ctrl.caption } else { '' }
+                $enabledSpecified = Test-ObjectProperty $ctrl 'enabled'
+                $enabledCtrl = if ($enabledSpecified) { [bool]$ctrl.enabled } else { $true }
+                $visibleSpecified = Test-ObjectProperty $ctrl 'visible'
+                $visibleCtrl = if ($visibleSpecified) { [bool]$ctrl.visible } else { $true }
+                $tipCtrl = if (Test-ObjectProperty $ctrl 'controlTipText') { [string]$ctrl.controlTipText } else { '' }
+
+                $ws = $null; $oleObjects = $null; $oleObject = $null; $embeddedControl = $null
+                try {
+                    $ws = $wbStaging.Worksheets.Item($sheetName)
+                    if (-not $ws) { throw "Worksheet '$sheetName' not found" }
+                    $oleObjects = $ws.OLEObjects()
+                    $missing = [Type]::Missing
+                    try {
+                        $oleObject = $oleObjects.Add(
+                            $progId,
+                            $missing,
+                            $false,
+                            $false,
+                            $missing,
+                            $missing,
+                            $missing,
+                            $left,
+                            $top,
+                            $widthCtrl,
+                            $heightCtrl
+                        )
+                    } catch {
+                        throw "Excel refused ActiveX insertion for '$progId'. Enable ActiveX controls in Excel Trust Center only if your policy permits it. The extension never changes this setting. Error: $($_.Exception.Message)"
+                    }
+                    if (-not $oleObject) { throw "Excel did not create ActiveX control '$ctrlName'" }
+                    $oleObject.Name = $ctrlName
+                    $oleObject.Visible = $visibleCtrl
+                    $embeddedControl = $oleObject.Object
+                    if ($captionCtrl) {
+                        try { $embeddedControl.Caption = $captionCtrl }
+                        catch { throw "ActiveX control '$ctrlName' does not accept Caption: $($_.Exception.Message)" }
+                    }
+                    if ($ctrl.type -ine 'customActiveX' -or $enabledSpecified) {
+                        try { $embeddedControl.Enabled = $enabledCtrl } catch {
+                            throw "ActiveX control '$ctrlName' does not accept Enabled: $($_.Exception.Message)"
+                        }
+                    }
+                    if ($tipCtrl) {
+                        try { $embeddedControl.ControlTipText = $tipCtrl }
+                        catch { throw "ActiveX control '$ctrlName' does not accept ControlTipText: $($_.Exception.Message)" }
+                    }
+                    $persistedProgId = [string]$oleObject.progID
+                    if ($persistedProgId -ine $progId) {
+                        throw "ActiveX control '$ctrlName' persisted unexpected ProgID '$persistedProgId'"
+                    }
+                    $createdActiveXControls.Add("$sheetName.$ctrlName")
+                    $expectedActiveXControls.Add([pscustomobject]@{
+                        sheetName = $sheetName
+                        name = $ctrlName
+                        progId = $progId
+                    })
+                } finally {
+                    Release-ComObject $embeddedControl
+                    Release-ComObject $oleObject
+                    Release-ComObject $oleObjects
+                    Release-ComObject $ws
+                }
+            }
+            'bindWorksheetActiveXMacro' {
+                $sheetName = [string]$op.sheetName
+                $name = [string]$op.name
+                $macroName = [string]$op.macroName
+                Assert-MacroProcedureExists $components $macroName
+
+                $ws = $null; $oleObjects = $null; $oleObject = $null
+                $sheetComponent = $null; $codeModule = $null
+                try {
+                    $ws = $wbStaging.Worksheets.Item($sheetName)
+                    if (-not $ws) { throw "Worksheet '$sheetName' not found" }
+                    $oleObjects = $ws.OLEObjects()
+                    $oleObject = $oleObjects.Item($name)
+                    if (-not $oleObject) { throw "ActiveX control '$name' not found on sheet '$sheetName'" }
+                    $progId = [string]$oleObject.progID
+                    if ($progId -ine 'Forms.CommandButton.1' -and $progId -ine 'Forms.ToggleButton.1') {
+                        throw "ActiveX binding supports only Forms.CommandButton.1 and Forms.ToggleButton.1, got '$progId'"
+                    }
+
+                    $sheetComponent = $components.Item([string]$ws.CodeName)
+                    $codeModule = $sheetComponent.CodeModule
+                    $existingSource = if ([int]$codeModule.CountOfLines -gt 0) {
+                        [string]$codeModule.Lines(1, [int]$codeModule.CountOfLines)
+                    } else { '' }
+                    $escapedName = [regex]::Escape($name)
+                    if ($existingSource -match "(?im)^\s*(?:Private|Public|Friend)?\s*Sub\s+${escapedName}_Click\s*\(") {
+                        throw "ActiveX event handler '${name}_Click' already exists; refusing to overwrite it"
+                    }
+                    $handler = @"
+
+Private Sub ${name}_Click()
+    Call $macroName
+End Sub
+"@
+                    $codeModule.AddFromString($handler)
+                    $boundActiveXControls.Add("$sheetName.$name")
+                    $expectedActiveXBindings.Add([pscustomobject]@{
+                        sheetName = $sheetName
+                        name = $name
+                        macroName = $macroName
+                    })
+                } finally {
+                    Release-ComObject $codeModule
+                    Release-ComObject $sheetComponent
+                    Release-ComObject $oleObject
+                    Release-ComObject $oleObjects
                     Release-ComObject $ws
                 }
             }
@@ -871,7 +1132,7 @@ try {
                         $b = $btns.Item($j+1)
                         if ($b.Name -ieq $btnName) {
                             # Verify Caption and OnAction
-                            if ($b.Caption -cne $expectedButton.caption) { throw "Button '$btnKey' caption mismatch" }
+                            if ($null -ne $expectedButton.caption -and $b.Caption -cne $expectedButton.caption) { throw "Button '$btnKey' caption mismatch" }
                             if ($b.OnAction -cne $expectedButton.onAction) { throw "Button '$btnKey' OnAction mismatch" }
                             $btnFound = $true; break
                         }
@@ -881,6 +1142,51 @@ try {
             } finally {
                 Release-ComObject $btn
                 Release-ComObject $btns
+                Release-ComObject $ws
+            }
+        }
+
+        # Verify worksheet ActiveX controls and their persisted classes.
+        foreach ($expectedControl in $expectedActiveXControls) {
+            $sheetName = [string]$expectedControl.sheetName
+            $controlName = [string]$expectedControl.name
+            $ws = $null; $oleObjects = $null; $oleObject = $null
+            try {
+                $ws = $wbVerify.Worksheets.Item($sheetName)
+                $oleObjects = $ws.OLEObjects()
+                $oleObject = $oleObjects.Item($controlName)
+                if (-not $oleObject) { throw "ActiveX control '$controlName' not found on sheet '$sheetName'" }
+                if ([string]$oleObject.progID -ine [string]$expectedControl.progId) {
+                    throw "ActiveX control '$sheetName.$controlName' ProgID mismatch"
+                }
+            } finally {
+                Release-ComObject $oleObject
+                Release-ComObject $oleObjects
+                Release-ComObject $ws
+            }
+        }
+
+        # Verify generated Click handlers without executing them.
+        foreach ($expectedBinding in $expectedActiveXBindings) {
+            $sheetName = [string]$expectedBinding.sheetName
+            $controlName = [string]$expectedBinding.name
+            $macroName = [string]$expectedBinding.macroName
+            $ws = $null; $sheetComponent = $null; $codeModule = $null
+            try {
+                $ws = $wbVerify.Worksheets.Item($sheetName)
+                $sheetComponent = $verifyComponents.Item([string]$ws.CodeName)
+                $codeModule = $sheetComponent.CodeModule
+                $source = if ([int]$codeModule.CountOfLines -gt 0) {
+                    [string]$codeModule.Lines(1, [int]$codeModule.CountOfLines)
+                } else { '' }
+                $escapedControl = [regex]::Escape($controlName)
+                $escapedMacro = [regex]::Escape($macroName)
+                if ($source -notmatch "(?ims)^\s*Private\s+Sub\s+${escapedControl}_Click\s*\(\s*\).*?^\s*Call\s+${escapedMacro}\s*$.*?^\s*End\s+Sub\b") {
+                    throw "ActiveX binding '$sheetName.$controlName' was not persisted as expected"
+                }
+            } finally {
+                Release-ComObject $codeModule
+                Release-ComObject $sheetComponent
                 Release-ComObject $ws
             }
         }
@@ -994,6 +1300,9 @@ try {
         createdUserForms = @($createdForms)
         addedControls = @($createdControls)
         createdButtons = @($createdButtons)
+        assignedButtons = @($assignedButtons)
+        createdActiveXControls = @($createdActiveXControls)
+        boundActiveXControls = @($boundActiveXControls)
         workbookSha256 = $finalHash
         backupPath = $backupPath
         macrosExecuted = $false

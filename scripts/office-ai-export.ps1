@@ -908,6 +908,8 @@ function Get-VbaRecords {
         readmePath = $null
         references = @()
         modules = @()
+        worksheetButtons = @()
+        worksheetActiveXControls = @()
     }
 
     if (-not $ShouldIncludeVba) {
@@ -926,6 +928,8 @@ function Get-VbaRecords {
     $components = $null
     $referenceRecords = New-Object 'System.Collections.Generic.List[object]'
     $moduleRecords = New-Object 'System.Collections.Generic.List[object]'
+    $worksheetButtonRecords = New-Object 'System.Collections.Generic.List[object]'
+    $worksheetActiveXRecords = New-Object 'System.Collections.Generic.List[object]'
     $remainingVbaCharacters = $MaxVbaSourceCharacters
     try {
         $vbProject = $Workbook.VBProject
@@ -1093,10 +1097,153 @@ function Get-VbaRecords {
             }
         }
 
+        # Inventory worksheet buttons and ActiveX controls in the same guarded
+        # Excel session. This is metadata only; no OnAction or event is invoked.
+        $remainingInteractionRecords = 2000
+        $worksheetsForControls = $null
+        try {
+            $worksheetsForControls = $Workbook.Worksheets
+            $worksheetControlCount = [int]$worksheetsForControls.Count
+            for (
+                $worksheetControlIndex = 1;
+                $worksheetControlIndex -le $worksheetControlCount -and $remainingInteractionRecords -gt 0;
+                $worksheetControlIndex++
+            ) {
+                $worksheetForControls = $null
+                try {
+                    $worksheetForControls = $worksheetsForControls.Item($worksheetControlIndex)
+                    $sheetName = [string]$worksheetForControls.Name
+                    $sheetCodeName = [string]$worksheetForControls.CodeName
+
+                    $formButtons = $null
+                    try {
+                        $formButtons = $worksheetForControls.Buttons()
+                        if ($formButtons) {
+                            $formButtonCount = [int]$formButtons.Count
+                            for (
+                                $formButtonIndex = 1;
+                                $formButtonIndex -le $formButtonCount -and $remainingInteractionRecords -gt 0;
+                                $formButtonIndex++
+                            ) {
+                                $formButton = $null
+                                try {
+                                    $formButton = $formButtons.Item($formButtonIndex)
+                                    [void]$worksheetButtonRecords.Add([PSCustomObject][ordered]@{
+                                        sheetName = $sheetName
+                                        sheetCodeName = $sheetCodeName
+                                        name = [string]$formButton.Name
+                                        caption = [string]$formButton.Caption
+                                        onAction = [string]$formButton.OnAction
+                                        left = [double]$formButton.Left
+                                        top = [double]$formButton.Top
+                                        width = [double]$formButton.Width
+                                        height = [double]$formButton.Height
+                                    })
+                                    $remainingInteractionRecords--
+                                }
+                                catch {
+                                    Add-ExportWarning $Warnings $sheetName 'workbook.vba.worksheetButtons' (
+                                        "Button {0} could not be read: {1}" -f
+                                            $formButtonIndex,
+                                            $_.Exception.Message
+                                    )
+                                }
+                                finally {
+                                    Release-ComObject $formButton
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        Add-ExportWarning $Warnings $sheetName 'workbook.vba.worksheetButtons' $_.Exception.Message
+                    }
+                    finally {
+                        Release-ComObject $formButtons
+                    }
+
+                    $oleObjects = $null
+                    try {
+                        $oleObjects = $worksheetForControls.OLEObjects()
+                        if ($oleObjects) {
+                            $oleObjectCount = [int]$oleObjects.Count
+                            for (
+                                $oleObjectIndex = 1;
+                                $oleObjectIndex -le $oleObjectCount -and $remainingInteractionRecords -gt 0;
+                                $oleObjectIndex++
+                            ) {
+                                $oleObject = $null
+                                $embeddedControl = $null
+                                try {
+                                    $oleObject = $oleObjects.Item($oleObjectIndex)
+                                    $oleType = $null
+                                    try { $oleType = [int]$oleObject.OLEType } catch { }
+                                    # xlOLEControl = 2. Embedded documents are not controls.
+                                    if ($oleType -ne 2) { continue }
+                                    $progId = ''
+                                    try { $progId = [string]$oleObject.progID } catch { }
+                                    $caption = ''
+                                    $enabled = $null
+                                    if ($progId -match '(?i)^Forms\.(?:CommandButton|ToggleButton|Label|CheckBox|OptionButton)\.1$') {
+                                        try {
+                                            $embeddedControl = $oleObject.Object
+                                            try { $caption = [string]$embeddedControl.Caption } catch { }
+                                            try { $enabled = [bool]$embeddedControl.Enabled } catch { }
+                                        } catch { }
+                                    }
+                                    [void]$worksheetActiveXRecords.Add([PSCustomObject][ordered]@{
+                                        sheetName = $sheetName
+                                        sheetCodeName = $sheetCodeName
+                                        name = [string]$oleObject.Name
+                                        progId = $progId
+                                        caption = $caption
+                                        enabled = $enabled
+                                        visible = [bool]$oleObject.Visible
+                                        left = [double]$oleObject.Left
+                                        top = [double]$oleObject.Top
+                                        width = [double]$oleObject.Width
+                                        height = [double]$oleObject.Height
+                                    })
+                                    $remainingInteractionRecords--
+                                }
+                                catch {
+                                    Add-ExportWarning $Warnings $sheetName 'workbook.vba.worksheetActiveXControls' (
+                                        "OLE control {0} could not be read: {1}" -f
+                                            $oleObjectIndex,
+                                            $_.Exception.Message
+                                    )
+                                }
+                                finally {
+                                    Release-ComObject $embeddedControl
+                                    Release-ComObject $oleObject
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        Add-ExportWarning $Warnings $sheetName 'workbook.vba.worksheetActiveXControls' $_.Exception.Message
+                    }
+                    finally {
+                        Release-ComObject $oleObjects
+                    }
+                }
+                finally {
+                    Release-ComObject $worksheetForControls
+                }
+            }
+            if ($remainingInteractionRecords -le 0) {
+                Add-ExportWarning $Warnings $null 'workbook.vba.controls' 'Worksheet control inventory reached the 2,000-record safety limit.'
+            }
+        }
+        finally {
+            Release-ComObject $worksheetsForControls
+        }
+
         $result.status = 'extracted'
         $result.message = 'VBA references and modules were read through the object model. Macros were not executed.'
         $result.references = @($referenceRecords.ToArray())
         $result.modules = @($moduleRecords.ToArray())
+        $result.worksheetButtons = @($worksheetButtonRecords.ToArray())
+        $result.worksheetActiveXControls = @($worksheetActiveXRecords.ToArray())
     }
     catch {
         $result.status = 'blocked'

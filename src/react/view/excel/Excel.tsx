@@ -18,7 +18,10 @@ import FindReplacePanel, { type FindReplacePanelHandle } from './FindReplacePane
 import { parseSpreadsheetLink } from './excel_hyperlink';
 import { initExcelLocale, t } from './excel_i18n';
 import ExcelRibbon from './ExcelRibbon';
-import { buildNativeExcelEditPlan } from './native_edit_diff';
+import {
+    buildNativeExcelEditPlan,
+    initializeNativeEditSheets,
+} from './native_edit_diff';
 
 initExcelLocale();
 
@@ -421,7 +424,6 @@ function ExcelViewer() {
             const restoredSheets = Array.isArray(payload.backupSheets)
                 ? payload.backupSheets as SheetData[]
                 : null;
-            const displayedSheets = restoredSheets ?? sheets;
             if (csvDelimiter) {
                 csvDelimiterRef.current = csvDelimiter;
             }
@@ -439,8 +441,11 @@ function ExcelViewer() {
             });
             spreadSheetRef.current = spreadSheet;
             setActiveSpreadsheet(spreadSheet);
-            spreadSheet.loadData(displayedSheets);
-            initialSheetsRef.current = cloneSheets(sheets);
+            initialSheetsRef.current = initializeNativeEditSheets(
+                spreadSheet,
+                sheets,
+                restoredSheets
+            );
             if (restoredSheets) {
                 spreadSheet.setSaveEnabled(true);
             }

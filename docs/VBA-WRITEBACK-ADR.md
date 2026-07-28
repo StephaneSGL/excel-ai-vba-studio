@@ -134,8 +134,11 @@ directs the user to native Excel or the VBE.
 
 - The source-only VBA writer edits existing UserForm code while preserving its
   designer. The separate bounded VBA Designer can create UserForms, supported
-  controls, and worksheet Form Control buttons in an existing `.xlsm`; it does
-  not provide drag-and-drop editing or ActiveX-button creation.
+  controls, worksheet Form Control buttons, and permitted worksheet ActiveX
+  controls in an existing `.xlsm`; it does not provide drag-and-drop editing.
+- Worksheet ActiveX creation and `Click` binding require Excel to permit
+  insertion. Third-party ProgIDs are denied unless the exact value is already
+  configured in `excelAiVbaStudio.allowedCustomActiveXProgIds`.
 - Explicit row heights and column widths are supported; implicit dimension
   resets remain refused. A resize that would move a protected control/drawing
   and rewrite its VML anchor also remains refused with explicit guidance.
@@ -153,3 +156,4 @@ directs the user to native Excel or the VBE.
 - [#9 — targeted native XLSM editing](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/9)
 - [#10 — XLSM formatting parity](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/10)
 - [#11 — prototype consolidation](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/11)
+- [#20 — worksheet controls, macro assignment, and Developer window](https://github.com/StephaneSGL/excel-ai-vba-studio/issues/20)
