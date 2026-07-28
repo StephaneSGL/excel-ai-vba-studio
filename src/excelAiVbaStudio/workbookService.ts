@@ -76,6 +76,8 @@ interface VbaDesignerProcessResult {
 	changed?: unknown;
 	createdUserForms?: unknown;
 	addedControls?: unknown;
+	updatedControls?: unknown;
+	updatedEventHandlers?: unknown;
 	createdButtons?: unknown;
 	assignedButtons?: unknown;
 	createdActiveXControls?: unknown;
@@ -570,6 +572,8 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				typeof parsed.backupPath !== 'string' ||
 				!isStringArray(parsed.createdUserForms) ||
 				!isStringArray(parsed.addedControls) ||
+				!isStringArray(parsed.updatedControls) ||
+				!isStringArray(parsed.updatedEventHandlers) ||
 				!isStringArray(parsed.createdButtons) ||
 				!isStringArray(parsed.assignedButtons) ||
 				!isStringArray(parsed.createdActiveXControls) ||
@@ -633,6 +637,8 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				changed: true,
 				createdUserForms: parsed.createdUserForms,
 				addedControls: parsed.addedControls,
+				updatedControls: parsed.updatedControls,
+				updatedEventHandlers: parsed.updatedEventHandlers,
 				createdButtons: parsed.createdButtons,
 				assignedButtons: parsed.assignedButtons,
 				createdActiveXControls: parsed.createdActiveXControls,
@@ -992,7 +998,8 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			`Classeur source : ${context.workbookUri.fsPath}`,
 			'Ne jamais utiliser un chemin contenant un composant exact .excel-ai-vba-backups : ce dossier contient uniquement des sauvegardes de récupération.',
 			'Pour écrire un module .bas ou une classe .cls, appeler #excelVbaWriteModule. Si le classeur est .xlsx, la première écriture crée une nouvelle copie .xlsm voisine ; utiliser ensuite uniquement le targetWorkbookPath renvoyé.',
-			'Un .frm existant peut recevoir du code via #excelVbaWriteModule. Pour créer un vrai UserForm, ses contrôles, un bouton de feuille ou un ActiveX autorisé, utiliser #excelVbaDesignWorkbook ; ne jamais fabriquer un faux .frm/.frx.',
+			'Un .frm existant peut recevoir du code via #excelVbaWriteModule. Pour créer un vrai UserForm, ajouter ou repositionner ses contrôles, affecter une procédure événementielle complète, créer un bouton de feuille ou un ActiveX autorisé, utiliser #excelVbaDesignWorkbook ; ne jamais fabriquer un faux .frm/.frx.',
+			'Dans #excelVbaDesignWorkbook, setUserFormEventHandler accepte une unique procédure Private Sub objectName_eventName(...). Les signatures complexes avec paramètres sont autorisées ; replaceExisting doit être explicitement vrai pour remplacer un gestionnaire existant.',
 			'Un customActiveX exige un ProgID déjà présent dans excelAiVbaStudio.allowedCustomActiveXProgIds. Ne jamais proposer de modifier cette liste sans demande explicite de l’utilisateur.',
 			'Ne déclarer une écriture réussie qu’après le résultat de #excelVbaWriteModule ou #excelVbaDesignWorkbook, puis indiquer exactement targetWorkbookPath.',
 			'Les fichiers de ce dossier restent une copie de travail tant qu’aucun outil d’écriture ou enregistrement synchronisé n’a confirmé la modification du classeur.'
@@ -1928,7 +1935,8 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			'Commence par résumer les objets Excel, les modules, les classes et les UserForms.',
 			'Ne cible jamais un chemin contenant le composant exact .excel-ai-vba-backups.',
 			'Pour appliquer un .bas ou .cls, utilise #excelVbaWriteModule. Sur un .xlsx, reprends ensuite le targetWorkbookPath .xlsm renvoyé pour toutes les écritures suivantes.',
-			'Ne crée jamais de faux UserForm .frm ou .frx. Pour un nouveau UserForm réel, ses contrôles, boutons ou ActiveX autorisés, utilise #excelVbaDesignWorkbook ; MsgBox et InputBox ne sont pas des UserForms.',
+			'Ne crée jamais de faux UserForm .frm ou .frx. Pour un nouveau UserForm réel, ajouter ou repositionner ses contrôles, affecter ses événements, créer ses boutons ou ActiveX autorisés, utilise #excelVbaDesignWorkbook ; MsgBox et InputBox ne sont pas des UserForms.',
+			'Pour un événement complexe, utilise setUserFormEventHandler avec une unique procédure Private Sub complète et replaceExisting=true uniquement si le remplacement est explicitement voulu.',
 			'Ne confirme une modification du classeur qu’après le succès de #excelVbaWriteModule et donne le targetWorkbookPath exact.',
 			...(requestedTask ? [`Tâche demandée depuis le ruban : ${requestedTask}`] : []),
 			'N’exécute aucune macro : analyse uniquement le code et les données.'

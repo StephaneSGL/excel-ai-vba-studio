@@ -122,8 +122,8 @@ expect(
 expect(
   designTool?.inputSchema?.properties?.operations?.minItems === 1
     && designTool?.inputSchema?.properties?.operations?.maxItems === 100
-    && designTool?.inputSchema?.properties?.operations?.items?.oneOf?.length === 5,
-  'VBA designer operations schema must expose the five bounded operation shapes',
+    && designTool?.inputSchema?.properties?.operations?.items?.oneOf?.length === 7,
+  'VBA designer operations schema must expose the seven bounded operation shapes',
 );
 
 const settings = manifest.contributes?.configuration?.properties ?? {};

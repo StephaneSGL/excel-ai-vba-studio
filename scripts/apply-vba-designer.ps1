@@ -324,6 +324,8 @@ if ($originalHash -cne $expectedSha256) { throw "Workbook SHA256 does not match 
 # Pre-validate operations and collect validation sets
 $seenFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $seenControlKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$seenUpdatedControlKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$seenEventHandlerKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $seenButtonKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $seenButtonAssignmentKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $seenActiveXKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -447,6 +449,135 @@ function Validate-Control {
     if ($tip.Length -gt 1000) { throw "controlTipText too long for $ctrlName" }
 }
 
+function Validate-ControlChanges {
+    param([object]$Changes, [string]$ControlName)
+
+    if ($null -eq $Changes) { throw "changes missing for $ControlName" }
+    $allowedProperties = @(
+        'left', 'top', 'width', 'height', 'caption',
+        'enabled', 'visible', 'tabIndex', 'controlTipText'
+    )
+    $specified = 0
+    foreach ($property in $Changes.PSObject.Properties) {
+        if ($allowedProperties -notcontains $property.Name) {
+            throw "Unknown control change property '$($property.Name)' for $ControlName"
+        }
+        $specified++
+    }
+    if ($specified -lt 1) { throw "changes must contain at least one property for $ControlName" }
+
+    foreach ($propertyName in @('left', 'top', 'width', 'height')) {
+        if (-not (Test-ObjectProperty $Changes $propertyName)) { continue }
+        $value = [double]$Changes.$propertyName
+        if (
+            [double]::IsNaN($value) -or
+            [double]::IsInfinity($value) -or
+            (($propertyName -in @('left', 'top')) -and $value -lt 0) -or
+            (($propertyName -in @('width', 'height')) -and $value -le 0) -or
+            $value -gt 10000
+        ) {
+            throw "Invalid $propertyName for ${ControlName}: $value"
+        }
+    }
+    foreach ($propertyName in @('caption', 'controlTipText')) {
+        if (-not (Test-ObjectProperty $Changes $propertyName)) { continue }
+        $value = [string]$Changes.$propertyName
+        Assert-NoNulString $value
+        if ($value.Length -gt 1000) { throw "$propertyName too long for $ControlName" }
+    }
+    foreach ($propertyName in @('enabled', 'visible')) {
+        if (
+            (Test-ObjectProperty $Changes $propertyName) -and
+            $Changes.$propertyName -isnot [bool]
+        ) {
+            throw "$propertyName must be boolean for $ControlName"
+        }
+    }
+    if (Test-ObjectProperty $Changes 'tabIndex') {
+        $tabIndex = $Changes.tabIndex
+        if ($tabIndex -isnot [int] -and $tabIndex -isnot [double]) {
+            throw "tabIndex must be numeric for $ControlName"
+        }
+        $tabIndexInt = [int]$tabIndex
+        if ($tabIndexInt -lt 0 -or $tabIndexInt -gt 32767) {
+            throw "tabIndex out of range (0-32767) for $ControlName"
+        }
+    }
+}
+
+function Assert-ValidUserFormEventProcedure {
+    param(
+        [string]$ProcedureSource,
+        [string]$ObjectName,
+        [string]$EventName
+    )
+
+    if (-not $ProcedureSource) { throw "procedureSource cannot be empty" }
+    if ($ProcedureSource.Length -gt 200000) { throw "procedureSource exceeds 200000 characters" }
+    Assert-NoNulString $ProcedureSource
+    Assert-IsValidIdentifier $ObjectName
+    Assert-IsValidIdentifier $EventName
+    $procedureName = "${ObjectName}_${EventName}"
+    $escapedProcedureName = [regex]::Escape($procedureName)
+    $normalizedSource = Normalize-VbaProcedureSource $ProcedureSource
+    $lines = @($normalizedSource -split "`n")
+    $headerPattern = "(?i)^[ \t]*Private[ \t]+Sub[ \t]+${escapedProcedureName}[ \t]*\([^\r\n]*\)[ \t]*$"
+    $invalidNestedProcedure = $false
+    if ($lines.Count -gt 2) {
+        for ($lineIndex = 1; $lineIndex -lt ($lines.Count - 1); $lineIndex++) {
+            if (
+                $lines[$lineIndex] -match '(?i)^[ \t]*(?:(?:Private|Public|Friend|Static)[ \t]+)?(?:Sub|Function|Property[ \t]+(?:Get|Let|Set))\b' -or
+                $lines[$lineIndex] -match '(?i)^[ \t]*End[ \t]+Sub\b'
+            ) {
+                $invalidNestedProcedure = $true
+                break
+            }
+        }
+    }
+    if (
+        $lines.Count -lt 2 -or
+        $lines[0] -notmatch $headerPattern -or
+        $lines[$lines.Count - 1] -notmatch '(?i)^[ \t]*End[ \t]+Sub[ \t]*$' -or
+        $invalidNestedProcedure
+    ) {
+        throw "procedureSource must contain only Private Sub ${procedureName}(...) ... End Sub"
+    }
+    foreach ($line in ($ProcedureSource -split "`r?`n")) {
+        $trimmed = $line.TrimStart()
+        if ($trimmed -match '(?i)^(VERSION(?:\s|$)|BEGIN(?:\s|$)|Attribute\s+VB_)') {
+            throw "procedureSource contains forbidden line: $trimmed"
+        }
+    }
+}
+
+function Normalize-VbaProcedureSource {
+    param([string]$Source)
+    return (($Source -replace "`r`n", "`n") -replace "`r", "`n").Trim()
+}
+
+function Normalize-VbaProcedureHeader {
+    param([string]$Header)
+    return (($Header.Trim() -replace '[ \t]+', ' ').ToLowerInvariant())
+}
+
+function Get-VbaProcedureHeader {
+    param(
+        [object]$CodeModule,
+        [string]$ProcedureName
+    )
+
+    $startLine = [int]$CodeModule.ProcStartLine($ProcedureName, 0)
+    $lineCount = [int]$CodeModule.ProcCountLines($ProcedureName, 0)
+    $escapedProcedureName = [regex]::Escape($ProcedureName)
+    for ($lineNumber = $startLine; $lineNumber -lt ($startLine + $lineCount); $lineNumber++) {
+        $line = [string]$CodeModule.Lines($lineNumber, 1)
+        if ($line -match "(?i)^[ \t]*Private[ \t]+Sub[ \t]+${escapedProcedureName}[ \t]*\(") {
+            return $line
+        }
+    }
+    throw "Procedure declaration line not found for '$ProcedureName'"
+}
+
 # Prevalidate operations
 foreach ($op in $operations) {
     if (-not (Test-ObjectProperty $op 'kind') -or -not $op.kind) { throw "Operation missing 'kind'" }
@@ -496,6 +627,44 @@ foreach ($op in $operations) {
             if (-not (Test-ObjectProperty $op 'control')) { throw "addUserFormControl missing control" }
             $ctrl = $op.control
             Validate-Control $ctrl $seenControlKeys $formName
+        }
+        'updateUserFormControl' {
+            if (-not (Test-ObjectProperty $op 'formName') -or -not $op.formName) { throw "updateUserFormControl missing formName" }
+            $formName = [string]$op.formName
+            Assert-IsValidIdentifier $formName
+            if (-not (Test-ObjectProperty $op 'name') -or -not $op.name) { throw "updateUserFormControl missing name" }
+            $name = [string]$op.name
+            Assert-IsValidIdentifier $name
+            if (-not (Test-ObjectProperty $op 'changes')) { throw "updateUserFormControl missing changes" }
+            Validate-ControlChanges $op.changes "$formName.$name"
+            $key = "$formName.$name"
+            if (-not $seenUpdatedControlKeys.Add($key)) {
+                throw "Duplicate control update in request: $key"
+            }
+        }
+        'setUserFormEventHandler' {
+            if (-not (Test-ObjectProperty $op 'formName') -or -not $op.formName) { throw "setUserFormEventHandler missing formName" }
+            $formName = [string]$op.formName
+            Assert-IsValidIdentifier $formName
+            if (-not (Test-ObjectProperty $op 'objectName') -or -not $op.objectName) { throw "setUserFormEventHandler missing objectName" }
+            $objectName = [string]$op.objectName
+            Assert-IsValidIdentifier $objectName
+            if (-not (Test-ObjectProperty $op 'eventName') -or -not $op.eventName) { throw "setUserFormEventHandler missing eventName" }
+            $eventName = [string]$op.eventName
+            Assert-IsValidIdentifier $eventName
+            if (-not (Test-ObjectProperty $op 'procedureSource') -or -not $op.procedureSource) { throw "setUserFormEventHandler missing procedureSource" }
+            $procedureSource = [string]$op.procedureSource
+            Assert-ValidUserFormEventProcedure $procedureSource $objectName $eventName
+            if (
+                (Test-ObjectProperty $op 'replaceExisting') -and
+                $op.replaceExisting -isnot [bool]
+            ) {
+                throw "replaceExisting must be boolean for $formName.${objectName}_${eventName}"
+            }
+            $key = "$formName.${objectName}_${eventName}"
+            if (-not $seenEventHandlerKeys.Add($key)) {
+                throw "Duplicate UserForm event handler in request: $key"
+            }
         }
         'createWorksheetButton' {
             if (-not (Test-ObjectProperty $op 'sheetName') -or -not $op.sheetName) { throw "createWorksheetButton missing sheetName" }
@@ -607,6 +776,8 @@ $wbVerify = $null
 $operationError = $null
 $createdForms = [System.Collections.Generic.List[string]]::new()
 $createdControls = [System.Collections.Generic.List[string]]::new()
+$updatedControls = [System.Collections.Generic.List[string]]::new()
+$updatedEventHandlers = [System.Collections.Generic.List[string]]::new()
 $createdButtons = [System.Collections.Generic.List[string]]::new()
 $assignedButtons = [System.Collections.Generic.List[string]]::new()
 $createdActiveXControls = [System.Collections.Generic.List[string]]::new()
@@ -618,6 +789,8 @@ $rollbackError = $null
 
 # Keep structured verification data because worksheet names may contain dots.
 $expectedButtons = [System.Collections.Generic.List[object]]::new()
+$expectedUpdatedControls = [System.Collections.Generic.List[object]]::new()
+$expectedEventHandlers = [System.Collections.Generic.List[object]]::new()
 $expectedActiveXControls = [System.Collections.Generic.List[object]]::new()
 $expectedActiveXBindings = [System.Collections.Generic.List[object]]::new()
 
@@ -856,6 +1029,119 @@ try {
                         Release-ComObject $designer
                     }
                 } finally {
+                    Release-ComObject $targetComp
+                }
+            }
+            'updateUserFormControl' {
+                $formName = [string]$op.formName
+                $ctrlName = [string]$op.name
+                $changes = $op.changes
+                $targetComp = $null; $designer = $null; $ctrlControls = $null; $ctrlObj = $null
+                try {
+                    $targetComp = $components.Item($formName)
+                    if ($targetComp.Type -ne 3) { throw "Component '$formName' is not a UserForm" }
+                    $designer = $targetComp.Designer
+                    $ctrlControls = $designer.Controls
+                    $ctrlObj = $ctrlControls.Item($ctrlName)
+                    if (-not $ctrlObj) { throw "Control '$ctrlName' not found on form '$formName'" }
+                    if (Test-ObjectProperty $changes 'left') { $ctrlObj.Left = [double]$changes.left }
+                    if (Test-ObjectProperty $changes 'top') { $ctrlObj.Top = [double]$changes.top }
+                    if (Test-ObjectProperty $changes 'width') { $ctrlObj.Width = [double]$changes.width }
+                    if (Test-ObjectProperty $changes 'height') { $ctrlObj.Height = [double]$changes.height }
+                    if (Test-ObjectProperty $changes 'caption') { $ctrlObj.Caption = [string]$changes.caption }
+                    if (Test-ObjectProperty $changes 'enabled') { $ctrlObj.Enabled = [bool]$changes.enabled }
+                    if (Test-ObjectProperty $changes 'visible') { $ctrlObj.Visible = [bool]$changes.visible }
+                    if (Test-ObjectProperty $changes 'tabIndex') { $ctrlObj.TabIndex = [int]$changes.tabIndex }
+                    if (Test-ObjectProperty $changes 'controlTipText') { $ctrlObj.ControlTipText = [string]$changes.controlTipText }
+                    $updatedControls.Add("$formName.$ctrlName")
+                    $expectedUpdatedControls.Add([pscustomobject]@{
+                        formName = $formName
+                        name = $ctrlName
+                        changes = $changes
+                    })
+                } finally {
+                    Release-ComObject $ctrlObj
+                    Release-ComObject $ctrlControls
+                    Release-ComObject $designer
+                    Release-ComObject $targetComp
+                }
+            }
+            'setUserFormEventHandler' {
+                $formName = [string]$op.formName
+                $objectName = [string]$op.objectName
+                $eventName = [string]$op.eventName
+                $procedureName = "${objectName}_${eventName}"
+                $procedureSource = [string]$op.procedureSource
+                $replaceExisting = if (Test-ObjectProperty $op 'replaceExisting') {
+                    [bool]$op.replaceExisting
+                } else { $false }
+                $targetComp = $null; $designer = $null; $ctrlControls = $null; $ctrlObj = $null; $codeModule = $null
+                try {
+                    $targetComp = $components.Item($formName)
+                    if ($targetComp.Type -ne 3) { throw "Component '$formName' is not a UserForm" }
+                    if ($objectName -ine 'UserForm') {
+                        $designer = $targetComp.Designer
+                        $ctrlControls = $designer.Controls
+                        $ctrlObj = $ctrlControls.Item($objectName)
+                        if (-not $ctrlObj) {
+                            throw "Control '$objectName' not found on form '$formName'"
+                        }
+                    }
+                    $codeModule = $targetComp.CodeModule
+                    $startLine = 0
+                    try {
+                        $startLine = [int]$codeModule.ProcStartLine($procedureName, 0)
+                    } catch {
+                        $startLine = 0
+                    }
+                    if ($startLine -gt 0 -and -not $replaceExisting) {
+                        throw "UserForm event handler '$formName.$procedureName' already exists; set replaceExisting=true to replace it"
+                    }
+                    $providedHeader = ((Normalize-VbaProcedureSource $procedureSource) -split "`n")[0]
+                    if ($startLine -gt 0) {
+                        $existingHeader = Get-VbaProcedureHeader $codeModule $procedureName
+                        if (
+                            (Normalize-VbaProcedureHeader $existingHeader) -cne
+                            (Normalize-VbaProcedureHeader $providedHeader)
+                        ) {
+                            throw "UserForm event signature mismatch for '$formName.$procedureName'. Existing signature: $existingHeader"
+                        }
+                        $lineCount = [int]$codeModule.ProcCountLines($procedureName, 0)
+                        $codeModule.DeleteLines($startLine, $lineCount)
+                        $codeModule.InsertLines($startLine, $procedureSource)
+                    } else {
+                        try {
+                            [void]$codeModule.CreateEventProc($eventName, $objectName)
+                        } catch {
+                            throw "Excel does not expose event '$eventName' for '$formName.$objectName': $($_.Exception.Message)"
+                        }
+                        $startLine = [int]$codeModule.ProcStartLine($procedureName, 0)
+                        $generatedHeader = Get-VbaProcedureHeader $codeModule $procedureName
+                        if (
+                            (Normalize-VbaProcedureHeader $generatedHeader) -cne
+                            (Normalize-VbaProcedureHeader $providedHeader)
+                        ) {
+                            throw "UserForm event signature mismatch for '$formName.$procedureName'. Excel expects: $generatedHeader"
+                        }
+                        $lineCount = [int]$codeModule.ProcCountLines($procedureName, 0)
+                        $codeModule.DeleteLines($startLine, $lineCount)
+                        $codeModule.InsertLines($startLine, $procedureSource)
+                    }
+                    $persistedStart = [int]$codeModule.ProcStartLine($procedureName, 0)
+                    if ($persistedStart -le 0) {
+                        throw "UserForm event handler '$formName.$procedureName' was not created"
+                    }
+                    $updatedEventHandlers.Add("$formName.$procedureName")
+                    $expectedEventHandlers.Add([pscustomobject]@{
+                        formName = $formName
+                        procedureName = $procedureName
+                        procedureSource = $procedureSource
+                    })
+                } finally {
+                    Release-ComObject $codeModule
+                    Release-ComObject $ctrlObj
+                    Release-ComObject $ctrlControls
+                    Release-ComObject $designer
                     Release-ComObject $targetComp
                 }
             }
@@ -1115,6 +1401,80 @@ End Sub
             }
         }
 
+        # Verify updated UserForm control geometry and properties.
+        foreach ($expectedControl in $expectedUpdatedControls) {
+            $formName = [string]$expectedControl.formName
+            $ctrlName = [string]$expectedControl.name
+            $changes = $expectedControl.changes
+            $comp = $null; $designer = $null; $controls = $null; $ctrl = $null
+            try {
+                $comp = $verifyComponents.Item($formName)
+                if ($comp.Type -ne 3) { throw "$formName is not a form" }
+                $designer = $comp.Designer
+                $controls = $designer.Controls
+                $ctrl = $controls.Item($ctrlName)
+                if (-not $ctrl) { throw "Updated control '$ctrlName' not found on form '$formName'" }
+                foreach ($propertyName in @('left', 'top', 'width', 'height')) {
+                    if (-not (Test-ObjectProperty $changes $propertyName)) { continue }
+                    $actual = [double]$ctrl.$propertyName
+                    $expected = [double]$changes.$propertyName
+                    if ([Math]::Abs($actual - $expected) -gt 0.1) {
+                        throw "Updated control '$formName.$ctrlName' $propertyName mismatch: $actual vs $expected"
+                    }
+                }
+                foreach ($propertyName in @('caption', 'controlTipText')) {
+                    if (-not (Test-ObjectProperty $changes $propertyName)) { continue }
+                    if ([string]$ctrl.$propertyName -cne [string]$changes.$propertyName) {
+                        throw "Updated control '$formName.$ctrlName' $propertyName mismatch"
+                    }
+                }
+                foreach ($propertyName in @('enabled', 'visible')) {
+                    if (-not (Test-ObjectProperty $changes $propertyName)) { continue }
+                    if ([bool]$ctrl.$propertyName -ne [bool]$changes.$propertyName) {
+                        throw "Updated control '$formName.$ctrlName' $propertyName mismatch"
+                    }
+                }
+                if (
+                    (Test-ObjectProperty $changes 'tabIndex') -and
+                    [int]$ctrl.TabIndex -ne [int]$changes.tabIndex
+                ) {
+                    throw "Updated control '$formName.$ctrlName' tabIndex mismatch"
+                }
+            } finally {
+                Release-ComObject $ctrl
+                Release-ComObject $controls
+                Release-ComObject $designer
+                Release-ComObject $comp
+            }
+        }
+
+        # Verify exact event procedures without executing VBA.
+        foreach ($expectedEvent in $expectedEventHandlers) {
+            $formName = [string]$expectedEvent.formName
+            $procedureName = [string]$expectedEvent.procedureName
+            $comp = $null; $codeModule = $null
+            try {
+                $comp = $verifyComponents.Item($formName)
+                if ($comp.Type -ne 3) { throw "$formName is not a form" }
+                $codeModule = $comp.CodeModule
+                $startLine = [int]$codeModule.ProcStartLine($procedureName, 0)
+                $lineCount = [int]$codeModule.ProcCountLines($procedureName, 0)
+                if ($startLine -le 0 -or $lineCount -le 0) {
+                    throw "UserForm event handler '$formName.$procedureName' was not persisted"
+                }
+                $actualSource = [string]$codeModule.Lines($startLine, $lineCount)
+                if (
+                    (Normalize-VbaProcedureSource $actualSource) -cne
+                    (Normalize-VbaProcedureSource ([string]$expectedEvent.procedureSource))
+                ) {
+                    throw "UserForm event handler '$formName.$procedureName' source mismatch"
+                }
+            } finally {
+                Release-ComObject $codeModule
+                Release-ComObject $comp
+            }
+        }
+
         # Verify buttons
         foreach ($expectedButton in $expectedButtons) {
             $sheetName = [string]$expectedButton.sheetName
@@ -1299,6 +1659,8 @@ End Sub
         changed = $true
         createdUserForms = @($createdForms)
         addedControls = @($createdControls)
+        updatedControls = @($updatedControls)
+        updatedEventHandlers = @($updatedEventHandlers)
         createdButtons = @($createdButtons)
         assignedButtons = @($assignedButtons)
         createdActiveXControls = @($createdActiveXControls)

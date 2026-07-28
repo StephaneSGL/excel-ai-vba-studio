@@ -104,6 +104,18 @@ export interface VbaUserFormControl {
 	progId?: string;
 }
 
+export interface VbaUserFormControlChanges {
+	left?: number;
+	top?: number;
+	width?: number;
+	height?: number;
+	caption?: string;
+	enabled?: boolean;
+	visible?: boolean;
+	tabIndex?: number;
+	controlTipText?: string;
+}
+
 export type VbaDesignOperation =
 	| {
 			kind: 'createUserForm';
@@ -118,6 +130,20 @@ export type VbaDesignOperation =
 			kind: 'addUserFormControl';
 			formName: string;
 			control: VbaUserFormControl;
+	  }
+	| {
+			kind: 'updateUserFormControl';
+			formName: string;
+			name: string;
+			changes: VbaUserFormControlChanges;
+	  }
+	| {
+			kind: 'setUserFormEventHandler';
+			formName: string;
+			objectName: string;
+			eventName: string;
+			procedureSource: string;
+			replaceExisting?: boolean;
 	  }
 	| {
 			kind: 'createWorksheetButton';
@@ -160,6 +186,8 @@ export interface VbaDesignToolResult {
 	changed: true;
 	createdUserForms: string[];
 	addedControls: string[];
+	updatedControls: string[];
+	updatedEventHandlers: string[];
 	createdButtons: string[];
 	assignedButtons: string[];
 	createdActiveXControls: string[];

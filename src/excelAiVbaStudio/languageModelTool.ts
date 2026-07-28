@@ -9,6 +9,7 @@ import {
 	VbaDesignOperation,
 	VbaDesignToolInput,
 	VbaUserFormControl,
+	VbaUserFormControlChanges,
 	VbaUserFormControlType,
 	VbaWriteToolInput
 } from './types';
@@ -17,6 +18,7 @@ import { ExcelAiVbaWorkbookService } from './workbookService';
 const MAX_TOOL_CONTEXT_BYTES = 4 * 1024 * 1024;
 const MAX_VBA_SOURCE_CHARACTERS = 2_000_000;
 const MAX_VBA_DESIGN_OPERATIONS = 100;
+const MAX_VBA_EVENT_SOURCE_CHARACTERS = 200_000;
 const MAX_DESIGN_TEXT_CHARACTERS = 1_000;
 const MAX_DESIGN_COORDINATE = 10_000;
 const MAX_DESIGN_TAB_INDEX = 32_767;
@@ -326,6 +328,110 @@ function parseDesignControl(
 	};
 }
 
+function parseDesignControlChanges(
+	value: unknown,
+	label: string
+): VbaUserFormControlChanges {
+	const source = designObject(value, label);
+	const allowed = [
+		'left',
+		'top',
+		'width',
+		'height',
+		'caption',
+		'enabled',
+		'visible',
+		'tabIndex',
+		'controlTipText'
+	];
+	rejectUnknownDesignProperties(source, allowed, label);
+	if (!allowed.some(property => source[property] !== undefined)) {
+		throw new Error(`${label} doit contenir au moins une propriété à modifier.`);
+	}
+	const changes: VbaUserFormControlChanges = {};
+	for (const property of ['left', 'top', 'width', 'height'] as const) {
+		if (source[property] === undefined) {
+			continue;
+		}
+		changes[property] = designNumber(
+			source[property],
+			`${label}.${property}`,
+			property === 'left' || property === 'top' ? 0 : Number.MIN_VALUE,
+			MAX_DESIGN_COORDINATE
+		) as number;
+	}
+	for (const property of ['caption', 'controlTipText'] as const) {
+		const text = designString(source[property], `${label}.${property}`, {
+			maxLength: MAX_DESIGN_TEXT_CHARACTERS
+		});
+		if (text !== undefined) {
+			changes[property] = text;
+		}
+	}
+	for (const property of ['enabled', 'visible'] as const) {
+		if (source[property] === undefined) {
+			continue;
+		}
+		if (typeof source[property] !== 'boolean') {
+			throw new Error(`${label}.${property} doit être un booléen.`);
+		}
+		changes[property] = source[property] as boolean;
+	}
+	if (source.tabIndex !== undefined) {
+		const tabIndex = designNumber(
+			source.tabIndex,
+			`${label}.tabIndex`,
+			0,
+			MAX_DESIGN_TAB_INDEX
+		) as number;
+		if (!Number.isInteger(tabIndex)) {
+			throw new Error(`${label}.tabIndex doit être un entier.`);
+		}
+		changes.tabIndex = tabIndex;
+	}
+	return changes;
+}
+
+function validateUserFormEventProcedure(
+	procedureSource: string,
+	objectName: string,
+	eventName: string,
+	label: string
+): void {
+	const procedureName = `${objectName}_${eventName}`;
+	const escapedName = procedureName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const lines = procedureSource
+		.replace(/\r\n?/g, '\n')
+		.split('\n')
+		.map(line => line.replace(/[ \t]+$/g, ''));
+	while (lines.length && !lines[0].trim()) {
+		lines.shift();
+	}
+	while (lines.length && !lines[lines.length - 1].trim()) {
+		lines.pop();
+	}
+	const headerPattern = new RegExp(
+		`^[\\t ]*Private[\\t ]+Sub[\\t ]+${escapedName}[\\t ]*\\([^\\r\\n]*\\)[\\t ]*$`,
+		'i'
+	);
+	if (
+		lines.length < 2 ||
+		!headerPattern.test(lines[0]) ||
+		!/^[\t ]*End[\t ]+Sub[\t ]*$/i.test(lines[lines.length - 1]) ||
+		lines
+			.slice(1, -1)
+			.some(line =>
+				/^[\t ]*(?:(?:Private|Public|Friend|Static)[\t ]+)?(?:Sub|Function|Property[\t ]+(?:Get|Let|Set))\b/i.test(
+					line
+				) || /^[\t ]*End[\t ]+Sub\b/i.test(line)
+			)
+	) {
+		throw new Error(
+			`${label} doit contenir uniquement Private Sub ${procedureName}(...) ... End Sub.`
+		);
+	}
+}
+
 function parseDesignOperation(
 	value: unknown,
 	index: number
@@ -397,6 +503,69 @@ function parseDesignOperation(
 			kind,
 			formName: designIdentifier(source.formName, `${label}.formName`),
 			control: parseDesignControl(source.control, `${label}.control`)
+		};
+	}
+	if (kind === 'updateUserFormControl') {
+		rejectUnknownDesignProperties(
+			source,
+			['kind', 'formName', 'name', 'changes'],
+			label
+		);
+		if (source.changes === undefined) {
+			throw new Error(`${label}.changes est obligatoire.`);
+		}
+		return {
+			kind,
+			formName: designIdentifier(source.formName, `${label}.formName`),
+			name: designIdentifier(source.name, `${label}.name`),
+			changes: parseDesignControlChanges(source.changes, `${label}.changes`)
+		};
+	}
+	if (kind === 'setUserFormEventHandler') {
+		rejectUnknownDesignProperties(
+			source,
+			[
+				'kind',
+				'formName',
+				'objectName',
+				'eventName',
+				'procedureSource',
+				'replaceExisting'
+			],
+			label
+		);
+		const formName = designIdentifier(source.formName, `${label}.formName`);
+		const objectName = designIdentifier(
+			source.objectName,
+			`${label}.objectName`
+		);
+		const eventName = designIdentifier(source.eventName, `${label}.eventName`);
+		const procedureSource = designString(
+			source.procedureSource,
+			`${label}.procedureSource`,
+			{ required: true, maxLength: MAX_VBA_EVENT_SOURCE_CHARACTERS }
+		) as string;
+		if (
+			source.replaceExisting !== undefined &&
+			typeof source.replaceExisting !== 'boolean'
+		) {
+			throw new Error(`${label}.replaceExisting doit être un booléen.`);
+		}
+		validateUserFormEventProcedure(
+			procedureSource,
+			objectName,
+			eventName,
+			`${label}.procedureSource`
+		);
+		return {
+			kind,
+			formName,
+			objectName,
+			eventName,
+			procedureSource,
+			...(source.replaceExisting !== undefined
+				? { replaceExisting: source.replaceExisting as boolean }
+				: {})
 		};
 	}
 	if (kind === 'createWorksheetButton') {
@@ -529,6 +698,8 @@ function parseDesignInput(value: unknown): VbaDesignToolInput {
 	const operations = source.operations.map(parseDesignOperation);
 	const formNames = new Set<string>();
 	const controlKeys = new Set<string>();
+	const updatedControlKeys = new Set<string>();
+	const eventHandlerKeys = new Set<string>();
 	const createdButtonKeys = new Set<string>();
 	const assignedButtonKeys = new Set<string>();
 	const createdActiveXKeys = new Set<string>();
@@ -561,6 +732,28 @@ function parseDesignInput(value: unknown): VbaDesignToolInput {
 				);
 			}
 			controlKeys.add(controlKey);
+		} else if (operation.kind === 'updateUserFormControl') {
+			const controlKey = `${operation.formName.toLocaleLowerCase(
+				'en-US'
+			)}\0${operation.name.toLocaleLowerCase('en-US')}`;
+			if (updatedControlKeys.has(controlKey)) {
+				throw new Error(
+					`Contrôle modifié plusieurs fois : ${operation.formName}.${operation.name}.`
+				);
+			}
+			updatedControlKeys.add(controlKey);
+		} else if (operation.kind === 'setUserFormEventHandler') {
+			const eventKey = `${operation.formName.toLocaleLowerCase(
+				'en-US'
+			)}\0${operation.objectName.toLocaleLowerCase(
+				'en-US'
+			)}\0${operation.eventName.toLocaleLowerCase('en-US')}`;
+			if (eventHandlerKeys.has(eventKey)) {
+				throw new Error(
+					`Événement demandé plusieurs fois : ${operation.formName}.${operation.objectName}_${operation.eventName}.`
+				);
+			}
+			eventHandlerKeys.add(eventKey);
 		} else if (
 			operation.kind === 'createWorksheetButton' ||
 			operation.kind === 'assignWorksheetButtonMacro'
@@ -578,7 +771,10 @@ function parseDesignInput(value: unknown): VbaDesignToolInput {
 				);
 			}
 			targetSet.add(buttonKey);
-		} else {
+		} else if (
+			operation.kind === 'createWorksheetActiveXControl' ||
+			operation.kind === 'bindWorksheetActiveXMacro'
+		) {
 			const control = operation.kind === 'createWorksheetActiveXControl'
 				? operation.control.name
 				: operation.name;

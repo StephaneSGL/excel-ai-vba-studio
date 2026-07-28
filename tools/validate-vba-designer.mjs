@@ -54,6 +54,11 @@ assert.match(
   'button verification must preserve worksheet names containing dots',
 );
 assert.match(script, /assignWorksheetButtonMacro/);
+assert.match(script, /updateUserFormControl/);
+assert.match(script, /setUserFormEventHandler/);
+assert.match(script, /replaceExisting=true/);
+assert.match(script, /expectedUpdatedControls/);
+assert.match(script, /expectedEventHandlers/);
 assert.match(script, /createWorksheetActiveXControl/);
 assert.match(script, /bindWorksheetActiveXMacro/);
 assert.match(script, /allowedCustomActiveXProgIds/);
@@ -97,13 +102,15 @@ const operationsSchema = inputSchema.properties.operations;
 assert.equal(operationsSchema.type, 'array');
 assert.equal(operationsSchema.minItems, 1);
 assert.equal(operationsSchema.maxItems, 100);
-assert.equal(operationsSchema.items.oneOf.length, 5);
+assert.equal(operationsSchema.items.oneOf.length, 7);
 for (const operationSchema of operationsSchema.items.oneOf) {
   assert.equal(operationSchema.type, 'object');
   assert.equal(operationSchema.additionalProperties, false);
 }
 const [
   createFormSchema,
+  updateControlSchema,
+  eventHandlerSchema,
   addControlSchema,
   createButtonSchema,
   assignOrBindSchema,
@@ -115,6 +122,16 @@ assert.equal(
   createFormSchema.properties.controls.items.additionalProperties,
   false,
 );
+assert.deepEqual(updateControlSchema.properties.kind.enum, [
+  'updateUserFormControl',
+]);
+assert.equal(updateControlSchema.properties.changes.minProperties, 1);
+assert.equal(updateControlSchema.properties.changes.additionalProperties, false);
+assert.deepEqual(eventHandlerSchema.properties.kind.enum, [
+  'setUserFormEventHandler',
+]);
+assert.equal(eventHandlerSchema.properties.procedureSource.maxLength, 200000);
+assert.equal(eventHandlerSchema.properties.replaceExisting.default, false);
 assert.deepEqual(addControlSchema.properties.kind.enum, [
   'addUserFormControl',
 ]);
@@ -140,6 +157,8 @@ assert.match(types, /VbaDesignToolInput/);
 assert.match(types, /designerVerified:\s*true/);
 assert.match(types, /customActiveX/);
 assert.match(types, /assignedButtons/);
+assert.match(types, /updatedControls/);
+assert.match(types, /updatedEventHandlers/);
 assert.match(types, /createdActiveXControls/);
 assert.match(types, /boundActiveXControls/);
 assert.match(languageTool, /parseDesignInput/);
@@ -171,5 +190,5 @@ assert.match(manifest.scripts?.validate ?? '', /validate:vba-designer/);
 assert.match(manifest.scripts?.validate ?? '', /test:vba-designer/);
 
 console.log(
-  'VBA designer validation passed: bounded XLSM tool, transactional backup, native designer verification, no macro execution.',
+  'VBA designer validation passed: visual control updates, bounded event handlers, transactional backup, native verification, no macro execution.',
 );

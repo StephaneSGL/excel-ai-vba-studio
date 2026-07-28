@@ -49,6 +49,8 @@ Excel AI & VBA Studio is a preview VS Code extension for inspecting supported sp
 - `#excelVbaDesignWorkbook` creates complete UserForms with real designer/`.frx` streams, adds supported visual controls, and creates worksheet Form Control buttons assigned to macros in an existing `.xlsm`.
 - The VBA Controls view inventories worksheet Form Control buttons and ActiveX controls, resolves their public macro targets, and displays a static button-to-macro-to-UserForm flow without running VBA.
 - Existing Form Control buttons can be reassigned, and supported worksheet ActiveX buttons can be created or bound to verified macros through the transactional VBA Designer.
+- VBA Studio includes a visual UserForm canvas backed by the real COM designer inventory. Standard controls can be added, moved, resized, inspected, and connected to complete VBA event procedures.
+- GitHub Copilot can use `updateUserFormControl` and `setUserFormEventHandler` through `#excelVbaDesignWorkbook`, including parameterized events such as `KeyDown`, `BeforeUpdate`, and `QueryClose`.
 - **Open VBA Studio in VS Code** creates an isolated, validated VBA workspace in a separate VS Code window and opens the integrated studio there.
 - No extension telemetry and no API key management by the extension.
 
@@ -84,16 +86,16 @@ The Visual Studio Marketplace release is not available yet. This public reposito
 4. Reference `#excelVbaWorkbook` explicitly from a compatible VS Code AI chat.
 5. Use **Open VBA Studio in VS Code** to open a separate Developer window containing the project, controls graph, and real exported sources.
 6. Edit and save a supported `.bas`, `.cls`, or existing `.frm` file. For `.xlsx`, the first `.bas`/`.cls` write creates a sibling `.xlsm`; continue on the returned target. Existing macro-enabled workbooks use validated transactional replacement.
-7. Reference `#excelVbaDesignWorkbook` to create a UserForm, add supported controls, create or reassign a worksheet Form Control button, or create/bind a permitted worksheet ActiveX control in an existing `.xlsm`.
+7. Reference `#excelVbaDesignWorkbook` to create a UserForm, add or reposition supported controls, assign complete control/UserForm event procedures, create or reassign a worksheet Form Control button, or create/bind a permitted worksheet ActiveX control in an existing `.xlsm`.
 
 ### What changes inside XLSX and XLSM
 
 - The first standard module or class applied to an `.xlsx` is inserted through a controlled hidden Excel instance into a new sibling `.xlsm`. The `.xlsx` source is never rewritten.
 - A standard module or class created in VBA Studio can be inserted into the `.xlsm` VBA project.
 - Existing UserForm code can be updated. Its designer and `.frx` resources remain unchanged and are verified before write-back.
-- The separate VBA Designer tool can create a complete UserForm with real designer/`.frx` streams, add supported controls to a new or existing UserForm, create or reassign a worksheet Form Control button, and create/bind permitted worksheet ActiveX controls.
+- The separate VBA Designer tool can create a complete UserForm with real designer/`.frx` streams, add or reposition supported controls, assign bounded event procedures, create or reassign a worksheet Form Control button, and create/bind permitted worksheet ActiveX controls.
 - Supported standard controls are Label, TextBox, CommandButton, ComboBox, ListBox, CheckBox, OptionButton, ToggleButton, Frame, Image, SpinButton, and ScrollBar.
-- UserForm controls and button flows can be simulated visually in VS Code without running VBA; **Open in Excel** provides the real clickable controls and macro events.
+- UserForm controls can be added, moved, resized, and connected to VBA events on the visual VS Code canvas. Button flows remain a static simulation; **Open in Excel** provides the real clickable controls and macro events.
 - Existing UserForms, controls, buttons, ActiveX data, VBA, and opaque OOXML parts are preserved during targeted cell edits.
 - **Open in Excel** opens the real workbook. **Open native VBE** opens Excel and its separate VBA editor. **Open VBA Studio in VS Code** opens a separate VS Code Developer window.
 
@@ -189,13 +191,14 @@ This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and 
 - UserForm and button creation requires an existing local `.xlsm`, Excel desktop, and VBA project-object-model access already enabled by the user. Signed and protected VBA projects are refused.
 - The interactive VS Code preview simulates control state only and never runs event procedures; real VBA behavior remains an explicit action inside native Excel.
 - Integrated `.xlsm` editing supports values, formulas, cell styles, explicit row heights and column widths, appending the five conditional-formatting presets exposed by the ribbon, and clearing all rules on one sheet. Worksheet structure, implicit dimension resets, merges, objects, controls, buttons, existing-rule edits, rule reordering, and partial rule deletion are refused.
-- There is no drag-and-drop UserForm designer inside VS Code yet. Visual creation and worksheet controls use bounded operations and explicit confirmations.
+- The visual UserForm designer supports the standard-control toolbox, positioning, sizing, core properties, and event procedures. Nested-container editing, z-order, font/color styling, images, multi-selection, copy/paste, and native VBE parity remain future work.
 - Excel or enterprise policy can block ActiveX insertion even when the extension request is valid. The extension reports that refusal and never weakens Trust Center settings automatically.
 
 ## Version history
 
 | Version | Summary |
 | --- | --- |
+| `0.5.0` | Adds the visual UserForm canvas, native form/control inventory, control positioning and property updates, plus bounded complex VBA event assignment for Copilot and the visual editor. |
 | `0.4.0` | Adds the worksheet Controls view, static button-to-macro-to-UserForm graph, Form Control reassignment, permitted ActiveX creation/binding, and a separate VS Code Developer window. It also fixes false `.xlsm` `worksheet-features` save refusals caused by grid hydration. |
 | `0.3.0` | Introduced real UserForm designer/`.frx` creation, 12 standard controls, worksheet Form Control creation, and broader native formatting edits. These operations are transactional and verified against a live Excel copy. |
 | `0.2.1` | Added first-write `.xlsx` to sibling `.xlsm` conversion for new standard modules and classes. It preserved the source and returned the exact target path for subsequent writes. |
@@ -211,6 +214,7 @@ This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and 
 ## Roadmap
 
 - Improve grid fidelity and accessibility.
+- Expand the visual UserForm designer with nested containers, z-order, styling, multi-selection, and copy/paste.
 - Expand the integrated Formula, Data, and Developer surfaces.
 - Add synthetic workbooks and regression coverage for unsupported macro and formatting cases.
 - Complete English and French localization.

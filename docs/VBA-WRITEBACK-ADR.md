@@ -134,8 +134,11 @@ directs the user to native Excel or the VBE.
 
 - The source-only VBA writer edits existing UserForm code while preserving its
   designer. The separate bounded VBA Designer can create UserForms, supported
-  controls, worksheet Form Control buttons, and permitted worksheet ActiveX
-  controls in an existing `.xlsm`; it does not provide drag-and-drop editing.
+  controls, update control geometry/core properties, assign exact event
+  procedures, create worksheet Form Control buttons, and create permitted
+  worksheet ActiveX controls in an existing `.xlsm`. Its VS Code canvas does
+  not yet provide nested-container editing, z-order, font/color styling,
+  multi-selection, copy/paste, or full native VBE parity.
 - Worksheet ActiveX creation and `Click` binding require Excel to permit
   insertion. Third-party ProgIDs are denied unless the exact value is already
   configured in `excelAiVbaStudio.allowedCustomActiveXProgIds`.

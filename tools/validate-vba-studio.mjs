@@ -31,6 +31,27 @@ const manifest = JSON.parse(
   readFileSync(resolve(root, 'package.json'), 'utf8'),
 );
 
+const htmlMarker = 'return `<!doctype html>';
+const htmlStart = panel.indexOf(htmlMarker);
+const htmlEnd = panel.indexOf('</html>`;', htmlStart);
+assert.ok(htmlStart >= 0 && htmlEnd > htmlStart, 'VBA Studio HTML template is missing');
+const htmlTemplate = panel.slice(
+  htmlStart + 'return `'.length,
+  htmlEnd + '</html>'.length,
+);
+const renderedHtml = Function(
+  'nonce',
+  `return \`${htmlTemplate}\`;`,
+)('validation-nonce');
+const webviewScript = /<script nonce="validation-nonce">([\s\S]*?)<\/script>/.exec(
+  renderedHtml,
+)?.[1];
+assert.ok(webviewScript, 'VBA Studio webview script is missing');
+assert.doesNotThrow(
+  () => Function(webviewScript),
+  'VBA Studio generated webview JavaScript must parse',
+);
+
 assert.doesNotMatch(
   workbookService,
   /removeOwnedDirectory\(\s*paths\.vbaDirectory/,
@@ -64,6 +85,12 @@ for (const extension of ['.bas', '.cls', '.frm']) {
 assert.match(panel, /Content-Security-Policy/, 'the VBA Studio webview needs a CSP');
 assert.match(panel, /MAX_SOURCE_CHARACTERS/, 'VBA source writes must remain bounded');
 assert.match(panel, /controls-view/);
+assert.match(panel, /designer-view/);
+assert.match(panel, /renderDesigner/);
+assert.match(panel, /addVisualControl/);
+assert.match(panel, /updateVisualControl/);
+assert.match(panel, /setUserFormEvent/);
+assert.match(panel, /replaceExisting/);
 assert.match(panel, /assignFormButton/);
 assert.match(panel, /bindActiveX/);
 assert.match(panel, /createWorksheetActiveXControl/);
@@ -145,10 +172,18 @@ assert.doesNotMatch(
 );
 assert.match(exporter, /worksheetButtons/);
 assert.match(exporter, /worksheetActiveXControls/);
+assert.match(exporter, /userForms\s*=\s*@\(\)/);
+assert.match(exporter, /Get-VbaControlTypeLabel/);
+assert.match(exporter, /workbook\.vba\.userForms\.controls/);
 assert.match(
   exporter,
   /This is metadata only; no OnAction or event is invoked/,
 );
 assert.doesNotMatch(exporter, /\.Run\s*\(/i, 'exporter must never run a macro');
+assert.equal(
+  manifest.scripts?.['test:vba-inventory'],
+  'node test/vba-userform-inventory.mjs',
+);
+assert.match(manifest.scripts?.validate ?? '', /test:vba-inventory/);
 
-console.log('VBA Studio validation passed: separate Developer window, static control graph, real sources, secure panel.');
+console.log('VBA Studio validation passed: separate Developer window, visual UserForm designer, event binding, static control graph, real sources, secure panel.');
