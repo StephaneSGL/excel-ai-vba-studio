@@ -53,6 +53,16 @@ assert.match(
   /\$expectedButtons\s*=\s*\[System\.Collections\.Generic\.List\[object\]\]::new\(\)[\s\S]+?expectedButton\.sheetName/,
   'button verification must preserve worksheet names containing dots',
 );
+assert.match(
+  script,
+  /function Test-WorksheetButtonOnActionEquivalent[\s\S]+?StringComparer\]::OrdinalIgnoreCase[\s\S]+?Test-WorksheetButtonOnActionEquivalent/,
+  'button verification must tolerate Excel case normalization without accepting another target',
+);
+assert.doesNotMatch(
+  script,
+  /\$b\.OnAction\s+-cne\s+\$expectedButton\.onAction/,
+  'button verification must not compare OnAction case-sensitively',
+);
 assert.match(script, /assignWorksheetButtonMacro/);
 assert.match(script, /updateUserFormControl/);
 assert.match(script, /setUserFormEventHandler/);

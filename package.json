@@ -2,7 +2,7 @@
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
   "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",

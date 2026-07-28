@@ -23,6 +23,22 @@ $python = Join-Path $venv 'Scripts\python.exe'
 $previousPythonHashSeed = $env:PYTHONHASHSEED
 $previousSourceDateEpoch = $env:SOURCE_DATE_EPOCH
 
+function Get-Sha256 {
+    param([string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString(
+            $sha256.ComputeHash($stream)
+        ).Replace('-', '')
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 try {
     # PyInstaller documents both values as required inputs for reproducible
     # Windows builds. Keep them fixed so CI can compare the shipped helper
@@ -66,7 +82,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'The built VBA write-back executable failed its smoke test.'
     }
-    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath).Hash
+    $hash = Get-Sha256 $outputPath
     [Console]::Out.WriteLine("VBA_WRITEBACK_EXE|$outputPath")
     [Console]::Out.WriteLine("SHA256|$hash")
 }
