@@ -24,6 +24,7 @@ const VBA_SOURCE_EXTENSIONS = new Set(['.bas', '.cls', '.frm']);
 const VBA_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,30}$/;
 const VBA_MACRO_PATTERN =
 	/^[A-Za-z_][A-Za-z0-9_]{0,30}(?:\.[A-Za-z_][A-Za-z0-9_]{0,30})?$/;
+const ACTIVEX_PROGID_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{1,127}$/;
 const VBA_USERFORM_CONTROL_TYPES = new Set<VbaUserFormControlType>([
 	'label',
 	'textBox',
@@ -36,7 +37,8 @@ const VBA_USERFORM_CONTROL_TYPES = new Set<VbaUserFormControlType>([
 	'frame',
 	'image',
 	'spinButton',
-	'scrollBar'
+	'scrollBar',
+	'customActiveX'
 ]);
 
 interface LanguageModelApi {
@@ -226,7 +228,8 @@ function parseDesignControl(
 			'enabled',
 			'visible',
 			'tabIndex',
-			'controlTipText'
+			'controlTipText',
+			'progId'
 		],
 		label
 	);
@@ -237,6 +240,20 @@ function parseDesignControl(
 		!VBA_USERFORM_CONTROL_TYPES.has(type as VbaUserFormControlType)
 	) {
 		throw new Error(`${label}.type n’est pas un type de contrôle pris en charge.`);
+	}
+	const progId = designString(source.progId, `${label}.progId`, {
+		maxLength: 128
+	});
+	if (type === 'customActiveX') {
+		if (!progId || !ACTIVEX_PROGID_PATTERN.test(progId)) {
+			throw new Error(
+				`${label}.progId est obligatoire pour customActiveX et doit être un ProgID valide.`
+			);
+		}
+	} else if (progId !== undefined) {
+		throw new Error(
+			`${label}.progId est accepté uniquement avec type=customActiveX.`
+		);
 	}
 	const name = designIdentifier(source.name, `${label}.name`);
 	const left = designNumber(
@@ -304,7 +321,8 @@ function parseDesignControl(
 			? { visible: source.visible as boolean }
 			: {}),
 		...(tabIndex !== undefined ? { tabIndex } : {}),
-		...(controlTipText !== undefined ? { controlTipText } : {})
+		...(controlTipText !== undefined ? { controlTipText } : {}),
+		...(progId !== undefined ? { progId } : {})
 	};
 }
 
@@ -443,6 +461,51 @@ function parseDesignOperation(
 			) as number
 		};
 	}
+	if (
+		kind === 'assignWorksheetButtonMacro' ||
+		kind === 'bindWorksheetActiveXMacro'
+	) {
+		rejectUnknownDesignProperties(
+			source,
+			['kind', 'sheetName', 'name', 'macroName'],
+			label
+		);
+		const macroName = designString(
+			source.macroName,
+			`${label}.macroName`,
+			{ required: true, maxLength: 63 }
+		) as string;
+		if (!VBA_MACRO_PATTERN.test(macroName)) {
+			throw new Error(`${label}.macroName n’est pas un nom de macro valide.`);
+		}
+		return {
+			kind,
+			sheetName: designString(source.sheetName, `${label}.sheetName`, {
+				required: true,
+				maxLength: MAX_DESIGN_TEXT_CHARACTERS
+			}) as string,
+			name: designIdentifier(source.name, `${label}.name`),
+			macroName
+		};
+	}
+	if (kind === 'createWorksheetActiveXControl') {
+		rejectUnknownDesignProperties(
+			source,
+			['kind', 'sheetName', 'control'],
+			label
+		);
+		if (source.control === undefined) {
+			throw new Error(`${label}.control est obligatoire.`);
+		}
+		return {
+			kind,
+			sheetName: designString(source.sheetName, `${label}.sheetName`, {
+				required: true,
+				maxLength: MAX_DESIGN_TEXT_CHARACTERS
+			}) as string,
+			control: parseDesignControl(source.control, `${label}.control`)
+		};
+	}
 	throw new Error(`${label}.kind n’est pas une opération prise en charge.`);
 }
 
@@ -466,7 +529,10 @@ function parseDesignInput(value: unknown): VbaDesignToolInput {
 	const operations = source.operations.map(parseDesignOperation);
 	const formNames = new Set<string>();
 	const controlKeys = new Set<string>();
-	const buttonKeys = new Set<string>();
+	const createdButtonKeys = new Set<string>();
+	const assignedButtonKeys = new Set<string>();
+	const createdActiveXKeys = new Set<string>();
+	const boundActiveXKeys = new Set<string>();
 	for (const operation of operations) {
 		if (operation.kind === 'createUserForm') {
 			const formKey = operation.name.toLocaleLowerCase('en-US');
@@ -495,16 +561,40 @@ function parseDesignInput(value: unknown): VbaDesignToolInput {
 				);
 			}
 			controlKeys.add(controlKey);
-		} else {
+		} else if (
+			operation.kind === 'createWorksheetButton' ||
+			operation.kind === 'assignWorksheetButtonMacro'
+		) {
 			const buttonKey = `${operation.sheetName.toLocaleLowerCase(
 				'en-US'
 			)}\0${operation.name.toLocaleLowerCase('en-US')}`;
-			if (buttonKeys.has(buttonKey)) {
+			const targetSet =
+				operation.kind === 'createWorksheetButton'
+					? createdButtonKeys
+					: assignedButtonKeys;
+			if (targetSet.has(buttonKey)) {
 				throw new Error(
 					`Bouton demandé plusieurs fois : ${operation.sheetName}.${operation.name}.`
 				);
 			}
-			buttonKeys.add(buttonKey);
+			targetSet.add(buttonKey);
+		} else {
+			const control = operation.kind === 'createWorksheetActiveXControl'
+				? operation.control.name
+				: operation.name;
+			const controlKey = `${operation.sheetName.toLocaleLowerCase(
+				'en-US'
+			)}\0${control.toLocaleLowerCase('en-US')}`;
+			const targetSet =
+				operation.kind === 'createWorksheetActiveXControl'
+					? createdActiveXKeys
+					: boundActiveXKeys;
+			if (targetSet.has(controlKey)) {
+				throw new Error(
+					`Contrôle ActiveX demandé plusieurs fois : ${operation.sheetName}.${control}.`
+				);
+			}
+			targetSet.add(controlKey);
 		}
 	}
 	return {

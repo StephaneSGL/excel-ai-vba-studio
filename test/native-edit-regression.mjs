@@ -114,8 +114,51 @@ try {
   const {
     buildNativeCellEditOperations,
     buildNativeExcelEditPlan,
+    initializeNativeEditSheets,
   } = await import(
     `${pathToFileURL(outputPath).href}?cache=${Date.now()}`
+  );
+
+  let displayedSheets = [];
+  const normalizingSpreadsheet = {
+    loadData(inputSheets) {
+      displayedSheets = structuredClone(inputSheets).map((inputSheet) => {
+        const {
+          images: _images,
+          pageSetup: _pageSetup,
+          ...normalizedSheet
+        } = inputSheet;
+        return normalizedSheet;
+      });
+    },
+    getData() {
+      return displayedSheets;
+    },
+  };
+  const featureRichSource = [
+    sheet('Instructions', { '0:0': { text: 'Old' } }, [], {
+      images: [{ id: 'existing-shape' }],
+      pageSetup: { orientation: 'landscape' },
+    }),
+  ];
+  const normalizedBaseline = initializeNativeEditSheets(
+    normalizingSpreadsheet,
+    featureRichSource,
+  );
+  const supportedCellEdit = structuredClone(displayedSheets);
+  supportedCellEdit[0].rows[0].cells[0].text = 'New';
+  assert.deepEqual(
+    buildNativeExcelEditPlan(normalizedBaseline, supportedCellEdit),
+    {
+      operations: [{
+        sheetName: 'Instructions',
+        row: 1,
+        column: 1,
+        value: { kind: 'text', value: 'New' },
+      }],
+      unsupportedChanges: [],
+    },
+    'reader-only worksheet features must not become false edits after hydration',
   );
 
   assert.deepEqual(

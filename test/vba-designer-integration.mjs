@@ -86,6 +86,47 @@ function excelAutomationReady() {
   return result.status === 0;
 }
 
+function activeXCreationReady() {
+  const probe = [
+    "$ErrorActionPreference = 'Stop'",
+    '$excel = $null',
+    '$workbook = $null',
+    '$worksheet = $null',
+    '$objects = $null',
+    '$control = $null',
+    '$ready = $false',
+    'try {',
+    '  $excel = New-Object -ComObject Excel.Application',
+    '  $excel.AutomationSecurity = 3',
+    '  $excel.DisplayAlerts = $false',
+    '  $excel.EnableEvents = $false',
+    '  $excel.Visible = $false',
+    '  $workbook = $excel.Workbooks.Add()',
+    '  $worksheet = $workbook.Worksheets.Item(1)',
+    '  $objects = $worksheet.OLEObjects()',
+    "  $control = $objects.Add('Forms.CommandButton.1', [Type]::Missing, $false, $false, [Type]::Missing, [Type]::Missing, [Type]::Missing, 20, 20, 120, 28)",
+    '  $ready = $null -ne $control',
+    '} catch {',
+    '  $ready = $false',
+    '} finally {',
+    '  if ($null -ne $workbook) { try { $workbook.Close($false) } catch {} }',
+    '  if ($null -ne $excel) { try { $excel.Quit() } catch {} }',
+    '  foreach ($item in @($control, $objects, $worksheet, $workbook, $excel)) {',
+    '    if ($null -ne $item -and [Runtime.InteropServices.Marshal]::IsComObject($item)) { try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($item) } catch {} }',
+    '  }',
+    '  [GC]::Collect()',
+    '  [GC]::WaitForPendingFinalizers()',
+    '}',
+    'if ($ready) { exit 0 } else { exit 2 }',
+  ].join('\n');
+  const result = spawnSync(
+    'powershell.exe',
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', probe],
+    { encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000 },
+  );
+  return result.status === 0;
+}
+
 function runDesigner(requestPath) {
   return spawnSync(
     'powershell.exe',
@@ -167,6 +208,7 @@ if (!excelAutomationReady()) {
   process.exit(0);
 }
 
+const activeXAvailable = activeXCreationReady();
 const excelBefore = excelProcessIds();
 
 try {
@@ -281,9 +323,10 @@ try {
   writeFileSync(
     requestPath,
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       workbookPath,
       expectedWorkbookSha256: originalHash,
+      allowedCustomActiveXProgIds: ['Forms.ToggleButton.1'],
       operations: [
         {
           kind: 'createUserForm',
@@ -323,6 +366,39 @@ try {
           width: 120,
           height: 28,
         },
+        ...(activeXAvailable ? [{
+          kind: 'createWorksheetActiveXControl',
+          sheetName: 'Data',
+          control: {
+            type: 'commandButton',
+            name: 'btnActiveX',
+            caption: 'Open form',
+            left: 160,
+            top: 20,
+            width: 120,
+            height: 28,
+          },
+        },
+        {
+          kind: 'bindWorksheetActiveXMacro',
+          sheetName: 'Data',
+          name: 'btnActiveX',
+          macroName: 'mCode.ShowUserForm',
+        },
+        {
+          kind: 'createWorksheetActiveXControl',
+          sheetName: 'Data',
+          control: {
+            type: 'customActiveX',
+            progId: 'Forms.ToggleButton.1',
+            name: 'tglAllowlisted',
+            caption: 'Allowed custom',
+            left: 300,
+            top: 20,
+            width: 120,
+            height: 28,
+          },
+        }] : []),
       ],
     }),
     'utf8',
@@ -345,6 +421,15 @@ try {
     'oUserForm.txtGenerated',
   ]);
   assert.deepEqual(output.createdButtons, ['Data.btnGenerated']);
+  assert.deepEqual(output.assignedButtons, []);
+  assert.deepEqual(
+    output.createdActiveXControls,
+    activeXAvailable ? ['Data.btnActiveX', 'Data.tglAllowlisted'] : [],
+  );
+  assert.deepEqual(
+    output.boundActiveXControls,
+    activeXAvailable ? ['Data.btnActiveX'] : [],
+  );
   assert.equal(output.macrosExecuted, false);
   assert.equal(output.accessVbomChanged, false);
   assert.equal(output.designerVerified, true);
@@ -368,6 +453,182 @@ try {
         name.startsWith('frmgenerated/') && /^[0-9a-f]{64}$/.test(digest),
     ),
   );
+
+  const assignmentHash = sha256File(workbookPath);
+  const assignmentRequestPath = join(
+    temporaryDirectory,
+    'designer-assignment.json',
+  );
+  writeFileSync(
+    assignmentRequestPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      workbookPath,
+      expectedWorkbookSha256: assignmentHash,
+      operations: [
+        {
+          kind: 'assignWorksheetButtonMacro',
+          sheetName: 'Data',
+          name: 'btnGenerated',
+          macroName: 'ShowUserForm',
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const assignmentResult = runDesigner(assignmentRequestPath);
+  assert.equal(
+    assignmentResult.status,
+    0,
+    String(assignmentResult.stderr || assignmentResult.stdout),
+  );
+  const assignmentOutput = parseLastJson(assignmentResult.stdout);
+  assert.deepEqual(assignmentOutput.createdButtons, []);
+  assert.deepEqual(assignmentOutput.assignedButtons, ['Data.btnGenerated']);
+  assert.deepEqual(assignmentOutput.createdActiveXControls, []);
+  assert.deepEqual(assignmentOutput.boundActiveXControls, []);
+  assert.equal(sha256File(workbookPath), assignmentOutput.workbookSha256);
+  assert.equal(sha256File(assignmentOutput.backupPath), assignmentHash);
+
+  if (activeXAvailable) {
+  const existingHandlerHash = sha256File(workbookPath);
+  const existingHandlerRequestPath = join(
+    temporaryDirectory,
+    'designer-existing-handler.json',
+  );
+  writeFileSync(
+    existingHandlerRequestPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      workbookPath,
+      expectedWorkbookSha256: existingHandlerHash,
+      operations: [
+        {
+          kind: 'bindWorksheetActiveXMacro',
+          sheetName: 'Data',
+          name: 'btnActiveX',
+          macroName: 'mCode.ShowUserForm',
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const existingHandlerResult = runDesigner(existingHandlerRequestPath);
+  assert.notEqual(
+    existingHandlerResult.status,
+    0,
+    'existing ActiveX handler replacement must fail',
+  );
+  assert.match(
+    String(existingHandlerResult.stderr),
+    /event handler 'btnActiveX_Click' already exists/i,
+  );
+  assert.equal(
+    sha256File(workbookPath),
+    existingHandlerHash,
+    'existing-handler refusal changed the workbook',
+  );
+  }
+
+  const blockedCustomWorkbookPath = join(
+    temporaryDirectory,
+    'designer-blocked-custom.xlsm',
+  );
+  copyFileSync(fixture, blockedCustomWorkbookPath);
+  const blockedCustomHash = sha256File(blockedCustomWorkbookPath);
+  const blockedCustomRequestPath = join(
+    temporaryDirectory,
+    'designer-blocked-custom.json',
+  );
+  writeFileSync(
+    blockedCustomRequestPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      workbookPath: blockedCustomWorkbookPath,
+      expectedWorkbookSha256: blockedCustomHash,
+      operations: [
+        {
+          kind: 'createWorksheetActiveXControl',
+          sheetName: 'Data',
+          control: {
+            type: 'customActiveX',
+            progId: 'Forms.CommandButton.1',
+            name: 'btnBlockedCustom',
+            left: 20,
+            top: 20,
+            width: 120,
+            height: 28,
+          },
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const blockedCustomResult = runDesigner(blockedCustomRequestPath);
+  assert.notEqual(
+    blockedCustomResult.status,
+    0,
+    'non-allowlisted custom ActiveX creation must fail',
+  );
+  assert.match(
+    String(blockedCustomResult.stderr),
+    /Custom ActiveX ProgID is not allowlisted/i,
+  );
+  assert.equal(
+    sha256File(blockedCustomWorkbookPath),
+    blockedCustomHash,
+    'custom ActiveX allowlist refusal changed the workbook',
+  );
+  if (!activeXAvailable) {
+    const blockedByExcelWorkbookPath = join(
+      temporaryDirectory,
+      'designer-activex-policy.xlsm',
+    );
+    copyFileSync(fixture, blockedByExcelWorkbookPath);
+    const blockedByExcelHash = sha256File(blockedByExcelWorkbookPath);
+    const blockedByExcelRequestPath = join(
+      temporaryDirectory,
+      'designer-activex-policy.json',
+    );
+    writeFileSync(
+      blockedByExcelRequestPath,
+      JSON.stringify({
+        schemaVersion: 2,
+        workbookPath: blockedByExcelWorkbookPath,
+        expectedWorkbookSha256: blockedByExcelHash,
+        operations: [
+          {
+            kind: 'createWorksheetActiveXControl',
+            sheetName: 'Data',
+            control: {
+              type: 'commandButton',
+              name: 'btnPolicyBlocked',
+              left: 20,
+              top: 20,
+              width: 120,
+              height: 28,
+            },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const blockedByExcelResult = runDesigner(blockedByExcelRequestPath);
+    assert.notEqual(
+      blockedByExcelResult.status,
+      0,
+      'Office ActiveX policy probe unexpectedly succeeded',
+    );
+    assert.match(
+      String(blockedByExcelResult.stderr),
+      /Excel refused ActiveX insertion/i,
+    );
+    assert.equal(
+      sha256File(blockedByExcelWorkbookPath),
+      blockedByExcelHash,
+      'Office ActiveX refusal changed the workbook',
+    );
+  }
   assert.ok(
     designerEntries.some(
       ([name, digest]) =>
@@ -388,7 +649,7 @@ try {
   writeFileSync(
     rollbackRequestPath,
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       workbookPath: rollbackWorkbookPath,
       expectedWorkbookSha256: '0'.repeat(64),
       operations: [
@@ -421,7 +682,7 @@ try {
   writeFileSync(
     missingMacroRequestPath,
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       workbookPath: missingMacroWorkbookPath,
       expectedWorkbookSha256: missingMacroHash,
       operations: [
@@ -448,7 +709,7 @@ try {
   );
   assert.match(
     String(missingMacroResult.stderr),
-    /Public macro\s+procedure 'mCode\.DoesNotExist' was not found/,
+    /Public macro\s+procedure\s+'mCode\.DoesNotExist' was not found/,
   );
   assert.equal(
     sha256File(missingMacroWorkbookPath),
@@ -458,7 +719,11 @@ try {
 
   assertNoNewExcelProcess(excelBefore);
   console.log(
-    'VBA designer integration passed: 12 standard controls, UserForm/.frx, verified worksheet button macro, backup, native verification and rollback.',
+    `VBA designer integration passed: UserForms, 12 controls, Form button assignment, custom ProgID allowlist, backup, native verification and rollback. Worksheet ActiveX: ${
+      activeXAvailable
+        ? 'creation and binding verified'
+        : 'Office policy blocked insertion; safe refusal verified'
+    }.`,
   );
 } finally {
   let processError;

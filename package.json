@@ -2,7 +2,7 @@
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
   "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -64,7 +64,8 @@
     "onView:excelAiVbaExplorer",
     "onLanguageModelTool:excel_ai_vba_readWorkbook",
     "onLanguageModelTool:excel_ai_vba_writeModule",
-    "onLanguageModelTool:excel_ai_vba_designWorkbook"
+    "onLanguageModelTool:excel_ai_vba_designWorkbook",
+    "workspaceContains:.excel-ai-vba-studio-project.json"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -200,8 +201,8 @@
         "toolReferenceName": "excelVbaDesignWorkbook",
         "canBeReferencedInPrompt": true,
         "icon": "$(symbol-interface)",
-        "userDescription": "Crée transactionnellement de vrais UserForms, leurs contrôles visuels et des boutons de feuille affectés à des macros dans un classeur XLSM existant.",
-        "modelDescription": "Utilise cet outil pour créer un UserForm complet avec son designer et ses flux .frx, ajouter des contrôles visuels à un UserForm, ou créer un bouton de formulaire sur une feuille Excel. Le classeur doit être un .xlsm local existant. Chaque écriture utilise une copie de travail, crée une sauvegarde, vérifie les flux UserForm, puis remplace le fichier atomiquement. Aucune macro n’est exécutée et le réglage AccessVBOM n’est jamais modifié.",
+        "userDescription": "Crée transactionnellement des UserForms, contrôles MSForms/ActiveX et boutons de feuille, puis affecte des macros vérifiées dans un classeur XLSM existant.",
+        "modelDescription": "Utilise cet outil dans un classeur .xlsm local existant pour créer un UserForm complet avec son designer et ses flux .frx, ajouter des contrôles visuels, créer ou réaffecter un bouton de formulaire, créer un contrôle ActiveX de feuille, ou lier le Click d’un bouton ActiveX à une macro publique sans argument. Un customActiveX exige un ProgID exact déjà autorisé par l’utilisateur dans excelAiVbaStudio.allowedCustomActiveXProgIds. Chaque écriture utilise une copie de travail, crée une sauvegarde, vérifie le résultat, puis remplace le fichier atomiquement. Aucune macro n’est exécutée et AccessVBOM n’est jamais modifié.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -266,7 +267,8 @@
                                 "frame",
                                 "image",
                                 "spinButton",
-                                "scrollBar"
+                                "scrollBar",
+                                "customActiveX"
                               ]
                             },
                             "name": {
@@ -311,6 +313,11 @@
                             "controlTipText": {
                               "type": "string",
                               "maxLength": 1000
+                            },
+                            "progId": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{1,127}$",
+                              "description": "ProgID exact, obligatoire uniquement pour customActiveX et autorisé par excelAiVbaStudio.allowedCustomActiveXProgIds."
                             }
                           },
                           "required": [
@@ -361,7 +368,8 @@
                               "frame",
                               "image",
                               "spinButton",
-                              "scrollBar"
+                              "scrollBar",
+                              "customActiveX"
                             ]
                           },
                           "name": {
@@ -406,6 +414,11 @@
                           "controlTipText": {
                             "type": "string",
                             "maxLength": 1000
+                          },
+                          "progId": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{1,127}$",
+                            "description": "ProgID exact, obligatoire uniquement pour customActiveX et autorisé par excelAiVbaStudio.allowedCustomActiveXProgIds."
                           }
                         },
                         "required": [
@@ -484,6 +497,134 @@
                       "top",
                       "width",
                       "height"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "assignWorksheetButtonMacro",
+                          "bindWorksheetActiveXMacro"
+                        ]
+                      },
+                      "sheetName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000
+                      },
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                      },
+                      "macroName": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}(\\.[A-Za-z_][A-Za-z0-9_]{0,30})?$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sheetName",
+                      "name",
+                      "macroName"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "createWorksheetActiveXControl"
+                        ]
+                      },
+                      "sheetName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000
+                      },
+                      "control": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "label",
+                              "textBox",
+                              "commandButton",
+                              "comboBox",
+                              "listBox",
+                              "checkBox",
+                              "optionButton",
+                              "toggleButton",
+                              "frame",
+                              "image",
+                              "spinButton",
+                              "scrollBar",
+                              "customActiveX"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,30}$"
+                          },
+                          "left": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 10000
+                          },
+                          "top": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 10000
+                          },
+                          "width": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 10000
+                          },
+                          "height": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 10000
+                          },
+                          "caption": {
+                            "type": "string",
+                            "maxLength": 1000
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "visible": {
+                            "type": "boolean"
+                          },
+                          "controlTipText": {
+                            "type": "string",
+                            "maxLength": 1000
+                          },
+                          "progId": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{1,127}$"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "name",
+                          "left",
+                          "top",
+                          "width",
+                          "height"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sheetName",
+                      "control"
                     ],
                     "additionalProperties": false
                   }
@@ -626,6 +767,17 @@
           "type": "boolean",
           "default": false,
           "description": "Inclure les modules et références VBA lorsque Microsoft Excel autorise l’accès programmatique."
+        },
+        "excelAiVbaStudio.allowedCustomActiveXProgIds": {
+          "type": "array",
+          "default": [],
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{1,127}$"
+          },
+          "description": "Liste d’autorisation exacte des ProgID ActiveX tiers. Vide par défaut ; les contrôles MSForms intégrés restent disponibles sans ajout."
         }
       }
     }
@@ -646,6 +798,7 @@
     "test:vba-bootstrap": "node test/vba-bootstrap-integration.mjs",
     "test:vba-writeback": "node test/vba-writeback-regression.mjs",
     "test:vba-designer": "node test/vba-designer-integration.mjs",
+    "test:vba-interactions": "node test/vba-interaction-graph.mjs",
     "test:vba-atomic": "python test/atomic-writeback-regression.py",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
     "test:native-diff": "node test/native-edit-regression.mjs",
@@ -655,7 +808,7 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

@@ -23,6 +23,13 @@ const userFormPreview = readFileSync(
   resolve(root, 'src/excelAiVbaStudio/userFormPreview.ts'),
   'utf8',
 );
+const interactionGraph = readFileSync(
+  resolve(root, 'src/excelAiVbaStudio/vbaInteractionGraph.ts'),
+  'utf8',
+);
+const manifest = JSON.parse(
+  readFileSync(resolve(root, 'package.json'), 'utf8'),
+);
 
 assert.doesNotMatch(
   workbookService,
@@ -56,6 +63,19 @@ for (const extension of ['.bas', '.cls', '.frm']) {
 }
 assert.match(panel, /Content-Security-Policy/, 'the VBA Studio webview needs a CSP');
 assert.match(panel, /MAX_SOURCE_CHARACTERS/, 'VBA source writes must remain bounded');
+assert.match(panel, /controls-view/);
+assert.match(panel, /assignFormButton/);
+assert.match(panel, /bindActiveX/);
+assert.match(panel, /createWorksheetActiveXControl/);
+assert.match(
+  panel,
+  /Simulation uniquement[\s\S]+?Aucune macro exécutée/,
+  'Controls view must label simulated clicks and avoid VBA execution',
+);
+assert.match(interactionGraph, /extractPublicZeroArgumentMacros/);
+assert.match(interactionGraph, /userFormsOpened/);
+assert.match(interactionGraph, /activeXMacroTarget/);
+assert.doesNotMatch(interactionGraph, /\.Run\s*\(/i);
 assert.match(writeback, /expectedWorkbookSha256/, 'write-back must reject stale workbook baselines');
 assert.match(writeback, /excel-ai-vba-writeback\.exe/, 'the bundled binary write-back helper is missing');
 assert.match(writeback, /designerSha256/, 'UserForm designer changes must be detected');
@@ -98,6 +118,21 @@ assert.match(
   /showUserFormPreview\([\s\S]+?context\.workbookUri/,
   'UserForm preview must receive the exact source workbook',
 );
+assert.match(workbookService, /openVbaDeveloperWindow/);
+assert.match(
+  workbookService,
+  /vscode\.openFolder[\s\S]+?forceNewWindow:\s*true/,
+  'Developer mode must open a separate VS Code window',
+);
+assert.match(workbookService, /DEVELOPER_MARKER_NAME/);
+assert.match(workbookService, /pathIsInside\(workspaceDirectory,\s*exportsRoot\)/);
+assert.match(workbookService, /workbookSha256/);
+assert.ok(
+  manifest.activationEvents.includes(
+    'workspaceContains:.excel-ai-vba-studio-project.json',
+  ),
+  'Developer workspace marker activation is missing',
+);
 assert.match(
   exporter,
   /previous exporter manifest[\s\S]+?managedNames/,
@@ -108,5 +143,12 @@ assert.doesNotMatch(
   /foreach \(\$managedPattern in @\('\*\.bas'/,
   'refresh must not glob-delete every Copilot-editable VBA source file',
 );
+assert.match(exporter, /worksheetButtons/);
+assert.match(exporter, /worksheetActiveXControls/);
+assert.match(
+  exporter,
+  /This is metadata only; no OnAction or event is invoked/,
+);
+assert.doesNotMatch(exporter, /\.Run\s*\(/i, 'exporter must never run a macro');
 
-console.log('VBA Studio validation passed: stable workspace, real sources, Copilot bridge, secure panel.');
+console.log('VBA Studio validation passed: separate Developer window, static control graph, real sources, secure panel.');

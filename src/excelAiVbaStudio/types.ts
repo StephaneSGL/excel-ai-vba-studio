@@ -86,7 +86,8 @@ export type VbaUserFormControlType =
 	| 'frame'
 	| 'image'
 	| 'spinButton'
-	| 'scrollBar';
+	| 'scrollBar'
+	| 'customActiveX';
 
 export interface VbaUserFormControl {
 	type: VbaUserFormControlType;
@@ -100,6 +101,7 @@ export interface VbaUserFormControl {
 	visible?: boolean;
 	tabIndex?: number;
 	controlTipText?: string;
+	progId?: string;
 }
 
 export type VbaDesignOperation =
@@ -127,6 +129,23 @@ export type VbaDesignOperation =
 			top: number;
 			width: number;
 			height: number;
+	  }
+	| {
+			kind: 'assignWorksheetButtonMacro';
+			sheetName: string;
+			name: string;
+			macroName: string;
+	  }
+	| {
+			kind: 'createWorksheetActiveXControl';
+			sheetName: string;
+			control: VbaUserFormControl;
+	  }
+	| {
+			kind: 'bindWorksheetActiveXMacro';
+			sheetName: string;
+			name: string;
+			macroName: string;
 	  };
 
 export interface VbaDesignToolInput {
@@ -142,6 +161,9 @@ export interface VbaDesignToolResult {
 	createdUserForms: string[];
 	addedControls: string[];
 	createdButtons: string[];
+	assignedButtons: string[];
+	createdActiveXControls: string[];
+	boundActiveXControls: string[];
 	workbookSha256: string;
 	backupPath: string;
 	macrosExecuted: false;

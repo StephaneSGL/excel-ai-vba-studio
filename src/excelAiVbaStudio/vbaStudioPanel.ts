@@ -7,7 +7,16 @@ import {
 	assertOwnedDirectory,
 	pathIsInside
 } from './security';
-import { ExportContext } from './types';
+import {
+	ExportContext,
+	VbaDesignOperation,
+	VbaDesignToolResult,
+	VbaUserFormControlType
+} from './types';
+import {
+	buildVbaInteractionGraph,
+	VbaInteractionGraph
+} from './vbaInteractionGraph';
 import { VbaWritebackService } from './vbaWritebackService';
 
 type ComponentKind =
@@ -60,6 +69,8 @@ interface StudioProject {
 	embeddedVba: boolean;
 	sourceDirectory: string;
 	categories: StudioCategory[];
+	worksheetNames: string[];
+	interactions: VbaInteractionGraph;
 }
 
 interface WebviewMessage {
@@ -67,7 +78,20 @@ interface WebviewMessage {
 	file?: unknown;
 	source?: unknown;
 	kind?: unknown;
+	sheetName?: unknown;
+	controlName?: unknown;
+	macroName?: unknown;
 }
+
+type DesignWorkbookHandler = (
+	workbookUri: vscode.Uri,
+	operations: VbaDesignOperation[]
+) => Promise<VbaDesignToolResult>;
+
+type OpenExcelHandler = (
+	workbookUri: vscode.Uri,
+	showVbe: boolean
+) => Promise<void>;
 
 const MAX_SOURCE_CHARACTERS = 2_000_000;
 const SOURCE_EXTENSIONS = new Set(['.bas', '.cls', '.frm', '.txt']);
@@ -179,7 +203,9 @@ export class VbaStudioPanel implements vscode.Disposable {
 
 	constructor(
 		private readonly outputChannel: vscode.OutputChannel,
-		private readonly writebackService: VbaWritebackService
+		private readonly writebackService: VbaWritebackService,
+		private readonly designWorkbook: DesignWorkbookHandler,
+		private readonly openExcel: OpenExcelHandler
 	) {
 		this.disposables.push(
 			vscode.workspace.onDidChangeTextDocument(event => {
@@ -390,6 +416,7 @@ export class VbaStudioPanel implements vscode.Disposable {
 			component => component.kind === 'document'
 		);
 		const virtualDocuments: StudioComponent[] = [];
+		const worksheetNames: string[] = [];
 		const existingNames = new Set(
 			documentComponents.map(component =>
 				component.name.toLocaleLowerCase('en-US')
@@ -417,6 +444,7 @@ export class VbaStudioPanel implements vscode.Disposable {
 			const sheet = asRecord(rawSheet) || {};
 			const name =
 				asString(sheet.name || sheet.sheetName) || `Feuille${index + 1}`;
+			worksheetNames.push(name);
 			if (existingNames.has(name.toLocaleLowerCase('en-US'))) {
 				continue;
 			}
@@ -511,6 +539,14 @@ export class VbaStudioPanel implements vscode.Disposable {
 		const workbookName =
 			asString(workbookRecord.name) ||
 			path.basename(context.workbookUri.fsPath);
+		const interactions = buildVbaInteractionGraph(
+			components.map(component => ({
+				name: component.name,
+				type: component.type,
+				source: component.source
+			})),
+			workbookRecord.vba
+		);
 		return {
 			workbookName,
 			workbookPath: context.workbookUri.fsPath,
@@ -519,7 +555,9 @@ export class VbaStudioPanel implements vscode.Disposable {
 			statusMessage: asString(manifest.message),
 			embeddedVba: manifest.status === 'extracted',
 			sourceDirectory: context.paths.vbaDirectory,
-			categories
+			categories,
+			worksheetNames,
+			interactions
 		};
 	}
 
@@ -555,6 +593,25 @@ export class VbaStudioPanel implements vscode.Disposable {
 				return;
 			case 'askCopilot':
 				await this.askCopilot();
+				return;
+			case 'assignFormButton':
+				await this.assignMacro(message, false);
+				return;
+			case 'bindActiveX':
+				await this.assignMacro(message, true);
+				return;
+			case 'createActiveX':
+				await this.createWorksheetActiveXControl();
+				return;
+			case 'openExcel':
+				if (this.currentContext) {
+					await this.openExcel(this.currentContext.workbookUri, false);
+				}
+				return;
+			case 'openVbe':
+				if (this.currentContext) {
+					await this.openExcel(this.currentContext.workbookUri, true);
+				}
 				return;
 		}
 	}
@@ -633,6 +690,246 @@ export class VbaStudioPanel implements vscode.Disposable {
 		}
 	}
 
+	private async applyDesignerOperations(
+		operations: VbaDesignOperation[],
+		successMessage: string
+	): Promise<void> {
+		const context = this.currentContext;
+		if (!context) {
+			return;
+		}
+		try {
+			await this.postStatus('info', 'Transaction VBA Designer en cours…');
+			await this.designWorkbook(context.workbookUri, operations);
+			await this.postProject();
+			await this.postStatus('saved', successMessage);
+		} catch (error) {
+			await this.postStatus(
+				'error',
+				`Transaction refusée : ${(error as Error).message}`
+			);
+		}
+	}
+
+	private async assignMacro(
+		message: WebviewMessage,
+		activeX: boolean
+	): Promise<void> {
+		const sheetName =
+			typeof message.sheetName === 'string' ? message.sheetName : '';
+		const controlName =
+			typeof message.controlName === 'string' ? message.controlName : '';
+		const macroName =
+			typeof message.macroName === 'string' ? message.macroName : '';
+		const project = await this.buildProject();
+		if (!project || !sheetName || !controlName || !macroName) {
+			await this.postStatus('error', 'Affectation de macro incomplète.');
+			return;
+		}
+		if (
+			!project.interactions.macros.some(
+				macro =>
+					macro.qualifiedName.toLocaleLowerCase('en-US') ===
+					macroName.toLocaleLowerCase('en-US')
+			)
+		) {
+			await this.postStatus(
+				'error',
+				`Macro publique sans argument introuvable : ${macroName}.`
+			);
+			return;
+		}
+		const controls = activeX
+			? project.interactions.worksheetActiveXControls
+			: project.interactions.worksheetButtons;
+		if (
+			!controls.some(
+				control =>
+					control.sheetName === sheetName && control.name === controlName
+			)
+		) {
+			await this.postStatus(
+				'error',
+				`Contrôle introuvable : ${sheetName}.${controlName}.`
+			);
+			return;
+		}
+		const confirmed = await vscode.window.showWarningMessage(
+			activeX
+				? `Créer ${controlName}_Click et appeler ${macroName} ?`
+				: `Affecter ${macroName} au bouton ${controlName} ?`,
+			{ modal: true },
+			'Appliquer'
+		);
+		if (confirmed !== 'Appliquer') {
+			return;
+		}
+		await this.applyDesignerOperations(
+			[
+				activeX
+					? {
+							kind: 'bindWorksheetActiveXMacro',
+							sheetName,
+							name: controlName,
+							macroName
+					  }
+					: {
+							kind: 'assignWorksheetButtonMacro',
+							sheetName,
+							name: controlName,
+							macroName
+					  }
+			],
+			activeX
+				? `${sheetName}.${controlName} lié à ${macroName}.`
+				: `${sheetName}.${controlName} affecté à ${macroName}.`
+		);
+	}
+
+	private async createWorksheetActiveXControl(): Promise<void> {
+		const project = await this.buildProject();
+		if (!project || !project.worksheetNames.length) {
+			await this.postStatus('error', 'Aucune feuille Excel disponible.');
+			return;
+		}
+		const sheetName = await vscode.window.showQuickPick(project.worksheetNames, {
+			placeHolder: 'Feuille recevant le contrôle ActiveX'
+		});
+		if (!sheetName) {
+			return;
+		}
+		const standardTypes: Array<{
+			label: string;
+			type: Exclude<VbaUserFormControlType, 'customActiveX'>;
+		}> = [
+			{ label: 'CommandButton', type: 'commandButton' },
+			{ label: 'ToggleButton', type: 'toggleButton' },
+			{ label: 'Label', type: 'label' },
+			{ label: 'TextBox', type: 'textBox' },
+			{ label: 'ComboBox', type: 'comboBox' },
+			{ label: 'ListBox', type: 'listBox' },
+			{ label: 'CheckBox', type: 'checkBox' },
+			{ label: 'OptionButton', type: 'optionButton' },
+			{ label: 'Frame', type: 'frame' },
+			{ label: 'Image', type: 'image' },
+			{ label: 'SpinButton', type: 'spinButton' },
+			{ label: 'ScrollBar', type: 'scrollBar' }
+		];
+		const customProgIds = vscode.workspace
+			.getConfiguration(
+				'excelAiVbaStudio',
+				this.currentContext?.workbookUri
+			)
+			.get<string[]>('allowedCustomActiveXProgIds', []);
+		const controlChoice = await vscode.window.showQuickPick(
+			[
+				...standardTypes.map(item => ({
+					label: item.label,
+					type: item.type as VbaUserFormControlType,
+					progId: undefined as string | undefined
+				})),
+				...customProgIds.map(progId => ({
+					label: `Personnalisé : ${progId}`,
+					type: 'customActiveX' as VbaUserFormControlType,
+					progId
+				}))
+			],
+			{ placeHolder: 'Type de contrôle ActiveX' }
+		);
+		if (!controlChoice) {
+			return;
+		}
+		const suggestedPrefix =
+			controlChoice.type === 'customActiveX'
+				? 'CustomControl'
+				: controlChoice.type;
+		const name = await vscode.window.showInputBox({
+			title: 'Nom VBA du contrôle',
+			value: `${suggestedPrefix}1`,
+			validateInput: value =>
+				/^[A-Za-z_][A-Za-z0-9_]{0,30}$/.test(value)
+					? undefined
+					: 'Identifiant VBA attendu, 31 caractères maximum.'
+		});
+		if (!name) {
+			return;
+		}
+		const caption = await vscode.window.showInputBox({
+			title: 'Texte visible du contrôle',
+			value:
+				controlChoice.type === 'commandButton' ||
+				controlChoice.type === 'toggleButton'
+					? 'Ouvrir'
+					: ''
+		});
+		if (caption === undefined) {
+			return;
+		}
+		const controlsOnSheet =
+			project.interactions.worksheetActiveXControls.filter(
+				control => control.sheetName === sheetName
+			).length;
+		const top = Math.min(9_000, 20 + controlsOnSheet * 36);
+		const control = {
+			type: controlChoice.type,
+			name,
+			left: 20,
+			top,
+			width: 110,
+			height: 28,
+			...(caption ? { caption } : {}),
+			...(controlChoice.progId ? { progId: controlChoice.progId } : {})
+		};
+		const operations: VbaDesignOperation[] = [
+			{
+				kind: 'createWorksheetActiveXControl',
+				sheetName,
+				control
+			}
+		];
+		if (
+			controlChoice.type === 'commandButton' ||
+			controlChoice.type === 'toggleButton'
+		) {
+			const macroChoice = await vscode.window.showQuickPick(
+				[
+					{ label: 'Sans liaison', macroName: '' },
+					...project.interactions.macros.map(macro => ({
+						label: macro.qualifiedName,
+						description: macro.userFormsOpened.length
+							? `Ouvre ${macro.userFormsOpened.join(', ')}`
+							: undefined,
+						macroName: macro.qualifiedName
+					}))
+				],
+				{ placeHolder: 'Macro appelée au clic' }
+			);
+			if (!macroChoice) {
+				return;
+			}
+			if (macroChoice.macroName) {
+				operations.push({
+					kind: 'bindWorksheetActiveXMacro',
+					sheetName,
+					name,
+					macroName: macroChoice.macroName
+				});
+			}
+		}
+		const confirmed = await vscode.window.showWarningMessage(
+			`Créer le contrôle ActiveX ${sheetName}.${name} ?`,
+			{ modal: true },
+			'Créer'
+		);
+		if (confirmed !== 'Créer') {
+			return;
+		}
+		await this.applyDesignerOperations(
+			operations,
+			`Contrôle ActiveX ${sheetName}.${name} créé et vérifié.`
+		);
+	}
+
 	private async createComponent(kindValue: unknown): Promise<void> {
 		const context = this.currentContext;
 		if (!context) {
@@ -643,9 +940,46 @@ export class VbaStudioPanel implements vscode.Disposable {
 				? kindValue
 				: 'module';
 		if (kind === 'userform') {
-			await this.postStatus(
-				'error',
-				'Création UserForm refusée : la v1 préserve et modifie le code des formulaires existants, mais ne fabrique pas encore un designer .frx sûr.'
+			const project = await this.buildProject();
+			const existingNames = new Set(
+				(project?.categories.flatMap(category => category.components) || []).map(
+					component => component.name.toLocaleLowerCase('en-US')
+				)
+			);
+			let index = 1;
+			while (existingNames.has(`userform${index}`)) {
+				index++;
+			}
+			const name = await vscode.window.showInputBox({
+				title: 'Nom du nouveau UserForm',
+				value: `UserForm${index}`,
+				validateInput: value =>
+					/^[A-Za-z_][A-Za-z0-9_]{0,30}$/.test(value)
+						? undefined
+						: 'Identifiant VBA attendu, 31 caractères maximum.'
+			});
+			if (!name) {
+				return;
+			}
+			const caption = await vscode.window.showInputBox({
+				title: 'Titre du UserForm',
+				value: name
+			});
+			if (caption === undefined) {
+				return;
+			}
+			await this.applyDesignerOperations(
+				[
+					{
+						kind: 'createUserForm',
+						name,
+						caption,
+						width: 400,
+						height: 300,
+						source: 'Option Explicit'
+					}
+				],
+				`${name} créé avec son designer et son flux .frx.`
 			);
 			return;
 		}
@@ -906,7 +1240,9 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
 .props td{padding:4px 6px;border-bottom:1px solid var(--studio-border);vertical-align:top}
 .props td:first-child{width:38%;font-weight:600;background:var(--vscode-editorWidget-background,var(--studio-toolbar))}
 .props td:last-child{word-break:break-word}
-.editor-area{min-width:0;min-height:0;display:grid;grid-template-rows:30px auto 1fr}
+.editor-area{min-width:0;min-height:0;display:flex;flex-direction:column}
+.code-view{min-width:0;min-height:0;flex:1;display:grid;grid-template-rows:30px auto 1fr}
+.code-view.hidden{display:none}
 .editor-head{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--studio-border);background:var(--studio-toolbar)}
 .editor-head select{min-width:0;border:0;border-right:1px solid var(--studio-border);padding:0 8px;color:var(--vscode-dropdown-foreground,var(--studio-fg));background:var(--vscode-dropdown-background,var(--studio-toolbar))}
 .notice{display:none;padding:6px 10px;border-bottom:1px solid var(--vscode-inputValidation-warningBorder,var(--studio-border));background:var(--vscode-inputValidation-warningBackground,#fff4ce);color:var(--vscode-inputValidation-warningForeground,#5f4500)}
@@ -915,6 +1251,19 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
 .lines{margin:0;padding:10px 8px 10px 0;overflow:hidden;text-align:right;white-space:pre;color:var(--vscode-editorLineNumber-foreground,var(--studio-muted));background:var(--vscode-editorGutter-background,var(--studio-bg));border-right:1px solid var(--studio-border);font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size);line-height:var(--vscode-editor-line-height)}
 .code{width:100%;height:100%;resize:none;border:0;outline:0;padding:10px 12px;tab-size:4;white-space:pre;overflow:auto;color:var(--studio-fg);background:var(--studio-bg);caret-color:var(--studio-fg);font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size);line-height:var(--vscode-editor-line-height)}
 .code:disabled{opacity:.72}
+.controls-view{display:none;min-height:0;overflow:auto;padding:16px;background:var(--studio-bg)}
+.controls-view.visible{display:block;flex:1}
+.controls-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.metric{padding:7px 10px;border:1px solid var(--studio-border);border-radius:4px;background:var(--studio-surface)}
+.interaction-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.interaction-card{padding:12px;border:1px solid var(--studio-border);border-radius:5px;background:var(--studio-surface)}
+.interaction-card h3{margin:0 0 8px;font-size:13px}
+.flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0;color:var(--studio-muted)}
+.flow-node{padding:4px 7px;border:1px solid var(--studio-border);border-radius:3px;color:var(--studio-fg);background:var(--studio-toolbar)}
+.flow-arrow{font-weight:700}
+.assignment{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:9px}
+.assignment select{min-width:0;border:1px solid var(--studio-border);padding:5px;color:var(--vscode-dropdown-foreground,var(--studio-fg));background:var(--vscode-dropdown-background,var(--studio-toolbar))}
+.empty-state{padding:18px;border:1px dashed var(--studio-border);color:var(--studio-muted)}
 .statusbar{display:flex;align-items:center;gap:16px;padding:0 8px;color:var(--vscode-statusBar-foreground,#ffffff);background:var(--vscode-statusBar-background,#007acc);border-top:1px solid var(--vscode-statusBar-border,transparent)}
 .statusbar .right{margin-left:auto}
 .status-ok{color:var(--vscode-testing-iconPassed,#73c991)}
@@ -934,6 +1283,10 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
     <span class="separator"></span>
     <button class="tool" id="open-file">↗ <span class="label">Éditeur VS Code</span></button>
     <button class="tool" id="reload">⟳ <span class="label">Recharger</span></button>
+    <button class="tool" id="controls-tab">Contrôles</button>
+    <button class="tool" id="create-activex">＋ ActiveX</button>
+    <button class="tool" id="open-excel">Excel</button>
+    <button class="tool" id="open-vbe">VBE</button>
     <div class="spacer"></div>
     <button class="tool ai" id="copilot">✦ Analyser avec Copilot</button>
   </div>
@@ -949,15 +1302,18 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
       </section>
     </aside>
     <main class="editor-area">
-      <div class="editor-head">
-        <select id="object-select" aria-label="Objet"></select>
-        <select id="procedure-select" aria-label="Procédure"><option>(Général)</option></select>
+      <div class="code-view" id="code-view">
+        <div class="editor-head">
+          <select id="object-select" aria-label="Objet"></select>
+          <select id="procedure-select" aria-label="Procédure"><option>(Général)</option></select>
+        </div>
+        <div class="notice" id="notice"></div>
+        <div class="code-wrap">
+          <pre class="lines" id="lines">1</pre>
+          <textarea class="code" id="code" spellcheck="false" aria-label="Code VBA"></textarea>
+        </div>
       </div>
-      <div class="notice" id="notice"></div>
-      <div class="code-wrap">
-        <pre class="lines" id="lines">1</pre>
-        <textarea class="code" id="code" spellcheck="false" aria-label="Code VBA"></textarea>
-      </div>
+      <div class="controls-view" id="controls-view"></div>
     </main>
   </div>
   <div class="statusbar">
@@ -981,6 +1337,9 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
   const procedureSelect = document.getElementById('procedure-select');
   const openFile = document.getElementById('open-file');
   const save = document.getElementById('save');
+  const codeView = document.getElementById('code-view');
+  const controlsView = document.getElementById('controls-view');
+  const controlsTab = document.getElementById('controls-tab');
 
   const allComponents = () => state.project
     ? state.project.categories.flatMap(category => category.components)
@@ -1027,6 +1386,98 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
       .replace(/"/g, '&quot;');
   }
 
+  function setControlMode(showControls) {
+    controlsView.classList.toggle('visible', showControls);
+    codeView.classList.toggle('hidden', showControls);
+    controlsTab.textContent = showControls ? 'Code' : 'Contrôles';
+  }
+
+  function renderControls(project) {
+    const graph = project.interactions;
+    const macroOptions = graph.macros.map(macro =>
+      '<option value="' + escapeText(macro.qualifiedName) + '">' +
+      escapeText(macro.qualifiedName) +
+      (macro.userFormsOpened.length ? ' · ouvre ' + escapeText(macro.userFormsOpened.join(', ')) : '') +
+      '</option>'
+    ).join('');
+    const cards = graph.relationships.map((relationship, index) => {
+      const activeX = relationship.kind === 'activeX';
+      const activeXRecord = activeX
+        ? graph.worksheetActiveXControls.find(control =>
+            control.sheetName === relationship.sheetName &&
+            control.name === relationship.controlName
+          )
+        : null;
+      const bindable = !activeX ||
+        activeXRecord?.progId === 'Forms.CommandButton.1' ||
+        activeXRecord?.progId === 'Forms.ToggleButton.1';
+      const macroNode = relationship.macroName || 'macro non affectée';
+      const formNodes = relationship.userFormsOpened.length
+        ? relationship.userFormsOpened.map(name =>
+            '<span class="flow-arrow">›</span><span class="flow-node">' +
+            escapeText(name) + '</span>'
+          ).join('')
+        : '';
+      const assignment = bindable && graph.macros.length
+        ? '<div class="assignment"><select class="macro-assignment" data-index="' + index + '">' +
+          '<option value="">Choisir une macro…</option>' + macroOptions +
+          '</select><button class="tool apply-assignment" data-index="' + index + '">Affecter</button></div>'
+        : '<div class="empty-state">' +
+          (bindable ? 'Aucune macro publique sans argument.' : 'Liaison Click limitée aux CommandButton et ToggleButton MSForms.') +
+          '</div>';
+      const simulation = relationship.userFormsOpened.length
+        ? '<button class="tool simulate-flow" data-index="' + index + '">Simuler le clic</button>'
+        : '';
+      return '<article class="interaction-card">' +
+        '<h3>' + (activeX ? 'ActiveX' : 'Bouton formulaire') + ' · ' +
+        escapeText(relationship.sheetName + '.' + relationship.controlName) + '</h3>' +
+        '<div class="flow"><span class="flow-node">' + escapeText(relationship.controlCaption) +
+        '</span><span class="flow-arrow">›</span><span class="flow-node">' +
+        escapeText(macroNode) + '</span>' + formNodes + '</div>' +
+        '<div>' + escapeText(activeXRecord?.progId || relationship.resolution) + '</div>' +
+        assignment + simulation +
+        '</article>';
+    }).join('');
+    controlsView.innerHTML =
+      '<div class="controls-summary">' +
+      '<div class="metric">Macros : ' + graph.macros.length + '</div>' +
+      '<div class="metric">UserForms : ' + graph.userForms.length + '</div>' +
+      '<div class="metric">Boutons : ' + graph.worksheetButtons.length + '</div>' +
+      '<div class="metric">ActiveX : ' + graph.worksheetActiveXControls.length + '</div>' +
+      '</div>' +
+      '<p>Aperçu statique : aucun code VBA n’est exécuté dans VS Code. Le clic réel reste dans Excel.</p>' +
+      (cards ? '<div class="interaction-grid">' + cards + '</div>' :
+        '<div class="empty-state">Aucun bouton de formulaire ou contrôle ActiveX détecté.</div>');
+    controlsView.querySelectorAll('.apply-assignment').forEach(button =>
+      button.addEventListener('click', () => {
+        const index = Number(button.dataset.index);
+        const relationship = graph.relationships[index];
+        const select = controlsView.querySelector('.macro-assignment[data-index="' + index + '"]');
+        const macroName = select?.value || '';
+        if (!relationship || !macroName) {
+          setStatus('Choisissez une macro.', 'error');
+          return;
+        }
+        vscode.postMessage({
+          type: relationship.kind === 'activeX' ? 'bindActiveX' : 'assignFormButton',
+          sheetName: relationship.sheetName,
+          controlName: relationship.controlName,
+          macroName
+        });
+      })
+    );
+    controlsView.querySelectorAll('.simulate-flow').forEach(button =>
+      button.addEventListener('click', () => {
+        const relationship = graph.relationships[Number(button.dataset.index)];
+        if (!relationship) return;
+        setStatus(
+          'Simulation uniquement : ' + relationship.controlName + ' afficherait ' +
+          relationship.userFormsOpened.join(', ') + '. Aucune macro exécutée.'
+        );
+      })
+    );
+  }
+
   function selectComponent(id) {
     const component = allComponents().find(item => item.id === id);
     if (!component) return;
@@ -1049,6 +1500,7 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
     updateLines();
     updatePosition();
     setStatus(component.file ? component.file : component.type);
+    setControlMode(false);
   }
 
   function renderProject(project, selectFile) {
@@ -1078,6 +1530,7 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
     const firstEditable = allComponents().find(component => component.editable);
     const first = target || firstEditable || allComponents()[0];
     if (first) selectComponent(first.id);
+    renderControls(project);
     showNotice(project.embeddedVba
       ? ''
       : 'Copie de travail VS Code : ce classeur ne contient pas encore de projet VBA incorporé. Les fichiers restent accessibles à Copilot.');
@@ -1119,6 +1572,13 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:1px sol
   openFile.onclick = () => state.selected?.file &&
     vscode.postMessage({ type: 'openFile', file: state.selected.file });
   document.getElementById('reload').onclick = () => vscode.postMessage({ type: 'reload' });
+  controlsTab.onclick = () => setControlMode(!controlsView.classList.contains('visible'));
+  document.getElementById('create-activex').onclick = () =>
+    vscode.postMessage({ type: 'createActiveX' });
+  document.getElementById('open-excel').onclick = () =>
+    vscode.postMessage({ type: 'openExcel' });
+  document.getElementById('open-vbe').onclick = () =>
+    vscode.postMessage({ type: 'openVbe' });
   document.getElementById('copilot').onclick = () => vscode.postMessage({ type: 'askCopilot' });
   document.querySelectorAll('.create').forEach(button =>
     button.addEventListener('click', () => vscode.postMessage({ type: 'create', kind: button.dataset.kind }))
