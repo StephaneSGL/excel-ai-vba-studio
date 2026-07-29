@@ -4,6 +4,14 @@ All notable changes to Excel AI & VBA Studio are documented here.
 
 The project uses semantic versions. Marketplace Preview status is represented by the `preview` manifest flag; Marketplace versions remain in `major.minor.patch` format.
 
+## [Unreleased]
+
+### Changed
+
+- Clarified the noncommercial community-use rights and the separate commercial-license boundary without changing the PolyForm Noncommercial 1.0.0 terms.
+- Removed obsolete upstream translations that described a different extension, unsupported features, and telemetry that this project does not collect.
+- Excluded local package-output directories consistently from Git.
+
 ## [0.5.1] - 2026-07-28
 
 ### Fixed

@@ -2,6 +2,18 @@
 
 Ce dépôt public contient plusieurs catégories de code. La visibilité du code source ne signifie pas que toutes ses parties peuvent être exploitées commercialement.
 
+## Résumé simple / Plain-language summary
+
+Ce résumé facilite la lecture, mais seuls les textes de licence complets font foi.
+
+- **Oui, gratuitement** : usage personnel, étude, expérimentation, recherche, loisirs et projets amateurs sans objectif commercial.
+- **Oui, selon les termes PolyForm** : modification et partage pour un usage non commercial, en conservant la licence et les mentions obligatoires.
+- **Oui pour les organismes couverts** : établissements d’enseignement, organismes caritatifs, recherche publique, santé ou sécurité publique, protection de l’environnement et institutions gouvernementales.
+- **Autorisation écrite requise** : usage dans l’activité d’une entreprise, mission client payante, intégration dans une offre commerciale, vente, revente, monétisation ou autre application commerciale anticipée.
+- Les portions historiques provenant d’Office Viewer restent sous MIT et ne sont pas soumises à cette restriction non commerciale.
+
+In short: personal, educational, research, hobby, and other permitted noncommercial uses may use, study, modify, and share the project-specific code under PolyForm Noncommercial 1.0.0. Use in business operations, paid client work, resale, monetization, or another anticipated commercial application requires a separate written license. The exact license texts and the allocation below control.
+
 ## 1. Contributions propres à Excel AI & VBA Studio
 
 Les contributions originales, la documentation, les actifs et les modifications propres à Excel AI & VBA Studio distribués par StephaneSGL à partir de la version `0.1.1` sont proposés sous la **PolyForm Noncommercial License 1.0.0** :

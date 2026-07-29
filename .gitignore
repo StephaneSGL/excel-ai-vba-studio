@@ -1,6 +1,8 @@
 out/
 dist/
-node_modules    
+output/
+outputs/
+node_modules/
 .vscode-test/
 .idea/
 .serena/
