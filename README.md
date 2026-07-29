@@ -241,11 +241,19 @@ Test workbooks must be fully synthetic. Never submit company data, credentials, 
 
 This repository is **public and source-available**, but it is not open source under the Open Source Initiative definition.
 
-- Excel AI & VBA Studio-specific contributions distributed from version `0.1.1` are offered under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use requires separate written permission from StephaneSGL.
+Excel AI & VBA Studio-specific contributions distributed from version `0.1.1` use the [PolyForm Noncommercial License 1.0.0](LICENSE):
+
+| Use | Permission |
+| --- | --- |
+| Personal study, research, experiments, hobbies, and amateur projects without an anticipated commercial application | Permitted |
+| Education, charitable work, public research, public safety or health, environmental protection, and government use covered by PolyForm | Permitted |
+| Modify or redistribute for a permitted noncommercial purpose while preserving required notices | Permitted |
+| Use in business operations, paid client work, resale, monetization, or integration into a commercial product or service | Separate written commercial license required |
+
 - Portions originating from **Office Viewer** by Weijan Chen remain available under their original MIT license.
 - Every third-party dependency retains its own license.
 - Versions or commits already distributed under MIT retain the rights previously granted; a later license change cannot revoke those earlier rights.
 
-See [LICENSING.md](LICENSING.md) for the complete allocation. Required notices remain in [NOTICE.md](NOTICE.md), [LICENSES/OFFICE-VIEWER-MIT.txt](LICENSES/OFFICE-VIEWER-MIT.txt), and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+See [LICENSING.md](LICENSING.md) for the plain-language summary and complete allocation. Required notices remain in [NOTICE.md](NOTICE.md), [LICENSES/OFFICE-VIEWER-MIT.txt](LICENSES/OFFICE-VIEWER-MIT.txt), and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Microsoft, Visual Studio, Visual Studio Code, Excel, and VBA are trademarks of their respective owners. This independent project is not published or endorsed by Microsoft.
