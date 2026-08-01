@@ -11,6 +11,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+. (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -390,6 +391,7 @@ Assert-NoReparsePointChain $workbookPath
 $originalHash = Get-Sha256 $workbookPath
 if (-not $originalHash) { throw "Cannot compute SHA256 of original workbook" }
 if ($originalHash -cne $expectedSha256) { throw "Workbook SHA256 does not match expected: $originalHash vs $expectedSha256" }
+Assert-OoxmlPackageUnsigned $workbookPath
 
 # Pre-validate operations and collect validation sets
 $seenFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -837,6 +839,7 @@ if (Test-Path -LiteralPath $stagingPath) { throw "Staging file already exists: $
 try {
     Copy-Item -LiteralPath $workbookPath -Destination $stagingPath
 } catch { throw "Failed to copy to staging: $_" }
+Assert-OoxmlPackageUnsigned $stagingPath
 
 $excel1 = $null; $excel1Pid = 0
 $wbStaging = $null

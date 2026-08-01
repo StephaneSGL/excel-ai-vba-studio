@@ -1,7 +1,14 @@
-altgraph==0.17.5
-packaging==26.2
-pefile==2023.2.7
-pyOpenVBA==3.1.0
-pyinstaller==6.15.0
-pyinstaller-hooks-contrib==2026.6
-pywin32-ctypes==0.2.3
+altgraph==0.17.5 \
+    --hash=sha256:f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597
+packaging==26.2 \
+    --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e
+pefile==2023.2.7 \
+    --hash=sha256:da185cd2af68c08a6cd4481f7325ed600a88f6a813bad9dea07ab3ef73d8d8d6
+pyOpenVBA==3.1.0 \
+    --hash=sha256:f0b46d4968417ff80266d31021dc9b91360b96fbb1057136e842f59e06ada232
+pyinstaller==6.15.0 \
+    --hash=sha256:cbea297e16eeda30b41c300d6ec2fd2abea4dbd8d8a32650eeec36431c94fcd9
+pyinstaller-hooks-contrib==2026.6 \
+    --hash=sha256:fd13b8ac126b35361175edacd41a0d97080b75dd5f4b594ecefefff969509dd3
+pywin32-ctypes==0.2.3 \
+    --hash=sha256:8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8

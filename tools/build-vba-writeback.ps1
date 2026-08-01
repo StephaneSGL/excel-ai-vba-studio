@@ -40,9 +40,9 @@ function Get-Sha256 {
 }
 
 try {
-    # PyInstaller documents both values as required inputs for reproducible
-    # Windows builds. Keep them fixed so CI can compare the shipped helper
-    # byte-for-byte with a clean rebuild from this repository.
+    # Fix the Python hash seed and source date so avoidable build variance is
+    # removed. PyInstaller output can still vary with the Windows/Python host,
+    # so CI records the resulting digest and tests the source-built executable.
     $env:PYTHONHASHSEED = '1'
     $env:SOURCE_DATE_EPOCH = '1704067200'
     [void][IO.Directory]::CreateDirectory($buildRoot)
@@ -53,7 +53,7 @@ try {
     )
     if ($LASTEXITCODE -ne 0 -or [string]$pythonVersion -cne '3.11.9') {
         throw (
-            'The reproducible helper build requires Python 3.11.9 exactly; ' +
+            'The native helper build requires Python 3.11.9 exactly; ' +
             "found $pythonVersion at $bootstrapPython."
         )
     }
@@ -62,6 +62,7 @@ try {
         throw 'Could not create the isolated Python 3.11 build environment.'
     }
     & $python -m pip install --disable-pip-version-check --require-virtualenv `
+        --require-hashes `
         -r $requirements
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not install the pinned VBA write-back build dependencies.'

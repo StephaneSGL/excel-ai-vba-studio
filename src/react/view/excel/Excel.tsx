@@ -28,7 +28,22 @@ initExcelLocale();
 type EmbeddedReadOnlyReason =
     | 'macro-preservation'
     | 'native-excel-editing'
-    | 'file-permissions';
+    | 'file-permissions'
+    | 'package-signature'
+    | 'package-signature-verification';
+
+function isPackageSignatureReason(
+    reason: EmbeddedReadOnlyReason | null
+): boolean {
+    return reason === 'package-signature'
+        || reason === 'package-signature-verification';
+}
+
+function blocksSaveAs(reason: EmbeddedReadOnlyReason | null): boolean {
+    return reason === 'macro-preservation'
+        || reason === 'native-excel-editing'
+        || isPackageSignatureReason(reason);
+}
 
 type ExcelViewState = { ri: number; ci: number; sheetIndex: number };
 
@@ -142,6 +157,14 @@ function ExcelViewer() {
         });
     }, [message]);
 
+    const notifyPackageSignatureWriteBlocked = useCallback(() => {
+        message.warning({
+            duration: 5,
+            content: t('viewer.packageSignatureWriteBlocked'),
+            className: 'excel-validation-error-message',
+        });
+    }, [message]);
+
     const setEditorBusyState = useCallback((busy: boolean) => {
         editorBusyRef.current = busy;
         setEditorBusy(busy);
@@ -190,15 +213,16 @@ function ExcelViewer() {
     }, [message]);
 
     const handleSaveAs = useCallback(() => {
-        if (
-            readOnlyReasonRef.current === 'macro-preservation'
-            || readOnlyReasonRef.current === 'native-excel-editing'
-        ) {
+        if (isPackageSignatureReason(readOnlyReasonRef.current)) {
+            notifyPackageSignatureWriteBlocked();
+            return;
+        }
+        if (blocksSaveAs(readOnlyReasonRef.current)) {
             notifyMacroWriteBlocked();
             return;
         }
         handler.emit('requestHostSaveAs');
-    }, [notifyMacroWriteBlocked]);
+    }, [notifyMacroWriteBlocked, notifyPackageSignatureWriteBlocked]);
 
     const handleSave = useCallback(async () => {
         const spreadSheet = spreadSheetRef.current;
@@ -218,6 +242,12 @@ function ExcelViewer() {
             notifyMacroWriteBlocked();
             handler.emit('saveRejected', {
                 message: t('viewer.macroWriteBlocked'),
+            });
+            return;
+        }
+        if (isPackageSignatureReason(readOnlyReasonRef.current)) {
+            handler.emit('saveRejected', {
+                message: t('viewer.packageSignatureWriteBlocked'),
             });
             return;
         }
@@ -365,7 +395,10 @@ function ExcelViewer() {
             }
 
             if (
-                readOnlyReasonRef.current === 'macro-preservation'
+                (
+                    readOnlyReasonRef.current === 'macro-preservation' ||
+                    isPackageSignatureReason(readOnlyReasonRef.current)
+                )
                 && !isFindPanelTarget(e.target)
             ) {
                 const modifierEdit = (e.ctrlKey || e.metaKey)
@@ -380,20 +413,31 @@ function ExcelViewer() {
                 if (modifierEdit || directEdit) {
                     e.preventDefault();
                     e.stopPropagation();
-                    notifyMacroWriteBlocked();
+                    if (isPackageSignatureReason(readOnlyReasonRef.current)) {
+                        notifyPackageSignatureWriteBlocked();
+                    } else {
+                        notifyMacroWriteBlocked();
+                    }
                 }
             }
         };
         const blockInputEvent = (e: Event) => {
             if (
-                readOnlyReasonRef.current !== 'macro-preservation'
+                (
+                    readOnlyReasonRef.current !== 'macro-preservation' &&
+                    !isPackageSignatureReason(readOnlyReasonRef.current)
+                )
                 || isFindPanelTarget(e.target)
             ) {
                 return;
             }
             e.preventDefault();
             e.stopPropagation();
-            notifyMacroWriteBlocked();
+            if (isPackageSignatureReason(readOnlyReasonRef.current)) {
+                notifyPackageSignatureWriteBlocked();
+            } else {
+                notifyMacroWriteBlocked();
+            }
         };
         window.addEventListener('keydown', onKeyDown, true);
         document.addEventListener('beforeinput', blockInputEvent, true);
@@ -407,16 +451,24 @@ function ExcelViewer() {
             document.removeEventListener('cut', blockInputEvent, true);
             document.removeEventListener('drop', blockInputEvent, true);
         };
-    }, [handleAutoFitColumns, handleSave, handleSaveAs, notifyMacroWriteBlocked]);
+    }, [
+        handleAutoFitColumns,
+        handleSave,
+        handleSaveAs,
+        notifyMacroWriteBlocked,
+        notifyPackageSignatureWriteBlocked,
+    ]);
 
     useEffect(() => {
         const container = document.getElementById('container');
 
         const initSpreadsheet = async (buffer: ArrayBuffer, payload: any) => {
             const fileReadOnly = payload.readOnly === true;
-            const preserveMacros =
+            const preserveSourceIntegrity =
                 payload.readOnlyReason === 'macro-preservation'
-                || payload.readOnlyReason === 'native-excel-editing';
+                || payload.readOnlyReason === 'native-excel-editing'
+                || payload.readOnlyReason === 'package-signature'
+                || payload.readOnlyReason === 'package-signature-verification';
             if (payload.ext?.match(/csv/i)) {
                 csvEncodingRef.current = detectCsvEncoding(buffer);
             }
@@ -432,7 +484,7 @@ function ExcelViewer() {
             container.innerHTML = '';
             const spreadSheet = new Spreadsheet(container, {
                 mode: fileReadOnly ? 'read' : 'edit',
-                allowSaveAs: !preserveMacros,
+                allowSaveAs: !preserveSourceIntegrity,
                 showToolbar: false,
                 showEditInVSCode: isCsvLikeExt(payload.ext ?? ''),
                 row: { len: viewRowLen, height: 30 },
@@ -518,6 +570,8 @@ function ExcelViewer() {
             const reason = payload.readOnlyReason === 'macro-preservation'
                 || payload.readOnlyReason === 'native-excel-editing'
                 || payload.readOnlyReason === 'file-permissions'
+                || payload.readOnlyReason === 'package-signature'
+                || payload.readOnlyReason === 'package-signature-verification'
                 ? payload.readOnlyReason as EmbeddedReadOnlyReason
                 : null;
             readOnlyRef.current = fileReadOnly;
@@ -621,11 +675,12 @@ function ExcelViewer() {
                 if (!spreadSheet || !ext) {
                     throw new Error('Spreadsheet is not ready for Save As.');
                 }
-                if (
-                    readOnlyReasonRef.current === 'macro-preservation' ||
-                    readOnlyReasonRef.current === 'native-excel-editing'
-                ) {
-                    throw new Error(t('viewer.macroWriteBlocked'));
+                if (blocksSaveAs(readOnlyReasonRef.current)) {
+                    throw new Error(
+                        isPackageSignatureReason(readOnlyReasonRef.current)
+                            ? t('viewer.packageSignatureWriteBlocked')
+                            : t('viewer.macroWriteBlocked')
+                    );
                 }
                 if (editorBusyRef.current) {
                     throw new Error(
@@ -702,8 +757,7 @@ function ExcelViewer() {
                 spreadsheet={activeSpreadsheet}
                 readOnly={readOnly || editorBusy}
                 allowSaveAs={
-                    readOnlyReason !== 'macro-preservation'
-                    && readOnlyReason !== 'native-excel-editing'
+                    !blocksSaveAs(readOnlyReason)
                 }
                 showEditInVscode={isCsvLikeExt(extRef.current)}
                 onAutoFitColumns={handleAutoFitColumns}
@@ -729,13 +783,22 @@ function ExcelViewer() {
             )}
             {readOnly && !loading && !loadError && (
                 <div
-                    className={`excel-readonly-banner${readOnlyReason === 'macro-preservation' ? ' excel-macro-preservation-banner' : ''}`}
+                    className={`excel-readonly-banner${
+                        readOnlyReason === 'macro-preservation' ||
+                        isPackageSignatureReason(readOnlyReason)
+                            ? ' excel-macro-preservation-banner'
+                            : ''
+                    }`}
                     role="status"
                     aria-live="polite"
                 >
                     <span>
                         {readOnlyReason === 'macro-preservation'
                             ? t('viewer.macroReadonlyBanner')
+                            : readOnlyReason === 'package-signature'
+                              ? t('viewer.packageSignatureReadonlyBanner')
+                              : readOnlyReason === 'package-signature-verification'
+                                ? t('viewer.packageSignatureVerificationReadonlyBanner')
                             : t('viewer.readonlyBanner')}
                     </span>
                     {readOnlyReason === 'macro-preservation' && (

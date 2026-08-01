@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -37,12 +38,37 @@ MAX_WORKBOOK_BYTES = 512 * 1024 * 1024
 MAX_PATCHES = 64
 MAX_MODULE_SOURCE_CHARACTERS = 2_000_000
 MAX_PROJECT_SOURCE_CHARACTERS = 8_000_000
+MAX_ZIP_ENTRIES = 20_000
+MAX_METADATA_PART_BYTES = 1024 * 1024
+MAX_COMPRESSED_METADATA_PART_BYTES = 2 * 1024 * 1024
+MAX_RELATIONSHIP_PARTS = 4_096
+MAX_RELATIONSHIP_XML_BYTES = 16 * 1024 * 1024
 SUPPORTED_EXTENSIONS = {".xlsm", ".xlam"}
 SUPPORTED_KINDS = {"module", "class", "document", "userform"}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_REPARSE_POINT = 0x400
 ATTRIBUTE_NAME_RE = re.compile(
     r'(?im)^Attribute[ \t]+VB_Name[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*\r?$'
+)
+CONTENT_TYPES_NAMESPACE = (
+    "http://schemas.openxmlformats.org/package/2006/content-types"
+)
+RELATIONSHIPS_NAMESPACE = (
+    "http://schemas.openxmlformats.org/package/2006/relationships"
+)
+ORIGIN_RELATIONSHIP_TYPE = (
+    "http://schemas.openxmlformats.org/package/2006/relationships/"
+    "digital-signature/origin"
+)
+SIGNATURE_RELATIONSHIP_TYPE = (
+    "http://schemas.openxmlformats.org/package/2006/relationships/"
+    "digital-signature/signature"
+)
+ORIGIN_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-package.digital-signature-origin"
+)
+SIGNATURE_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml"
 )
 
 
@@ -105,6 +131,376 @@ def sha256_file(file_path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _validate_percent_encoding(value: str) -> None:
+    index = 0
+    while index < len(value):
+        if value[index] != "%":
+            index += 1
+            continue
+        encoded = value[index + 1 : index + 3]
+        if len(encoded) != 2 or re.fullmatch(r"[0-9A-Fa-f]{2}", encoded) is None:
+            raise ValueError("a package URI contains invalid percent encoding")
+        octet = int(encoded, 16)
+        if octet in {0, 0x2F, 0x5C}:
+            raise ValueError("a package URI contains an encoded separator or NUL")
+        if chr(octet) in (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789._~-"
+        ):
+            raise ValueError("a package URI percent-encodes an unreserved character")
+        index += 3
+
+
+def _validate_part_name(part_name: str) -> str:
+    if (
+        not part_name.startswith("/")
+        or len(part_name) < 2
+        or part_name.endswith("/")
+        or "\\" in part_name
+        or "\x00" in part_name
+        or "?" in part_name
+        or "#" in part_name
+        or "//" in part_name
+    ):
+        raise ValueError(f"invalid OPC part name: {part_name}")
+    _validate_percent_encoding(part_name)
+    if any(segment in {"", ".", ".."} for segment in part_name[1:].split("/")):
+        raise ValueError(f"invalid OPC part name: {part_name}")
+    return part_name
+
+
+def _resolve_relationship_target(source_part_name: str, target: str) -> str:
+    if (
+        "\\" in target
+        or "\x00" in target
+        or "?" in target
+        or "#" in target
+        or target.startswith("//")
+        or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target)
+    ):
+        raise ValueError(f"ambiguous or external OPC relationship target: {target}")
+    _validate_percent_encoding(target)
+    base_directory = "/"
+    if source_part_name != "/":
+        base_directory = source_part_name[: source_part_name.rfind("/") + 1]
+    unresolved = target if target.startswith("/") else base_directory + target
+    segments: list[str] = []
+    for segment in unresolved.split("/"):
+        if segment in {"", "."}:
+            continue
+        if segment == "..":
+            if not segments:
+                raise ValueError("relationship target escapes the package root")
+            segments.pop()
+        else:
+            segments.append(segment)
+    return _validate_part_name("/" + "/".join(segments))
+
+
+def _relationships_part_for(source_part_name: str) -> str:
+    _validate_part_name(source_part_name)
+    separator = source_part_name.rfind("/")
+    directory = source_part_name[: separator + 1]
+    file_name = source_part_name[separator + 1 :]
+    return _validate_part_name(f"{directory}_rels/{file_name}.rels")
+
+
+def _entry_map(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
+    infos = archive.infolist()
+    if len(infos) > MAX_ZIP_ENTRIES:
+        raise ValueError(f"package contains more than {MAX_ZIP_ENTRIES} ZIP entries")
+    entries: dict[str, zipfile.ZipInfo] = {}
+    for info in infos:
+        name = info.filename
+        if "\\" in name or name.startswith("/"):
+            raise ValueError(f"invalid ZIP entry name: {name}")
+        if name.endswith("/"):
+            if not name[:-1]:
+                raise ValueError("invalid ZIP directory entry")
+            _validate_part_name("/" + name[:-1])
+            continue
+        part_name = _validate_part_name("/" + name)
+        key = part_name.casefold()
+        if key in entries:
+            raise ValueError(f"duplicate or case-colliding ZIP part: {part_name}")
+        entries[key] = info
+    return entries
+
+
+def _get_entry(
+    entries: dict[str, zipfile.ZipInfo], part_name: str
+) -> zipfile.ZipInfo | None:
+    return entries.get(_validate_part_name(part_name).casefold())
+
+
+def _read_metadata_entry(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    maximum_bytes: int = MAX_METADATA_PART_BYTES,
+) -> bytes:
+    if info.file_size > maximum_bytes:
+        raise ValueError(f"metadata part exceeds the inspection limit: {info.filename}")
+    if info.compress_size > MAX_COMPRESSED_METADATA_PART_BYTES:
+        raise ValueError(
+            f"compressed metadata exceeds the inspection limit: {info.filename}"
+        )
+    value = archive.read(info)
+    if len(value) != info.file_size:
+        raise ValueError(f"metadata part size is inconsistent: {info.filename}")
+    return value
+
+
+def _read_xml_entry(
+    archive: zipfile.ZipFile, info: zipfile.ZipInfo
+) -> ET.Element:
+    value = _read_metadata_entry(archive, info)
+    if re.search(br"<!DOCTYPE|<!ENTITY", value, re.IGNORECASE):
+        raise ValueError("DTD and entity declarations are forbidden in OPC metadata")
+    try:
+        return ET.fromstring(value)
+    except ET.ParseError as error:
+        raise ValueError(f"invalid OPC metadata XML: {info.filename}: {error}") from error
+
+
+def _parse_content_types(
+    archive: zipfile.ZipFile, entries: dict[str, zipfile.ZipInfo]
+) -> tuple[dict[str, str], dict[str, str]]:
+    info = _get_entry(entries, "/[Content_Types].xml")
+    if info is None:
+        raise ValueError("[Content_Types].xml is missing")
+    root = _read_xml_entry(archive, info)
+    if root.tag != f"{{{CONTENT_TYPES_NAMESPACE}}}Types":
+        raise ValueError("[Content_Types].xml has an unexpected root")
+    defaults: dict[str, str] = {}
+    overrides: dict[str, str] = {}
+    for child in root:
+        if child.tag == f"{{{CONTENT_TYPES_NAMESPACE}}}Default":
+            extension = child.attrib.get("Extension")
+            content_type = child.attrib.get("ContentType")
+            if (
+                not extension
+                or not content_type
+                or re.search(r"[.\\/]", extension)
+            ):
+                raise ValueError("invalid Default content-type declaration")
+            key = extension.casefold()
+            if key in defaults:
+                raise ValueError("duplicate Default content-type declaration")
+            defaults[key] = content_type
+        elif child.tag == f"{{{CONTENT_TYPES_NAMESPACE}}}Override":
+            part_name = child.attrib.get("PartName")
+            content_type = child.attrib.get("ContentType")
+            if not part_name or not content_type:
+                raise ValueError("invalid Override content-type declaration")
+            key = _validate_part_name(part_name).casefold()
+            if key in overrides:
+                raise ValueError("duplicate Override content-type declaration")
+            overrides[key] = content_type
+        else:
+            raise ValueError("unexpected element in [Content_Types].xml")
+    return defaults, overrides
+
+
+def _effective_content_type(
+    content_types: tuple[dict[str, str], dict[str, str]], part_name: str
+) -> str | None:
+    defaults, overrides = content_types
+    override = overrides.get(part_name.casefold())
+    if override is not None:
+        return override
+    file_name = part_name.rsplit("/", 1)[-1]
+    if "." not in file_name:
+        return None
+    return defaults.get(file_name.rsplit(".", 1)[-1].casefold())
+
+
+def _parse_relationships(
+    archive: zipfile.ZipFile, info: zipfile.ZipInfo
+) -> list[dict[str, str | None]]:
+    root = _read_xml_entry(archive, info)
+    if root.tag != f"{{{RELATIONSHIPS_NAMESPACE}}}Relationships":
+        raise ValueError(f"relationship part has an unexpected root: {info.filename}")
+    ids: set[str] = set()
+    relationships: list[dict[str, str | None]] = []
+    for child in root:
+        if child.tag != f"{{{RELATIONSHIPS_NAMESPACE}}}Relationship":
+            raise ValueError(f"unexpected relationship element: {info.filename}")
+        relationship_id = child.attrib.get("Id")
+        relationship_type = child.attrib.get("Type")
+        target = child.attrib.get("Target")
+        if (
+            not relationship_id
+            or not relationship_type
+            or not target
+            or relationship_id in ids
+        ):
+            raise ValueError(f"invalid or duplicate relationship: {info.filename}")
+        ids.add(relationship_id)
+        relationships.append(
+            {
+                "id": relationship_id,
+                "type": relationship_type,
+                "target": target,
+                "target_mode": child.attrib.get("TargetMode"),
+            }
+        )
+    return relationships
+
+
+def _inspect_ooxml_package_signature(archive: zipfile.ZipFile) -> bool:
+    entries = _entry_map(archive)
+    content_types = _parse_content_types(archive, entries)
+    for overridden_part_name in content_types[1]:
+        if overridden_part_name not in entries:
+            raise ValueError(
+                "content-type override targets a missing part: "
+                f"{overridden_part_name}"
+            )
+    relationship_parts = [
+        ("/" + info.filename, info)
+        for info in entries.values()
+        if info.filename.casefold() == "_rels/.rels".casefold()
+        or re.search(r"/_rels/[^/]+[.]rels$", info.filename, re.IGNORECASE)
+    ]
+    if len(relationship_parts) > MAX_RELATIONSHIP_PARTS:
+        raise ValueError("package contains too many relationship parts")
+    if sum(info.file_size for _, info in relationship_parts) > MAX_RELATIONSHIP_XML_BYTES:
+        raise ValueError("relationship metadata exceeds the inspection limit")
+    relationships_by_part = {
+        part_name.casefold(): _parse_relationships(archive, info)
+        for part_name, info in relationship_parts
+    }
+    root_relationships = relationships_by_part.get("/_rels/.rels".casefold())
+    if root_relationships is None:
+        raise ValueError("root relationship part is missing")
+
+    origin_typed_parts: list[str] = []
+    signature_typed_parts: list[str] = []
+    for info in entries.values():
+        part_name = "/" + info.filename
+        content_type = _effective_content_type(content_types, part_name)
+        if content_type == ORIGIN_CONTENT_TYPE:
+            origin_typed_parts.append(part_name)
+        if content_type == SIGNATURE_CONTENT_TYPE:
+            signature_typed_parts.append(part_name)
+
+    relevant_relationships: list[tuple[str, dict[str, str | None]]] = []
+    for relationship_part, relationships in relationships_by_part.items():
+        for relationship in relationships:
+            if relationship["type"] in {
+                ORIGIN_RELATIONSHIP_TYPE,
+                SIGNATURE_RELATIONSHIP_TYPE,
+            }:
+                relevant_relationships.append((relationship_part, relationship))
+    root_origins = [
+        relationship
+        for relationship in root_relationships
+        if relationship["type"] == ORIGIN_RELATIONSHIP_TYPE
+    ]
+    if not root_origins:
+        if origin_typed_parts or signature_typed_parts or relevant_relationships:
+            raise ValueError("orphaned digital-signature artifacts were found")
+        return False
+    if len(root_origins) != 1:
+        raise ValueError("package has multiple digital-signature origin relationships")
+    origin_relationship = root_origins[0]
+    if origin_relationship["target_mode"] not in {None, "", "Internal"}:
+        raise ValueError("digital-signature origin relationship is external")
+    origin_target = origin_relationship["target"]
+    assert isinstance(origin_target, str)
+    origin_part_name = _resolve_relationship_target("/", origin_target)
+    origin_info = _get_entry(entries, origin_part_name)
+    if origin_info is None:
+        raise ValueError("digital-signature origin target is missing")
+    if _effective_content_type(content_types, origin_part_name) != ORIGIN_CONTENT_TYPE:
+        raise ValueError("digital-signature origin content type is inconsistent")
+    if _read_metadata_entry(archive, origin_info):
+        raise ValueError("digital-signature origin part must be empty")
+    if len(origin_typed_parts) != 1 or origin_typed_parts[0].casefold() != origin_part_name.casefold():
+        raise ValueError("orphaned or ambiguous digital-signature origin parts")
+
+    if any(
+        relationship["type"] == ORIGIN_RELATIONSHIP_TYPE
+        and relationship_part.casefold() != "/_rels/.rels".casefold()
+        for relationship_part, relationship in relevant_relationships
+    ):
+        raise ValueError(
+            "digital-signature origin relationship appears in an unexpected part"
+        )
+    all_signature_relationships = [
+        relationship
+        for _, relationship in relevant_relationships
+        if relationship["type"] == SIGNATURE_RELATIONSHIP_TYPE
+    ]
+
+    origin_relationships_part = _relationships_part_for(origin_part_name)
+    origin_relationships = relationships_by_part.get(origin_relationships_part.casefold())
+    if origin_relationships is None:
+        if signature_typed_parts or all_signature_relationships:
+            raise ValueError("orphaned digital-signature artifacts were found")
+        return False
+    signature_relationships = [
+        relationship
+        for relationship in origin_relationships
+        if relationship["type"] == SIGNATURE_RELATIONSHIP_TYPE
+    ]
+    if not signature_relationships:
+        if signature_typed_parts or all_signature_relationships:
+            raise ValueError("orphaned digital-signature artifacts were found")
+        return False
+    signature_targets: set[str] = set()
+    for relationship in signature_relationships:
+        if relationship["target_mode"] not in {None, "", "Internal"}:
+            raise ValueError("digital-signature relationship is external")
+        signature_target = relationship["target"]
+        assert isinstance(signature_target, str)
+        target_part_name = _resolve_relationship_target(
+            origin_part_name, signature_target
+        )
+        if _get_entry(entries, target_part_name) is None:
+            raise ValueError("digital-signature target is missing")
+        if _effective_content_type(content_types, target_part_name) != SIGNATURE_CONTENT_TYPE:
+            raise ValueError("digital-signature content type is inconsistent")
+        key = target_part_name.casefold()
+        if key in signature_targets:
+            raise ValueError("duplicate digital-signature targets were found")
+        signature_targets.add(key)
+    if {part.casefold() for part in signature_typed_parts} != signature_targets:
+        raise ValueError("orphaned or ambiguous digital-signature parts were found")
+    for relationship_part, relationship in relevant_relationships:
+        expected = (
+            "/_rels/.rels"
+            if relationship["type"] == ORIGIN_RELATIONSHIP_TYPE
+            else origin_relationships_part
+        )
+        if relationship_part.casefold() != expected.casefold():
+            raise ValueError(
+                "digital-signature relationship appears in an unexpected part"
+            )
+    return True
+
+
+def assert_ooxml_package_unsigned(workbook_path: Path) -> None:
+    try:
+        with zipfile.ZipFile(workbook_path, "r") as archive:
+            signed = _inspect_ooxml_package_signature(archive)
+    except WritebackError:
+        raise
+    except Exception as error:
+        raise WritebackError(
+            "PACKAGE_SIGNATURE_UNVERIFIABLE",
+            "Package signature verification failed; write refused: " f"{error}",
+        ) from error
+    if signed:
+        raise WritebackError(
+            "OOXML_PACKAGE_SIGNED",
+            "Office package signature detected; write refused because "
+            "modification would invalidate it.",
+        )
 
 
 def require_string(
@@ -803,6 +1199,14 @@ def apply_request(request: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    current_source_hash = sha256_file(workbook_path)
+    if current_source_hash != expected_workbook_hash:
+        raise WritebackError(
+            "STALE_WORKBOOK",
+            "Workbook changed after export. Refresh the VBA project before applying edits.",
+        )
+    assert_ooxml_package_unsigned(workbook_path)
+
     work_handle, work_name = tempfile.mkstemp(
         prefix=f".{workbook_path.stem}.excel-ai-vba-",
         suffix=workbook_path.suffix,
@@ -820,6 +1224,7 @@ def apply_request(request: dict[str, Any]) -> dict[str, Any]:
                 "STALE_WORKBOOK",
                 "Workbook changed after export. Refresh the VBA project before applying edits.",
             )
+        assert_ooxml_package_unsigned(work_path)
         original_zip_hashes = zip_payload_hashes(work_path)
         with ExcelFile(work_path) as workbook:
             project = workbook.vba_project()

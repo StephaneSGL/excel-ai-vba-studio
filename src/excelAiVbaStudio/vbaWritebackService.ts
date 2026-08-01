@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { assertOoxmlPackageUnsignedForMutation } from '../common/ooxmlPackageSignature';
 import {
 	assertNoReparsePointChain,
 	assertOwnedDirectory,
@@ -317,6 +318,7 @@ export class VbaWritebackService implements vscode.Disposable {
 					workbookSha256: latestBaseline.workbookSha256
 				};
 			}
+			await assertOoxmlPackageUnsignedForMutation(workbookPath);
 			const result = await this.invokeHelper(context, {
 				schemaVersion: 1,
 				workbookPath,

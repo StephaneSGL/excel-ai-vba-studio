@@ -10,11 +10,13 @@ Build from a clean Python 3.11 virtual environment:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-vba-writeback.ps1
 ```
 
-The build pins the complete Python build toolchain, fixes PyInstaller's
-reproducibility inputs, and packages a self-contained console executable.
-Windows CI requires a clean rebuild to match the tracked executable
-byte-for-byte. The upstream MIT license is included in
-`LICENSES/PYOPENVBA-MIT.txt`.
+The build pins every Python package by version and wheel SHA-256, fixes the
+Python hash seed and source date, and packages a self-contained console
+executable. PyInstaller output is not assumed to be byte-identical across
+different Windows/Python hosts. Windows CI therefore records the clean-build
+digest, runs the complete native-helper regression suite against that exact
+executable, and uses the tested artifact for tagged packages. The upstream MIT
+license is included in `LICENSES/PYOPENVBA-MIT.txt`.
 
 The helper updates existing standard, class, document, and UserForm
 code-behind modules. It can add standard or class modules. It deliberately

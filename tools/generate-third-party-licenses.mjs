@@ -12,7 +12,7 @@ const components = [
   ["PyInstaller bootloader (6.15.0)", "LICENSES/PYINSTALLER-GPL2-EXCEPTION.txt"],
   ["Python runtime (3.11.9)", "LICENSES/PYTHON-3.11-PSF.txt"],
   ["SheetJS Community Edition (xlsx 0.20.3)", "node_modules/xlsx/LICENSE"],
-  ["ExcelJS (@cweijan/exceljs 5.0.1)", "node_modules/@cweijan/exceljs/LICENSE"],
+  ["ExcelJS (@cweijan/exceljs 5.0.2)", "node_modules/@cweijan/exceljs/LICENSE"],
   ["React (react 19.2.8)", "node_modules/react/LICENSE"],
   ["React DOM (react-dom 19.2.8)", "node_modules/react-dom/LICENSE"],
   ["Ant Design (antd 5.29.3)", "node_modules/antd/LICENSE"],
@@ -20,8 +20,8 @@ const components = [
   ["VS Code Codicons (@vscode/codicons 0.0.45)", "node_modules/@vscode/codicons/LICENSE"],
   ["VS Code Codicons code license (@vscode/codicons 0.0.45)", "node_modules/@vscode/codicons/LICENSE-CODE"],
   ["JSZip (jszip 3.10.1)", "node_modules/jszip/LICENSE.markdown"],
-  ["iconv-lite (iconv-lite 0.6.3)", "node_modules/iconv-lite/LICENSE"],
-  ["uDSV (udsv 0.5.3)", "node_modules/udsv/LICENSE"],
+  ["iconv-lite (iconv-lite 0.7.3)", "node_modules/iconv-lite/LICENSE"],
+  ["uDSV (udsv 0.7.3)", "node_modules/udsv/LICENSE"],
   ["buffer (buffer 6.0.3)", "node_modules/buffer/LICENSE"],
 ];
 

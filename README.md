@@ -52,6 +52,7 @@ Excel AI & VBA Studio is a preview VS Code extension for inspecting supported sp
 - VBA Studio includes a visual UserForm canvas backed by the real COM designer inventory. Standard controls can be added, moved, resized, inspected, and connected to complete VBA event procedures.
 - GitHub Copilot can use `updateUserFormControl` and `setUserFormEventHandler` through `#excelVbaDesignWorkbook`, including parameterized events such as `KeyDown`, `BeforeUpdate`, and `QueryClose`.
 - **Open VBA Studio in VS Code** creates an isolated, validated VBA workspace in a separate VS Code window and opens the integrated studio there.
+- A read-only **Enterprise Security Center** classifies the selected workbook as restricted, managed, standard, or unknown and explains file, macro/VBA, ActiveX, Protected View, Trusted Location, signature, EFS/OOXML package encryption, Microsoft 365 Cloud Policy, Windows policy, Intune/MDM, and local Microsoft Purview signals.
 - No extension telemetry and no API key management by the extension.
 
 ## Install from a VSIX
@@ -82,11 +83,12 @@ The Visual Studio Marketplace release is not available yet. This public reposito
 
 1. Open a supported workbook in VS Code.
 2. Use the integrated grid or the **Excel & VBA** explorer.
-3. Export local context only when you need to inspect it.
-4. Reference `#excelVbaWorkbook` explicitly from a compatible VS Code AI chat.
-5. Use **Open VBA Studio in VS Code** to open a separate Developer window containing the project, controls graph, and real exported sources.
-6. Edit and save a supported `.bas`, `.cls`, or existing `.frm` file. For `.xlsx`, the first `.bas`/`.cls` write creates a sibling `.xlsm`; continue on the returned target. Existing macro-enabled workbooks use validated transactional replacement.
-7. Reference `#excelVbaDesignWorkbook` to create a UserForm, add or reposition supported controls, assign complete control/UserForm event procedures, create or reassign a worksheet Form Control button, or create/bind a permitted worksheet ActiveX control in an existing `.xlsm`.
+3. Open the **Enterprise Security Center** before using an unfamiliar or organization-managed workbook.
+4. Export local context only when you need to inspect it.
+5. Reference `#excelVbaWorkbook` explicitly from a compatible VS Code AI chat.
+6. Use **Open VBA Studio in VS Code** to open a separate Developer window containing the project, controls graph, and real exported sources.
+7. Edit and save a supported `.bas`, `.cls`, or existing `.frm` file. For `.xlsx`, the first `.bas`/`.cls` write creates a sibling `.xlsm`; continue on the returned target. Existing macro-enabled workbooks use validated transactional replacement.
+8. Reference `#excelVbaDesignWorkbook` to create a UserForm, add or reposition supported controls, assign complete control/UserForm event procedures, create or reassign a worksheet Form Control button, or create/bind a permitted worksheet ActiveX control in an existing `.xlsm`.
 
 ### What changes inside XLSX and XLSM
 
@@ -105,6 +107,7 @@ The Visual Studio Marketplace release is not available yet. This public reposito
 | --- | --- |
 | `excelAiVbaStudio.openExcel` | Launches or reactivates the real workbook only on request. |
 | `excelAiVbaStudio.openVbe` | Opens the workbook in Excel, then displays the native VBE. |
+| `excelAiVbaStudio.openSecurityCenter` | Inspects local file and Office security signals without opening Excel or changing policy. |
 | `excelAiVbaStudio.openVbaDeveloper` | Opens a separate validated VS Code Developer window with the VBA interface and exported sources. |
 | `excelAiVbaStudio.exportWorkbook` | Creates local Markdown and JSON exports. |
 | `excelAiVbaStudio.copyWorkbookContext` | Exports and copies bounded workbook context. |
@@ -163,6 +166,11 @@ The published bundle starts from `src/extension.ts` and registers only the inten
 ## Excel, VBA, and AI security
 
 - Workbook export uses a dedicated Excel instance and fails closed if macro execution cannot be disabled.
+- The Enterprise Security Center is opt-in and read-only. It inspects the selected file, its Mark of the Web, bounded Office 16 policy/preference registry locations, Cloud Policy presence, declared Trusted Locations, Office architecture, fixed Intune/MDM and Group Policy signals, and the enterprise rule that allows or refuses user-defined Trusted Locations, without starting Excel.
+- Detected values are separated by technical source: Microsoft 365 Cloud Policy, Windows policy registry for the computer or user, or local preference. The effective table applies `Cloud Policy > Windows policy > local preference`, shows shadowed evidence, and marks effective managed decisions as locked. A Windows policy key alone cannot prove whether GPO, Intune/MDM, Configuration Manager, or a script delivered it.
+- The Center can refresh or copy its local report, open the extension settings, and expose contextual links to Microsoft 365 Apps, Intune, Purview, or GPO diagnostics for an already authorized administrator. It deliberately does not open the inspected workbook; Excel must be started separately before consulting **Developer > Macro Security**. Opening a portal grants no role. The extension never changes Group Policy, Intune, Cloud Policy, Purview, Trust Center, AccessVBOM, ActiveX, Trusted Locations, Mark of the Web, or the registry.
+- Modern OPC `LabelInfo.xml` and correctly related historical custom properties are parsed structurally. Any stored technical name, tenant ID, method, date, and content-marking bits are shown as unauthenticated local declarations; they do not establish the current display name, confidentiality rank, tenant authenticity, or encryption state.
+- `unknown` means that the final Excel decision cannot be proven from local static evidence. Cloud assignment, certificate trust, antivirus decisions, and policy conflicts can still require confirmation by an administrator or by Excel itself.
 - Events, link updates, alerts, and automatic calculation are disabled during controlled analysis.
 - The extension never changes Excel's **Trust access to the VBA project object model** setting or the Windows registry.
 - First-time `.xlsx` VBA bootstrap requires that the user has already enabled Excel's VBA project object-model access. It uses a hidden, owned Excel process with macros disabled, creates only the exact sibling `.xlsm`, verifies `vbaProject.bin`, and leaves the source hash unchanged.
@@ -176,10 +184,13 @@ The published bundle starts from `src/extension.ts` and registers only the inten
 - Worksheet ActiveX creation is denied unless Excel itself permits insertion. Third-party ProgIDs are additionally denied unless the exact value is already present in the user-owned allowlist.
 - The direct `.xlsm`/`.xlam` source writer does not start Excel. The `.xlsx` bootstrap and `.xlsm` Designer use controlled hidden Excel processes with macros disabled; none of these paths runs a macro or changes AccessVBOM.
 - Exports remain local, size-bounded, and removable.
+- An OOXML package signature makes the workbook read-only in the extension. Detection follows the OPC digital-signature origin/signature relationships and effective Content Types, including arbitrary valid part URIs; malformed, orphaned, external, or otherwise ambiguous signature metadata fails closed. Grid saves, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX all refuse the mutation rather than invalidate that signature.
 - Workbook content is treated as untrusted data, not as instructions for an AI model.
 - No workbook is sent to an AI provider automatically.
 
 This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and security software may have their own network behavior. Read [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md) before using real professional workbooks.
+
+Microsoft references: [Cloud Policy for Microsoft 365 Apps](https://learn.microsoft.com/en-us/microsoft-365-apps/admin-center/overview-cloud-policy), [Microsoft Intune](https://learn.microsoft.com/en-us/mem/intune/fundamentals/what-is-intune), [Purview sensitivity labels in Office](https://learn.microsoft.com/en-us/purview/sensitivity-labels-office-apps), [Sensitivity Label Information Part](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/c0599e21-b77f-475e-99e0-bd647f60bcbb), [macros from the Internet](https://learn.microsoft.com/en-us/microsoft-365-apps/security/internet-macros-blocked), [Trusted Locations](https://learn.microsoft.com/en-us/microsoft-365-apps/security/trusted-locations), and [Excel macro security](https://support.microsoft.com/en-US/Excel/change-macro-security-settings-in-excel).
 
 ## Preview limitations
 
@@ -193,6 +204,7 @@ This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and 
 - Integrated `.xlsm` editing supports values, formulas, cell styles, explicit row heights and column widths, appending the five conditional-formatting presets exposed by the ribbon, and clearing all rules on one sheet. Worksheet structure, implicit dimension resets, merges, objects, controls, buttons, existing-rule edits, rule reordering, and partial rule deletion are refused.
 - The visual UserForm designer supports the standard-control toolbox, positioning, sizing, core properties, and event procedures. Nested-container editing, z-order, font/color styling, images, multi-selection, copy/paste, and native VBE parity remain future work.
 - Excel or enterprise policy can block ActiveX insertion even when the extension request is valid. The extension reports that refusal and never weakens Trust Center settings automatically.
+- The Security Center does not authenticate to Microsoft 365, resolve current sensitivity-label display names or their tenant-defined rank, validate certificate trust chains, parse encrypted/legacy CFB LabelInfo streams, diagnose every legacy XLS encryption scheme, attribute a Windows policy value to GPO versus Intune, or replace Intune, Group Policy Results, Microsoft 365 Apps admin center, Defender, or Purview auditing.
 
 ## Version history
 

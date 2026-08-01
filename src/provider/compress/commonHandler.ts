@@ -1,8 +1,14 @@
 import { Handler } from '@/common/handler';
 import type { NativeExcelEditOperation } from '@/common/nativeExcelEdits';
+import {
+    OOXML_PACKAGE_SIGNATURE_VERIFICATION_BLOCKED_MESSAGE,
+    OOXML_PACKAGE_SIGNATURE_WRITE_BLOCKED_MESSAGE,
+} from '@/common/ooxmlPackageSignature';
 import { parseSafeExternalUri } from '@/common/webviewUri';
 import { applyNativeExcelEdits } from '@/provider/nativeExcelBridge';
 import {
+    assertExistingUriOoxmlPackageUnsignedForMutation,
+    assertUriOoxmlPackageUnsignedForMutation,
     emitFileOfficeOpen,
     emitVirtualOfficeOpen,
     getEmbeddedSpreadsheetReadOnlyState,
@@ -90,6 +96,26 @@ function notifyNativeBinaryWriteBlocked(handler: Handler): void {
         message: NATIVE_BINARY_WRITE_BLOCKED_MESSAGE,
     });
     void vscode.window.showWarningMessage(NATIVE_BINARY_WRITE_BLOCKED_MESSAGE);
+}
+
+function packageSignatureBlockedMessage(
+    reason?: EmbeddedSpreadsheetReadOnlyReason
+): string {
+    return reason === 'package-signature-verification'
+        ? OOXML_PACKAGE_SIGNATURE_VERIFICATION_BLOCKED_MESSAGE
+        : OOXML_PACKAGE_SIGNATURE_WRITE_BLOCKED_MESSAGE;
+}
+
+function notifyPackageSignatureWriteBlocked(
+    handler: Handler,
+    reason?: EmbeddedSpreadsheetReadOnlyReason
+): void {
+    const message = packageSignatureBlockedMessage(reason);
+    handler.emit('writeBlocked', {
+        reason,
+        message,
+    });
+    void vscode.window.showWarningMessage(message);
 }
 
 export function handleCommonEvent(
@@ -377,6 +403,13 @@ export function handleCommonEvent(
                 notifyMacroWriteBlocked(handler);
                 return;
             }
+            if (
+                readOnlyReason === 'package-signature' ||
+                readOnlyReason === 'package-signature-verification'
+            ) {
+                notifyPackageSignatureWriteBlocked(handler, readOnlyReason);
+                return;
+            }
             updateDirty(true);
         })
         .on('save', async (content: unknown) => {
@@ -390,10 +423,23 @@ export function handleCommonEvent(
                     notifyNativeBinaryWriteBlocked(handler);
                     throw new Error(NATIVE_BINARY_WRITE_BLOCKED_MESSAGE);
                 }
+                if (
+                    state.readOnlyReason === 'package-signature' ||
+                    state.readOnlyReason === 'package-signature-verification'
+                ) {
+                    notifyPackageSignatureWriteBlocked(
+                        handler,
+                        state.readOnlyReason
+                    );
+                    throw new Error(
+                        packageSignatureBlockedMessage(state.readOnlyReason)
+                    );
+                }
                 const bytes = toBytes(content);
                 if (state.readOnly) {
                     throw new Error('Read-only spreadsheets must be saved to a new file.');
                 }
+                await assertUriOoxmlPackageUnsignedForMutation(uri);
                 fileSaveTimes[uri.toString()] = Date.now();
                 await workspace.fs.writeFile(uri, bytes);
                 fileSaveTimes[uri.toString()] = Date.now();
@@ -424,6 +470,18 @@ export function handleCommonEvent(
                     notifyNativeBinaryWriteBlocked(handler);
                     throw new Error(NATIVE_BINARY_WRITE_BLOCKED_MESSAGE);
                 }
+                if (
+                    state.readOnlyReason === 'package-signature' ||
+                    state.readOnlyReason === 'package-signature-verification'
+                ) {
+                    notifyPackageSignatureWriteBlocked(
+                        handler,
+                        state.readOnlyReason
+                    );
+                    throw new Error(
+                        packageSignatureBlockedMessage(state.readOnlyReason)
+                    );
+                }
                 const ext = (payload?.ext ?? 'xlsx').toLowerCase();
                 const format = SAVE_FORMATS[ext];
                 if (!format || !Array.isArray(payload?.content)) {
@@ -451,6 +509,11 @@ export function handleCommonEvent(
                         message: cancelled.message,
                     });
                     return;
+                }
+
+                await assertUriOoxmlPackageUnsignedForMutation(uri);
+                if (target.toString() !== uri.toString()) {
+                    await assertExistingUriOoxmlPackageUnsignedForMutation(target);
                 }
 
                 fileSaveTimes[target.toString()] = Date.now();
@@ -487,6 +550,18 @@ export function handleCommonEvent(
             try {
                 const state = await refreshReadOnlyState();
                 if (
+                    state.readOnlyReason === 'package-signature' ||
+                    state.readOnlyReason === 'package-signature-verification'
+                ) {
+                    notifyPackageSignatureWriteBlocked(
+                        handler,
+                        state.readOnlyReason
+                    );
+                    throw new Error(
+                        packageSignatureBlockedMessage(state.readOnlyReason)
+                    );
+                }
+                if (
                     state.readOnly ||
                     state.readOnlyReason !== 'native-excel-editing' ||
                     uri.scheme !== 'file'
@@ -503,6 +578,8 @@ export function handleCommonEvent(
                         'La sauvegarde XLSM est refusée : une version plus récente est en cours de chargement.'
                     );
                 }
+
+                await assertUriOoxmlPackageUnsignedForMutation(uri);
 
                 fileSaveTimes[uri.toString()] = Date.now();
                 await applyNativeExcelEdits(

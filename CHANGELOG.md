@@ -6,11 +6,42 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ## [Unreleased]
 
+### Added
+
+- Added a read-only Enterprise Security Center for `.xlsx`, `.xlsm`, `.xls`, and `.xlsb`. It reports file origin/MOTW, VBA and package signatures, EFS and OOXML package encryption, sensitivity-label metadata, macro/VBA settings, ActiveX, Protected View, application-wide and Excel Trusted Locations, the policy controlling user-defined locations, and the detected source of Office 16 policy or preference values.
+- Added a per-capability view for the integrated grid, VBA inspection/write-back, UserForm designer, ActiveX creation, and macro execution, with restricted, managed, standard, and unknown workbook levels.
+- Added an effective-policy table that keeps Cloud Policy, Windows policy-registry values, and local preferences separate, shows shadowed evidence, and uses the detected Office architecture for registry-view decisions.
+- Added separate, non-attributing signals for Microsoft Intune/MDM, Windows Group Policy history, Microsoft 365 Cloud Policy, and Microsoft Purview plus explicit links to the authorized Microsoft 365 Apps, Intune, and Purview admin portals.
+- Added structural parsing for the modern OPC `LabelInfo.xml` relationship and the correctly related legacy OOXML custom properties, including technical name, declared tenant ID, assignment method, date, and content-marking bits when locally available.
+- Added per-tenant Purview fallback between `LabelInfo` and historical properties, IRMDS container recognition, separate Intune and correlated MDM signals, denied-registry-read states, GPO diagnostic guidance, and legacy XLM policy warnings.
+
 ### Changed
 
 - Clarified the noncommercial community-use rights and the separate commercial-license boundary without changing the PolyForm Noncommercial 1.0.0 terms.
 - Removed obsolete upstream translations that described a different extension, unsupported features, and telemetry that this project does not collect.
 - Excluded local package-output directories consistently from Git.
+- Replaced the unsupported Marketplace `--oidc` invocation with a verified VSIX artifact; automatic publication remains intentionally disabled until a Microsoft Entra workload identity is configured for the publisher.
+- Moved bounded OOXML metadata inflation off the extension-host event loop. Virtual writes intentionally retain a final snapshot read because `workspace.fs` does not expose a conditional compare-and-swap write.
+
+### Security
+
+- The enterprise probe is bounded, local, and read-only: it never opens Excel, runs VBA, removes Mark of the Web, writes the registry, changes Trust Center, or attempts to bypass managed policy.
+- The audit now holds a read-only file lock across the complete inspection, parses only one valid `ZoneTransfer` section with `ZoneId` 0–4, expands bounded Trusted Location environment variables, and includes Excel's documented built-in Trusted Locations.
+- Macro-capable containers whose VBA or XLM inventory cannot be proven now remain `unknown`; they are never presented as safely macro-free merely because a conventional part path was absent.
+- Compound-file traversal is capped by directory-entry count, hierarchy depth, and reconstructed path length; ambiguous structures fail closed.
+- GitHub Actions are pinned to immutable commits, CodeQL scans JavaScript/TypeScript and Python, native Python build wheels are pinned by SHA-256, and Windows CI rebuilds, hashes, and tests the native helper before a tagged package consumes that exact artifact. Package validation uses an explicit allowlist.
+- Removed the invalid cross-host byte-for-byte PyInstaller comparison; runner-built executables are now identified by digest and accepted only after the native security and atomic-write suites pass.
+- Cloud, machine, user, and preference sources remain visible independently; unknown effective decisions are reported as unknown instead of being treated as permission.
+- A Windows policy-registry value is never attributed to GPO or Intune from enrollment presence alone, and local Purview metadata is never treated as authenticated tenant policy or proof of encryption.
+- The Center never opens the inspected workbook, rejects malformed policy value types, bounds Mark-of-the-Web and enrollment reads, and reports unreadable higher-priority policy stores as unknown instead of falling back to a weaker preference.
+- Every workbook mutation path now resolves OOXML package signatures through OPC origin/signature relationships and effective Content Types, including arbitrary valid part URIs; malformed, orphaned, external, unreadable, or otherwise ambiguous signature state fails closed.
+
+### Tests
+
+- Added static guards against registry/file/network writes and Excel automation plus synthetic workbook probes for bounded JSON, modern and legacy Purview metadata, `EnabledV2` precedence, orphan rejection, Intune non-attribution, policy precedence, registry bitness, source typing, and Trusted Location limits.
+- Added regressions for invalid and ambiguous Mark-of-the-Web streams, macro-capable containers with inconclusive inventories, built-in Excel Trusted Locations, deep compound-file hierarchies, and Linux-safe package-signature validation.
+- Added an executable signed-package regression covering XLSX/XLSM grid writes, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX without running a macro.
+- Retained the virtual-provider race regression that changes an unsigned package to a signed package between inspection and the final pre-write read.
 
 ## [0.5.1] - 2026-07-28
 
@@ -154,8 +185,9 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Native saves bind the grid snapshot to a writer-locked source, fingerprint
   every logical VBA/UserForm stream, and restore the verified backup
   automatically if post-replacement validation fails.
-- The bundled writer is rebuilt from a fully pinned, reproducible Python
-  toolchain and must match the shipped executable byte-for-byte in Windows CI.
+- The bundled writer uses a fully pinned Python package toolchain. Windows CI
+  rebuilds it from source, records its digest, and runs the native regression
+  suite against the resulting executable.
 - Stale workbooks, signed or password-protected VBA projects, reparse points, network paths, oversized requests, and UserForm designer changes are refused.
 - The write-back engine never starts Excel, executes macros, edits the Office registry, or changes AccessVBOM.
 
@@ -260,7 +292,9 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Excel & VBA sidebar explorer.
 - Prompt-referenceable `#excelVbaWorkbook` language-model tool.
 - Local export cleanup and bounded export settings.
-- Marketplace OIDC publishing workflow with tag/version verification.
+- Initial Marketplace OIDC workflow with tag/version verification; this path
+  was not operational with VSCE and is superseded by the verified-artifact
+  workflow documented under Unreleased.
 
 ### Changed
 
@@ -275,4 +309,5 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - The extension never enables Excel’s programmatic VBA-project access setting.
 - VBA and legacy macro formats are read-only in the embedded grid until safe VBA preservation is available.
 - Generated context is confined to extension-controlled local storage.
-- Publishing uses short-lived OIDC credentials instead of a stored Marketplace PAT.
+- The initial publishing design avoided a stored Marketplace PAT, but its OIDC
+  command was unsupported and did not provide a working publication path.

@@ -52,6 +52,7 @@ const expectedCommands = sorted([
   'excelAiVbaStudio.copyGeneratedContext',
   'excelAiVbaStudio.openExcel',
   'excelAiVbaStudio.openVbe',
+  'excelAiVbaStudio.openSecurityCenter',
   'excelAiVbaStudio.openVbaDeveloper',
   'excelAiVbaStudio.openVbaExplorer',
   'excelAiVbaStudio.askCopilotAboutWorkbook',
@@ -164,6 +165,7 @@ const requiredFiles = [
   'NOTICE.md',
   'THIRD_PARTY_NOTICES.md',
   'scripts/office-ai-export.ps1',
+  'scripts/inspect-office-security.ps1',
   'scripts/open-excel-developer.ps1',
 ];
 for (const file of requiredFiles) {

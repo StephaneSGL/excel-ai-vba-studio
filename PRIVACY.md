@@ -12,7 +12,11 @@ When requested by the user, the extension may read:
   comments, validations, links, and workbook metadata;
 - connection and Power Query metadata exposed by Microsoft Excel;
 - VBA project metadata and module source;
-- local file paths needed to open the selected workbook.
+- local file paths needed to open the selected workbook;
+- when the user opens the Enterprise Security Center, bounded local Office 16
+  policy and preference values, declared Trusted Location paths, the workbook's
+  Mark of the Web zone, signature presence, encryption attributes, and
+  sensitivity-label identifiers.
 
 The direct VBA writer reads and writes permitted VBA source locally without
 enabling AccessVBOM or changing Office/registry settings.
@@ -47,6 +51,19 @@ The extension does not collect analytics or telemetry. It does not create an
 advertising identifier, user profile, extension-managed cloud account, or
 extension-managed API key.
 
+The Enterprise Security Center does not contact Microsoft 365, Purview, an
+organization directory, or any other remote service. Its probe does not write
+the workbook, alternate streams, registry, Trust Center, or enterprise policy.
+It can read fixed local Intune and Group Policy presence signals plus a
+strictly bounded set of MDM enrollment/account keys and
+structurally validated sensitivity-label metadata stored in the selected file.
+It returns only a detection state and coarse provider category for MDM; it does
+not return enrollment GUIDs, user names, certificate references, server IDs, or
+service URLs.
+If the user explicitly selects an administrator-portal or documentation link,
+VS Code opens that public HTTPS address in the default browser; browser,
+Microsoft-account, and organization policies then apply.
+
 ## Network and AI providers
 
 The extension does not upload a workbook or generated context to a remote
@@ -69,6 +86,10 @@ Users can:
 - limit exported rows and columns in extension settings;
 - disable VBA inclusion;
 - review generated Markdown/JSON/VBA files before sharing them;
+- review a copied security report before sharing it because it can contain the
+  workbook path, organization Trusted Location paths, policy registry paths,
+  sensitivity-label IDs, a declared tenant ID, technical label name, assignment
+  method, date, and content-marking bits;
 - remove generated exports and workbook backups;
 - save, revert, or close an edited grid to let VS Code retire hot-exit backups;
 - use native Excel or the VBE when the safe writer refuses an operation;

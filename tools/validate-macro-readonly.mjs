@@ -148,8 +148,8 @@ assert.match(
 
 assert.match(
   excelUi,
-  /allowSaveAs:\s*!preserveMacros/,
-  'macro-preserving modes must suppress Save As in the grid'
+  /const preserveSourceIntegrity\s*=\s*[\s\S]+?'macro-preservation'[\s\S]+?'native-excel-editing'[\s\S]+?'package-signature'[\s\S]+?'package-signature-verification'[\s\S]+?allowSaveAs:\s*!preserveSourceIntegrity/,
+  'macro-preserving and package-signature modes must suppress Save As in the grid'
 );
 assert.match(
   excelUi,

@@ -1,12 +1,23 @@
 import { Handler } from '@/common/handler';
 import { isUriReadOnly } from '@/common/fileReadOnly';
+import {
+    assertExistingOoxmlPackageUnsignedForMutation,
+    assertOoxmlPackageUnsignedBytesForMutation,
+    assertOoxmlPackageUnsignedForMutation,
+    hasOoxmlPackageSignature,
+    hasOoxmlPackageSignatureBytes,
+    isOoxmlPackagePath,
+    MAX_VIRTUAL_OOXML_PACKAGE_BYTES,
+} from '@/common/ooxmlPackageSignature';
 import { basename, extname } from 'path';
 import { Uri, workspace, type Webview } from 'vscode';
 
 export type EmbeddedSpreadsheetReadOnlyReason =
     | 'macro-preservation'
     | 'native-excel-editing'
-    | 'file-permissions';
+    | 'file-permissions'
+    | 'package-signature'
+    | 'package-signature-verification';
 
 export interface OfficeOpenSnapshot {
     nativeLoadGeneration?: string;
@@ -30,12 +41,92 @@ export function supportsNativeMacroEditing(uri: Uri): boolean {
     return extname(uri.fsPath).toLowerCase() === '.xlsm';
 }
 
+function isFileNotFoundError(error: unknown): boolean {
+    const candidate = error as { code?: string; name?: string } | undefined;
+    return candidate?.code === 'FileNotFound'
+        || candidate?.code === 'ENOENT'
+        || candidate?.name === 'EntryNotFound (FileSystemError)';
+}
+
+async function readVirtualOoxmlBytesForInspection(uri: Uri): Promise<Uint8Array> {
+    const stat = await workspace.fs.stat(uri);
+    if (stat.size > MAX_VIRTUAL_OOXML_PACKAGE_BYTES) {
+        throw new Error(
+            `Virtual OOXML package exceeds the ${MAX_VIRTUAL_OOXML_PACKAGE_BYTES}-byte inspection limit.`,
+        );
+    }
+    const bytes = await workspace.fs.readFile(uri);
+    if (bytes.byteLength > MAX_VIRTUAL_OOXML_PACKAGE_BYTES) {
+        throw new Error(
+            `Virtual OOXML package exceeds the ${MAX_VIRTUAL_OOXML_PACKAGE_BYTES}-byte inspection limit.`,
+        );
+    }
+    return bytes;
+}
+
+export async function hasUriOoxmlPackageSignature(uri: Uri): Promise<boolean> {
+    if (!isOoxmlPackagePath(uri.fsPath)) return false;
+    if (uri.scheme === 'file') {
+        return hasOoxmlPackageSignature(uri.fsPath);
+    }
+    return hasOoxmlPackageSignatureBytes(
+        await readVirtualOoxmlBytesForInspection(uri),
+        uri.fsPath,
+    );
+}
+
+/** Re-inspect the source bytes immediately before every host write. */
+export async function assertUriOoxmlPackageUnsignedForMutation(uri: Uri): Promise<void> {
+    if (!isOoxmlPackagePath(uri.fsPath)) return;
+    if (uri.scheme === 'file') {
+        await assertOoxmlPackageUnsignedForMutation(uri.fsPath);
+        return;
+    }
+    await assertOoxmlPackageUnsignedBytesForMutation(
+        await readVirtualOoxmlBytesForInspection(uri),
+        uri.fsPath,
+    );
+}
+
+/** Existing Save As destinations are protected for both file and virtual URIs. */
+export async function assertExistingUriOoxmlPackageUnsignedForMutation(
+    uri: Uri,
+): Promise<void> {
+    if (!isOoxmlPackagePath(uri.fsPath)) return;
+    if (uri.scheme === 'file') {
+        await assertExistingOoxmlPackageUnsignedForMutation(uri.fsPath);
+        return;
+    }
+    try {
+        await workspace.fs.stat(uri);
+    } catch (error) {
+        if (isFileNotFoundError(error)) return;
+        throw error;
+    }
+    await assertUriOoxmlPackageUnsignedForMutation(uri);
+}
+
 export async function getEmbeddedSpreadsheetReadOnlyState(
     uri: Uri
 ): Promise<{
     readOnly: boolean;
     readOnlyReason?: EmbeddedSpreadsheetReadOnlyReason;
 }> {
+    if (isOoxmlPackagePath(uri.fsPath)) {
+        try {
+            if (await hasUriOoxmlPackageSignature(uri)) {
+                return {
+                    readOnly: true,
+                    readOnlyReason: 'package-signature',
+                };
+            }
+        } catch {
+            return {
+                readOnly: true,
+                readOnlyReason: 'package-signature-verification',
+            };
+        }
+    }
     if (await isUriReadOnly(uri)) {
         return {
             readOnly: true,
