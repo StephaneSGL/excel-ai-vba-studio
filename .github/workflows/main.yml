@@ -64,25 +64,23 @@ jobs:
       - name: Rebuild the VBA helper from pinned source
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-vba-writeback.ps1
 
-      - name: Upload canonical VBA helper candidate
+      - name: Record source-built helper digest
+        shell: pwsh
+        run: |
+          $digest = (Get-FileHash -Algorithm SHA256 bin/win32-x64/excel-ai-vba-writeback.exe).Hash
+          "Source-built helper SHA-256: ``$digest``" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Test the source-built VBA helper
+        run: |
+          npm run validate:vba-writeback
+          npm run test:package-signatures
+          npm run test:vba-writeback
+          npm run test:vba-atomic
+
+      - name: Upload tested VBA helper candidate
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: vba-writeback-helper-${{ github.sha }}
           path: bin/win32-x64/excel-ai-vba-writeback.exe
           if-no-files-found: error
           retention-days: 7
-
-      - name: Verify shipped helper provenance
-        shell: pwsh
-        run: |
-          git diff --exit-code -- bin/win32-x64/excel-ai-vba-writeback.exe
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Bundled helper differs from the reproducible source build.'
-          }
-          Write-Output 'Bundled helper matches the reproducible source build.'
-
-      - name: Test the freshly rebuilt VBA helper
-        run: |
-          npm run test:package-signatures
-          npm run test:vba-writeback
-          npm run test:vba-atomic

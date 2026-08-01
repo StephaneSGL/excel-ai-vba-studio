@@ -34,22 +34,28 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Test the committed VBA helper signature lock
-        run: npm run test:package-signatures
+      - name: Test the committed VBA helper
+        run: |
+          npm run validate:vba-writeback
+          npm run test:package-signatures
+          npm run test:vba-writeback
+          npm run test:vba-atomic
 
       - name: Rebuild the VBA helper from pinned source
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-vba-writeback.ps1
 
-      - name: Verify shipped helper provenance
+      - name: Record source-built helper digest
         shell: pwsh
         run: |
-          git diff --exit-code -- bin/win32-x64/excel-ai-vba-writeback.exe
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Bundled helper differs from the reproducible source build.'
-          }
+          $digest = (Get-FileHash -Algorithm SHA256 bin/win32-x64/excel-ai-vba-writeback.exe).Hash
+          "Source-built helper SHA-256: ``$digest``" >> $env:GITHUB_STEP_SUMMARY
 
-      - name: Test the rebuilt VBA helper signature lock
-        run: npm run test:package-signatures
+      - name: Test the source-built VBA helper
+        run: |
+          npm run validate:vba-writeback
+          npm run test:package-signatures
+          npm run test:vba-writeback
+          npm run test:vba-atomic
 
       - name: Upload verified VBA helper
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

@@ -28,7 +28,8 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - The audit now holds a read-only file lock across the complete inspection, parses only one valid `ZoneTransfer` section with `ZoneId` 0–4, expands bounded Trusted Location environment variables, and includes Excel's documented built-in Trusted Locations.
 - Macro-capable containers whose VBA or XLM inventory cannot be proven now remain `unknown`; they are never presented as safely macro-free merely because a conventional part path was absent.
 - Compound-file traversal is capped by directory-entry count, hierarchy depth, and reconstructed path length; ambiguous structures fail closed.
-- GitHub Actions are pinned to immutable commits, CodeQL scans JavaScript/TypeScript and Python, native Python build wheels are pinned by SHA-256, the release workflow rebuilds and compares the native helper on Windows, and package validation uses an explicit allowlist.
+- GitHub Actions are pinned to immutable commits, CodeQL scans JavaScript/TypeScript and Python, native Python build wheels are pinned by SHA-256, and Windows CI rebuilds, hashes, and tests the native helper before a tagged package consumes that exact artifact. Package validation uses an explicit allowlist.
+- Removed the invalid cross-host byte-for-byte PyInstaller comparison; runner-built executables are now identified by digest and accepted only after the native security and atomic-write suites pass.
 - Cloud, machine, user, and preference sources remain visible independently; unknown effective decisions are reported as unknown instead of being treated as permission.
 - A Windows policy-registry value is never attributed to GPO or Intune from enrollment presence alone, and local Purview metadata is never treated as authenticated tenant policy or proof of encryption.
 - The Center never opens the inspected workbook, rejects malformed policy value types, bounds Mark-of-the-Web and enrollment reads, and reports unreadable higher-priority policy stores as unknown instead of falling back to a weaker preference.
@@ -182,8 +183,9 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Native saves bind the grid snapshot to a writer-locked source, fingerprint
   every logical VBA/UserForm stream, and restore the verified backup
   automatically if post-replacement validation fails.
-- The bundled writer is rebuilt from a fully pinned, reproducible Python
-  toolchain and must match the shipped executable byte-for-byte in Windows CI.
+- The bundled writer uses a fully pinned Python package toolchain. Windows CI
+  rebuilds it from source, records its digest, and runs the native regression
+  suite against the resulting executable.
 - Stale workbooks, signed or password-protected VBA projects, reparse points, network paths, oversized requests, and UserForm designer changes are refused.
 - The write-back engine never starts Excel, executes macros, edits the Office registry, or changes AccessVBOM.
 
@@ -288,7 +290,9 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Excel & VBA sidebar explorer.
 - Prompt-referenceable `#excelVbaWorkbook` language-model tool.
 - Local export cleanup and bounded export settings.
-- Marketplace OIDC publishing workflow with tag/version verification.
+- Initial Marketplace OIDC workflow with tag/version verification; this path
+  was not operational with VSCE and is superseded by the verified-artifact
+  workflow documented under Unreleased.
 
 ### Changed
 
@@ -303,4 +307,5 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - The extension never enables Excel’s programmatic VBA-project access setting.
 - VBA and legacy macro formats are read-only in the embedded grid until safe VBA preservation is available.
 - Generated context is confined to extension-controlled local storage.
-- Publishing uses short-lived OIDC credentials instead of a stored Marketplace PAT.
+- The initial publishing design avoided a stored Marketplace PAT, but its OIDC
+  command was unsupported and did not provide a working publication path.

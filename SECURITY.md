@@ -66,6 +66,22 @@ Le Centre confirme uniquement la structure OPC d’une signature de package ; il
 ne valide pas cryptographiquement le certificat, sa chaîne de confiance ou sa
 révocation.
 
+## Chaîne de livraison native
+
+Le helper Windows est reconstruit en CI avec Python 3.11.9 et des dépendances
+verrouillées par version et SHA-256. Le hash du résultat est publié dans le
+résumé du job, puis les tests de sécurité, de mutation et de rollback sont
+exécutés contre cet exécutable avant qu’il soit transmis au job de packaging.
+Un binaire PyInstaller n’est pas présenté comme reproductible octet par octet
+entre des hôtes Windows/Python différents.
+
+Le helper distribué ne possède pas encore de signature Authenticode. La
+publication automatique sur le Marketplace reste désactivée tant qu’une
+identité de charge de travail Microsoft Entra et la relation de confiance de
+l’éditeur ne sont pas configurées. Ces deux limites sont des travaux de
+durcissement de livraison ; elles ne réduisent pas les refus d’écriture et les
+contrôles locaux décrits ci-dessus.
+
 ## Signaler une vulnérabilité
 
 Ne publiez pas de vulnérabilité présumée dans une issue, une discussion, un journal ou un classeur partagé publiquement.
