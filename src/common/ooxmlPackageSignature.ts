@@ -1,6 +1,6 @@
 import { open, type FileHandle } from 'fs/promises';
 import { extname, posix } from 'path';
-import { inflateRawSync } from 'zlib';
+import { inflateRaw } from 'zlib';
 
 const MAX_ZIP_ENTRIES = 20_000;
 const MAX_CENTRAL_DIRECTORY_BYTES = 64 * 1024 * 1024;
@@ -102,6 +102,18 @@ function calculateCrc32(value: Buffer): number {
 
 function fail(reason: string): never {
     throw new Error(`Office package signature verification failed: ${reason}`);
+}
+
+function inflateRawBounded(value: Buffer, maximumBytes: number): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+        inflateRaw(value, { maxOutputLength: maximumBytes }, (error, result) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+            resolve(result);
+        });
+    });
 }
 
 function lowerAscii(value: string): string {
@@ -369,7 +381,7 @@ async function readEntry(
         result = compressed;
     } else if (entry.compressionMethod === 8) {
         try {
-            result = inflateRawSync(compressed, { maxOutputLength: maximumBytes });
+            result = await inflateRawBounded(compressed, maximumBytes);
         } catch {
             return fail(`compressed metadata could not be inflated for ${entry.partName}`);
         }

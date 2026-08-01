@@ -21,6 +21,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Removed obsolete upstream translations that described a different extension, unsupported features, and telemetry that this project does not collect.
 - Excluded local package-output directories consistently from Git.
 - Replaced the unsupported Marketplace `--oidc` invocation with a verified VSIX artifact; automatic publication remains intentionally disabled until a Microsoft Entra workload identity is configured for the publisher.
+- Moved bounded OOXML metadata inflation off the extension-host event loop. Virtual writes intentionally retain a final snapshot read because `workspace.fs` does not expose a conditional compare-and-swap write.
 
 ### Security
 
@@ -40,6 +41,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Added static guards against registry/file/network writes and Excel automation plus synthetic workbook probes for bounded JSON, modern and legacy Purview metadata, `EnabledV2` precedence, orphan rejection, Intune non-attribution, policy precedence, registry bitness, source typing, and Trusted Location limits.
 - Added regressions for invalid and ambiguous Mark-of-the-Web streams, macro-capable containers with inconclusive inventories, built-in Excel Trusted Locations, deep compound-file hierarchies, and Linux-safe package-signature validation.
 - Added an executable signed-package regression covering XLSX/XLSM grid writes, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX without running a macro.
+- Retained the virtual-provider race regression that changes an unsigned package to a signed package between inspection and the final pre-write read.
 
 ## [0.5.1] - 2026-07-28
 

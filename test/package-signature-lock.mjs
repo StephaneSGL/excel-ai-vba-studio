@@ -264,6 +264,17 @@ const helperEntry = path.join(
   'common',
   'ooxmlPackageSignature.ts',
 );
+const signatureHelperSource = await readFile(helperEntry, 'utf8');
+assert.doesNotMatch(
+  signatureHelperSource,
+  /\binflateRawSync\b/,
+  'package signature inspection must not synchronously inflate on the extension host thread',
+);
+assert.match(
+  signatureHelperSource,
+  /inflateRaw\(value, \{ maxOutputLength: maximumBytes \}/,
+  'asynchronous metadata inflation must preserve a hard output limit',
+);
 const signatureHelper = await bundleModule(helperEntry);
 assert.equal(typeof signatureHelper.hasOoxmlPackageSignature, 'function');
 assert.equal(typeof signatureHelper.hasOoxmlPackageSignatureBytes, 'function');
@@ -563,6 +574,8 @@ try {
     toString: () => 'mem:/virtual/race-source.xlsx',
   };
   runtimeState.files.set(raceSource.toString(), unsignedBytes);
+  runtimeState.reads.clear();
+  runtimeState.writes = 0;
   runtimeState.readHook = (uri, count) =>
     uri.toString() === raceSource.toString() && count >= 2
       ? alternativeSignedBytes
@@ -574,6 +587,37 @@ try {
     /signature numérique de package Office/,
   );
   assert.equal(runtimeState.writes, 0, 'a signature appearing after load blocks the host write');
+  assert.equal(
+    runtimeState.reads.get(raceSource.toString()),
+    2,
+    'a virtual write keeps a final source snapshot read to detect replacement races',
+  );
+
+  runtimeState.files.set(raceSource.toString(), Buffer.from('not-a-zip'));
+  runtimeState.reads.clear();
+  runtimeState.writes = 0;
+  runtimeState.readHook = undefined;
+  await assert.rejects(
+    raceHandler.callbacks.get('save')(Array.from(unsignedBytes)),
+    /n’a pas pu être vérifié/,
+  );
+  assert.equal(runtimeState.writes, 0, 'an unverifiable virtual source fails closed');
+  assert.equal(
+    runtimeState.reads.get(raceSource.toString()),
+    1,
+    'an unverifiable virtual source fails closed during the first inspection',
+  );
+
+  runtimeState.files.set(raceSource.toString(), unsignedBytes);
+  runtimeState.reads.clear();
+  runtimeState.writes = 0;
+  await raceHandler.callbacks.get('save')(Array.from(unsignedBytes));
+  assert.equal(runtimeState.writes, 1, 'a clean virtual source can be written');
+  assert.equal(
+    runtimeState.reads.get(raceSource.toString()),
+    2,
+    'a clean virtual save retains the final replacement-race check',
+  );
 
   const saveAsSource = {
     scheme: 'mem',
@@ -588,6 +632,7 @@ try {
   runtimeState.files.set(saveAsSource.toString(), unsignedBytes);
   runtimeState.files.set(saveAsTarget.toString(), alternativeSignedBytes);
   runtimeState.reads.clear();
+  runtimeState.writes = 0;
   runtimeState.readHook = undefined;
   runtimeState.saveTarget = saveAsTarget;
   const saveAsHandler = makeHandler();
@@ -600,6 +645,31 @@ try {
     /signature numérique de package Office/,
   );
   assert.equal(runtimeState.writes, 0, 'a signed virtual Save As target is never overwritten');
+  assert.equal(
+    runtimeState.reads.get(saveAsSource.toString()),
+    2,
+    'Save As rechecks its virtual source before writing the destination',
+  );
+  assert.equal(
+    runtimeState.reads.get(saveAsTarget.toString()),
+    1,
+    'Save As inspects an existing virtual destination once before overwrite',
+  );
+
+  runtimeState.files.set(saveAsSource.toString(), unsignedBytes);
+  runtimeState.reads.clear();
+  runtimeState.writes = 0;
+  runtimeState.saveTarget = saveAsSource;
+  await saveAsHandler.callbacks.get('saveAs')({
+    content: Array.from(unsignedBytes),
+    ext: 'xlsx',
+  });
+  assert.equal(runtimeState.writes, 1, 'a clean virtual Save As can replace itself');
+  assert.equal(
+    runtimeState.reads.get(saveAsSource.toString()),
+    2,
+    'a same-source virtual Save As avoids a redundant third target inspection',
+  );
   assert.deepEqual(
     await officeContent.getEmbeddedSpreadsheetReadOnlyState({
       scheme: 'file',

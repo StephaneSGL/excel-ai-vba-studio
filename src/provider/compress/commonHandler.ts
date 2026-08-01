@@ -512,7 +512,9 @@ export function handleCommonEvent(
                 }
 
                 await assertUriOoxmlPackageUnsignedForMutation(uri);
-                await assertExistingUriOoxmlPackageUnsignedForMutation(target);
+                if (target.toString() !== uri.toString()) {
+                    await assertExistingUriOoxmlPackageUnsignedForMutation(target);
+                }
 
                 fileSaveTimes[target.toString()] = Date.now();
                 await workspace.fs.writeFile(target, bytes);
