@@ -10,6 +10,7 @@ import {
     type NativeExcelEditPayload,
     type NativeExcelEditResult,
 } from '@/common/nativeExcelEdits';
+import { assertOoxmlPackageUnsignedForMutation } from '@/common/ooxmlPackageSignature';
 import { assertNoReparsePointChain } from '@/excelAiVbaStudio/security';
 
 const MAX_NATIVE_EDIT_OPERATIONS = 10_000;
@@ -476,6 +477,7 @@ export async function applyNativeExcelEdits(
 ): Promise<NativeExcelEditResult> {
     const canonicalWorkbookPath = await fs.realpath(workbookPath);
     await assertNoReparsePointChain(canonicalWorkbookPath);
+    await assertOoxmlPackageUnsignedForMutation(canonicalWorkbookPath);
     const validatedOperations = validateNativeEdits(
         canonicalWorkbookPath,
         operations

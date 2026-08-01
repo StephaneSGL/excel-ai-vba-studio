@@ -14,6 +14,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+. (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
 
 function Decode-Base64Utf8 {
     param([string]$Value)
@@ -208,6 +209,7 @@ Assert-NoReparsePointChain $sourcePath | Out-Null
 if ([IO.Path]::GetExtension($sourcePath) -ine '.xlsx') {
     throw 'La preparation macro accepte uniquement un classeur source .xlsx.'
 }
+Assert-OoxmlPackageUnsigned $sourcePath
 
 if (
     [IO.Path]::GetFileName($componentFile) -cne $componentFile -or

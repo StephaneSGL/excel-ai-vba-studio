@@ -47,6 +47,8 @@ const required = [
   'out/webview/index.html',
   'scripts/office-ai-export.ps1',
   'scripts/office-ai-apply-edits.ps1',
+  'scripts/inspect-office-security.ps1',
+  'scripts/ooxml-package-signature.ps1',
   'scripts/open-excel-developer.ps1',
   'scripts/prepare-macro-workbook.ps1',
   'bin/win32-x64/excel-ai-vba-writeback.exe',

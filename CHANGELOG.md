@@ -6,11 +6,28 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ## [Unreleased]
 
+### Added
+
+- Added a read-only Enterprise Security Center for `.xlsx`, `.xlsm`, `.xls`, and `.xlsb`. It reports file origin/MOTW, VBA and package signatures, EFS and OOXML package encryption, sensitivity-label identifiers, macro/VBA settings, ActiveX, Protected View, application-wide and Excel Trusted Locations, the policy controlling user-defined locations, and the detected source of Office 16 policy or preference values.
+- Added a per-capability view for the integrated grid, VBA inspection/write-back, UserForm designer, ActiveX creation, and macro execution, with restricted, managed, standard, and unknown workbook levels.
+- Added explicit actions to refresh or copy the report, open the workbook in Excel with the authorized **Developer > Macro Security** path explained, open extension settings, and open official Microsoft enterprise guidance or the Microsoft 365 Apps admin portal.
+
 ### Changed
 
 - Clarified the noncommercial community-use rights and the separate commercial-license boundary without changing the PolyForm Noncommercial 1.0.0 terms.
 - Removed obsolete upstream translations that described a different extension, unsupported features, and telemetry that this project does not collect.
 - Excluded local package-output directories consistently from Git.
+
+### Security
+
+- The enterprise probe is bounded, local, and read-only: it never opens Excel, runs VBA, removes Mark of the Web, writes the registry, changes Trust Center, or attempts to bypass managed policy.
+- Cloud, machine, user, and preference sources remain visible independently; unknown effective decisions are reported as unknown instead of being treated as permission.
+- Every workbook mutation path now resolves OOXML package signatures through OPC origin/signature relationships and effective Content Types, including arbitrary valid part URIs; malformed, orphaned, external, unreadable, or otherwise ambiguous signature state fails closed.
+
+### Tests
+
+- Added static guards against registry/file writes and Excel automation plus a synthetic workbook probe for bounded JSON, Purview label metadata, source typing, and Trusted Location limits.
+- Added an executable signed-package regression covering XLSX/XLSM grid writes, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX without running a macro.
 
 ## [0.5.1] - 2026-07-28
 

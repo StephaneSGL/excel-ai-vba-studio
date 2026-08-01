@@ -11,6 +11,7 @@ $MaxOperations = 10000
 $MaxConditionalFormattingAddsPerSheet = 64
 $MaxPayloadBytes = 4MB
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+. (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
 
 function Release-ComObject {
     param([AllowNull()][object]$Value)
@@ -1433,6 +1434,7 @@ if (-not (Test-Path -LiteralPath $workbookFullPath -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $operationsFullPath -PathType Leaf)) {
     throw 'Operations payload does not exist.'
 }
+Assert-OoxmlPackageUnsigned $workbookFullPath
 $workbookItem = Get-Item -LiteralPath $workbookFullPath -Force
 if (($workbookItem.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
     throw 'Read-only workbooks cannot be edited.'
@@ -1553,6 +1555,7 @@ try {
     if ((Get-FileSha256Hex $workPath) -cne $expectedWorkbookSha256) {
         throw 'Native edit work copy does not match the locked source workbook.'
     }
+    Assert-OoxmlPackageUnsigned $workPath
 
     $sourceHasVbaProject = Test-MacroWorkbookPackage $workPath
     $sourcePackageState = Get-PackagePreservationState $workPath

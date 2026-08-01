@@ -9,6 +9,7 @@ export const EXCEL_AI_COMMANDS = Object.freeze({
 	copyGeneratedContext: 'excelAiVbaStudio.copyGeneratedContext',
 	openExcel: 'excelAiVbaStudio.openExcel',
 	openVbe: 'excelAiVbaStudio.openVbe',
+	openSecurityCenter: 'excelAiVbaStudio.openSecurityCenter',
 	openVbaDeveloper: 'excelAiVbaStudio.openVbaDeveloper',
 	openVbaExplorer: 'excelAiVbaStudio.openVbaExplorer',
 	openVbaComponent: 'excelAiVbaStudio.openVbaComponent',

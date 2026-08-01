@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { assertOoxmlPackageUnsignedForMutation } from '../common/ooxmlPackageSignature';
 import {
 	assertNoReparsePointChain,
 	assertNotManagedBackupPath,
@@ -15,6 +16,8 @@ import {
 	removeOwnedDirectory,
 	workbookUriFromPathInput
 } from './security';
+import { OfficeSecurityService } from './officeSecurity';
+import { SecurityCenterPanel } from './securityCenterPanel';
 import {
 	EXCEL_EXTENSIONS,
 	ExcelAiSettings,
@@ -302,6 +305,8 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 	private readonly runningExports = new Map<string, Promise<ExportContext | undefined>>();
 	private readonly vbaStudioPanel: VbaStudioPanel;
 	private readonly vbaWritebackService: VbaWritebackService;
+	private readonly officeSecurityService: OfficeSecurityService;
+	private readonly securityCenterPanel: SecurityCenterPanel;
 	private lastContext: ExportContext | undefined;
 	private storageRoot: string | undefined;
 	private exportsRoot: string | undefined;
@@ -322,9 +327,20 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				await this.openExcel(workbookUri, showVbe);
 			}
 		);
+		this.officeSecurityService = new OfficeSecurityService(
+			this.extensionContext,
+			this.outputChannel
+		);
+		this.securityCenterPanel = new SecurityCenterPanel(
+			this.extensionContext,
+			this.officeSecurityService,
+			this.outputChannel,
+			workbookUri => this.openExcel(workbookUri, false)
+		);
 	}
 
 	dispose(): void {
+		this.securityCenterPanel.dispose();
 		this.vbaStudioPanel.dispose();
 		this.vbaWritebackService.dispose();
 		this.contextChangeEmitter.dispose();
@@ -399,6 +415,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		}
 		const canonicalUri = await canonicalizeWorkbookUri(workbookUri);
 		assertNotManagedBackupPath(canonicalUri.fsPath);
+		await assertOoxmlPackageUnsignedForMutation(canonicalUri.fsPath);
 		if (!(await this.ensureActiveWorkbookIsSaved(canonicalUri))) {
 			throw new Error(
 				'Le classeur contient des modifications non enregistrées et ne peut pas recevoir de code VBA.'
@@ -458,6 +475,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		}
 		const canonicalUri = await canonicalizeWorkbookUri(workbookUri);
 		assertNotManagedBackupPath(canonicalUri.fsPath);
+		await assertOoxmlPackageUnsignedForMutation(canonicalUri.fsPath);
 		if (!(await this.ensureActiveWorkbookIsSaved(canonicalUri))) {
 			throw new Error(
 				'Le classeur contient des modifications non enregistrées et ne peut pas recevoir de composants visuels VBA.'
@@ -483,6 +501,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		}
 
 		const expectedWorkbookSha256 = await hashFileSha256(canonicalUri.fsPath);
+		await assertOoxmlPackageUnsignedForMutation(canonicalUri.fsPath);
 		const { exportsRoot } = await this.ensureStorage();
 		const requestDirectory = await assertOwnedDirectory(
 			contextResult.paths.outputDirectory,
@@ -684,6 +703,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		}
 
 		const sourcePath = sourceUri.fsPath;
+		await assertOoxmlPackageUnsignedForMutation(sourcePath);
 		const expectedTargetPath = path.join(
 			path.dirname(sourcePath),
 			`${path.basename(sourcePath, path.extname(sourcePath))}.xlsm`
@@ -1585,6 +1605,26 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			return;
 		}
 		await this.exportWorkbook(requestedUri, { open: true, includeVba: false });
+	}
+
+	async openSecurityCenter(candidate?: unknown): Promise<void> {
+		const requestedUri = await this.resolveWorkbookUri(candidate);
+		if (!requestedUri) {
+			await vscode.window.showWarningMessage(
+				'Ouvrez d’abord un classeur Excel local.'
+			);
+			return;
+		}
+		try {
+			const canonicalUri = await canonicalizeWorkbookUri(requestedUri);
+			await this.securityCenterPanel.open(canonicalUri);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.outputChannel.appendLine(`[security] ERREUR : ${message}`);
+			await vscode.window.showErrorMessage(
+				`Centre de sécurité Excel : ${message}`
+			);
+		}
 	}
 
 	private async runExcelLauncher(

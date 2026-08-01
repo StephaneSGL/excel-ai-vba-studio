@@ -78,6 +78,10 @@ export function registerExcelAiVbaStudio(
 			(candidate?: unknown) => service.openExcel(candidate, true)
 		),
 		vscode.commands.registerCommand(
+			EXCEL_AI_COMMANDS.openSecurityCenter,
+			(candidate?: unknown) => service.openSecurityCenter(candidate)
+		),
+		vscode.commands.registerCommand(
 			EXCEL_AI_COMMANDS.openVbaDeveloper,
 			(candidate?: unknown) => service.openVbaDeveloperWindow(candidate)
 		),
