@@ -8,9 +8,12 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ### Added
 
-- Added a read-only Enterprise Security Center for `.xlsx`, `.xlsm`, `.xls`, and `.xlsb`. It reports file origin/MOTW, VBA and package signatures, EFS and OOXML package encryption, sensitivity-label identifiers, macro/VBA settings, ActiveX, Protected View, application-wide and Excel Trusted Locations, the policy controlling user-defined locations, and the detected source of Office 16 policy or preference values.
+- Added a read-only Enterprise Security Center for `.xlsx`, `.xlsm`, `.xls`, and `.xlsb`. It reports file origin/MOTW, VBA and package signatures, EFS and OOXML package encryption, sensitivity-label metadata, macro/VBA settings, ActiveX, Protected View, application-wide and Excel Trusted Locations, the policy controlling user-defined locations, and the detected source of Office 16 policy or preference values.
 - Added a per-capability view for the integrated grid, VBA inspection/write-back, UserForm designer, ActiveX creation, and macro execution, with restricted, managed, standard, and unknown workbook levels.
-- Added explicit actions to refresh or copy the report, open the workbook in Excel with the authorized **Developer > Macro Security** path explained, open extension settings, and open official Microsoft enterprise guidance or the Microsoft 365 Apps admin portal.
+- Added an effective-policy table that keeps Cloud Policy, Windows policy-registry values, and local preferences separate, shows shadowed evidence, and uses the detected Office architecture for registry-view decisions.
+- Added separate, non-attributing signals for Microsoft Intune/MDM, Windows Group Policy history, Microsoft 365 Cloud Policy, and Microsoft Purview plus explicit links to the authorized Microsoft 365 Apps, Intune, and Purview admin portals.
+- Added structural parsing for the modern OPC `LabelInfo.xml` relationship and the correctly related legacy OOXML custom properties, including technical name, declared tenant ID, assignment method, date, and content-marking bits when locally available.
+- Added per-tenant Purview fallback between `LabelInfo` and historical properties, IRMDS container recognition, separate Intune and correlated MDM signals, denied-registry-read states, GPO diagnostic guidance, and legacy XLM policy warnings.
 
 ### Changed
 
@@ -22,11 +25,13 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 - The enterprise probe is bounded, local, and read-only: it never opens Excel, runs VBA, removes Mark of the Web, writes the registry, changes Trust Center, or attempts to bypass managed policy.
 - Cloud, machine, user, and preference sources remain visible independently; unknown effective decisions are reported as unknown instead of being treated as permission.
+- A Windows policy-registry value is never attributed to GPO or Intune from enrollment presence alone, and local Purview metadata is never treated as authenticated tenant policy or proof of encryption.
+- The Center never opens the inspected workbook, rejects malformed policy value types, bounds Mark-of-the-Web and enrollment reads, and reports unreadable higher-priority policy stores as unknown instead of falling back to a weaker preference.
 - Every workbook mutation path now resolves OOXML package signatures through OPC origin/signature relationships and effective Content Types, including arbitrary valid part URIs; malformed, orphaned, external, unreadable, or otherwise ambiguous signature state fails closed.
 
 ### Tests
 
-- Added static guards against registry/file writes and Excel automation plus a synthetic workbook probe for bounded JSON, Purview label metadata, source typing, and Trusted Location limits.
+- Added static guards against registry/file/network writes and Excel automation plus synthetic workbook probes for bounded JSON, modern and legacy Purview metadata, `EnabledV2` precedence, orphan rejection, Intune non-attribution, policy precedence, registry bitness, source typing, and Trusted Location limits.
 - Added an executable signed-package regression covering XLSX/XLSM grid writes, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX without running a macro.
 
 ## [0.5.1] - 2026-07-28

@@ -52,7 +52,7 @@ Excel AI & VBA Studio is a preview VS Code extension for inspecting supported sp
 - VBA Studio includes a visual UserForm canvas backed by the real COM designer inventory. Standard controls can be added, moved, resized, inspected, and connected to complete VBA event procedures.
 - GitHub Copilot can use `updateUserFormControl` and `setUserFormEventHandler` through `#excelVbaDesignWorkbook`, including parameterized events such as `KeyDown`, `BeforeUpdate`, and `QueryClose`.
 - **Open VBA Studio in VS Code** creates an isolated, validated VBA workspace in a separate VS Code window and opens the integrated studio there.
-- A read-only **Enterprise Security Center** classifies the selected workbook as restricted, managed, standard, or unknown and explains the detected file, macro/VBA, ActiveX, Protected View, Trusted Location, signature, EFS/OOXML package encryption, and Microsoft Purview signals.
+- A read-only **Enterprise Security Center** classifies the selected workbook as restricted, managed, standard, or unknown and explains file, macro/VBA, ActiveX, Protected View, Trusted Location, signature, EFS/OOXML package encryption, Microsoft 365 Cloud Policy, Windows policy, Intune/MDM, and local Microsoft Purview signals.
 - No extension telemetry and no API key management by the extension.
 
 ## Install from a VSIX
@@ -166,9 +166,10 @@ The published bundle starts from `src/extension.ts` and registers only the inten
 ## Excel, VBA, and AI security
 
 - Workbook export uses a dedicated Excel instance and fails closed if macro execution cannot be disabled.
-- The Enterprise Security Center is opt-in and read-only. It inspects the selected file, its Mark of the Web, bounded Office 16 policy/preference registry locations, Cloud Policy presence, declared Trusted Locations, and the enterprise rule that allows or refuses user-defined Trusted Locations, without starting Excel.
-- Detected values are separated by source: Microsoft 365 Cloud Policy, machine policy, user policy, or local preference. A managed setting is displayed as locked and is never presented as user-editable.
-- The Center can refresh or copy its local report, open the extension settings, open Microsoft administration guidance or the Microsoft 365 Apps admin portal for an already authorized administrator, or launch the workbook in Excel and explain the authorized **Developer > Macro Security** path. Opening the portal grants no additional role. The extension does not automate the Trust Center screen and never changes Group Policy, Cloud Policy, Trust Center, AccessVBOM, ActiveX, Trusted Locations, Mark of the Web, or the registry.
+- The Enterprise Security Center is opt-in and read-only. It inspects the selected file, its Mark of the Web, bounded Office 16 policy/preference registry locations, Cloud Policy presence, declared Trusted Locations, Office architecture, fixed Intune/MDM and Group Policy signals, and the enterprise rule that allows or refuses user-defined Trusted Locations, without starting Excel.
+- Detected values are separated by technical source: Microsoft 365 Cloud Policy, Windows policy registry for the computer or user, or local preference. The effective table applies `Cloud Policy > Windows policy > local preference`, shows shadowed evidence, and marks effective managed decisions as locked. A Windows policy key alone cannot prove whether GPO, Intune/MDM, Configuration Manager, or a script delivered it.
+- The Center can refresh or copy its local report, open the extension settings, and expose contextual links to Microsoft 365 Apps, Intune, Purview, or GPO diagnostics for an already authorized administrator. It deliberately does not open the inspected workbook; Excel must be started separately before consulting **Developer > Macro Security**. Opening a portal grants no role. The extension never changes Group Policy, Intune, Cloud Policy, Purview, Trust Center, AccessVBOM, ActiveX, Trusted Locations, Mark of the Web, or the registry.
+- Modern OPC `LabelInfo.xml` and correctly related historical custom properties are parsed structurally. Any stored technical name, tenant ID, method, date, and content-marking bits are shown as unauthenticated local declarations; they do not establish the current display name, confidentiality rank, tenant authenticity, or encryption state.
 - `unknown` means that the final Excel decision cannot be proven from local static evidence. Cloud assignment, certificate trust, antivirus decisions, and policy conflicts can still require confirmation by an administrator or by Excel itself.
 - Events, link updates, alerts, and automatic calculation are disabled during controlled analysis.
 - The extension never changes Excel's **Trust access to the VBA project object model** setting or the Windows registry.
@@ -189,7 +190,7 @@ The published bundle starts from `src/extension.ts` and registers only the inten
 
 This is not a network sandbox: Microsoft Excel, Windows, installed add-ins, and security software may have their own network behavior. Read [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md) before using real professional workbooks.
 
-Microsoft references: [Cloud Policy for Microsoft 365 Apps](https://learn.microsoft.com/en-us/microsoft-365-apps/admin-center/overview-cloud-policy), [macros from the Internet](https://learn.microsoft.com/en-us/microsoft-365-apps/security/internet-macros-blocked), [Trusted Locations](https://learn.microsoft.com/en-us/microsoft-365-apps/security/trusted-locations), and [Excel macro security](https://support.microsoft.com/en-US/Excel/change-macro-security-settings-in-excel).
+Microsoft references: [Cloud Policy for Microsoft 365 Apps](https://learn.microsoft.com/en-us/microsoft-365-apps/admin-center/overview-cloud-policy), [Microsoft Intune](https://learn.microsoft.com/en-us/mem/intune/fundamentals/what-is-intune), [Purview sensitivity labels in Office](https://learn.microsoft.com/en-us/purview/sensitivity-labels-office-apps), [Sensitivity Label Information Part](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/c0599e21-b77f-475e-99e0-bd647f60bcbb), [macros from the Internet](https://learn.microsoft.com/en-us/microsoft-365-apps/security/internet-macros-blocked), [Trusted Locations](https://learn.microsoft.com/en-us/microsoft-365-apps/security/trusted-locations), and [Excel macro security](https://support.microsoft.com/en-US/Excel/change-macro-security-settings-in-excel).
 
 ## Preview limitations
 
@@ -203,7 +204,7 @@ Microsoft references: [Cloud Policy for Microsoft 365 Apps](https://learn.micros
 - Integrated `.xlsm` editing supports values, formulas, cell styles, explicit row heights and column widths, appending the five conditional-formatting presets exposed by the ribbon, and clearing all rules on one sheet. Worksheet structure, implicit dimension resets, merges, objects, controls, buttons, existing-rule edits, rule reordering, and partial rule deletion are refused.
 - The visual UserForm designer supports the standard-control toolbox, positioning, sizing, core properties, and event procedures. Nested-container editing, z-order, font/color styling, images, multi-selection, copy/paste, and native VBE parity remain future work.
 - Excel or enterprise policy can block ActiveX insertion even when the extension request is valid. The extension reports that refusal and never weakens Trust Center settings automatically.
-- The Security Center does not authenticate to Microsoft 365, resolve sensitivity-label names, validate certificate trust chains, diagnose every legacy XLS encryption scheme, or replace Intune, Group Policy Results, Microsoft 365 Apps admin center, Defender, or Purview auditing.
+- The Security Center does not authenticate to Microsoft 365, resolve current sensitivity-label display names or their tenant-defined rank, validate certificate trust chains, parse encrypted/legacy CFB LabelInfo streams, diagnose every legacy XLS encryption scheme, attribute a Windows policy value to GPO versus Intune, or replace Intune, Group Policy Results, Microsoft 365 Apps admin center, Defender, or Purview auditing.
 
 ## Version history
 

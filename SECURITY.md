@@ -16,7 +16,27 @@ seule. Il distingue les signaux du fichier, les préférences Office et les
 stratégies gérées détectées, puis indique quelles capacités de l’extension sont
 disponibles, bloquées ou indéterminées.
 
-Ce diagnostic ne remplace pas Microsoft 365 Apps admin center, Intune, les
+Les signaux Microsoft 365 Cloud Policy, registre de stratégie Windows,
+client Intune, inscription MDM et historique GPO sont affichés séparément. La présence d’un agent ou
+d’une inscription MDM ne suffit jamais à attribuer une règle Office précise à
+Intune : une même clé de stratégie peut avoir été livrée par GPO, MDM,
+Configuration Manager ou un script. Le Centre affiche donc la preuve technique
+et conserve l’attribution comme indéterminée lorsqu’elle ne peut pas être
+démontrée localement.
+
+Les métadonnées de sensibilité sont suivies par les relations OPC officielles
+(`LabelInfo.xml`) ou par la partie de propriétés personnalisées historique
+correctement reliée et typée. Elles restent des déclarations locales non
+authentifiées. Elles ne prouvent ni la politique actuellement publiée dans le
+tenant, ni un rang de confidentialité, ni un chiffrement effectif. Les flux
+LabelInfo CFB/IRM chiffrés non analysables sont signalés comme indéterminés ;
+la structure IRMDS est distinguée d’un simple package protégé par mot de passe.
+
+Le Centre n’ouvre jamais le classeur inspecté. Cette séparation évite qu’un
+`Workbook_Open`, une feuille macro Excel 4.0 ou un autre contenu actif soit
+déclenché simplement pour consulter le diagnostic.
+
+Ce diagnostic et les liens explicites vers les portails ne remplacent pas Microsoft 365 Apps admin center, Intune, les
 résultats de stratégie de groupe, Microsoft Defender ou Microsoft Purview. Il
 ne modifie jamais le registre, le Centre de gestion de la confidentialité,
 AccessVBOM, ActiveX, les emplacements approuvés ou la marque d’origine Internet.

@@ -12,6 +12,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $script:MaxOutputBytes = 262144
 $script:MaxTrustedLocations = 64
 $script:MaxWorkbookBytes = 536870912
+$script:MaxSensitivityLabels = 32
 
 function Decode-Base64Utf8 {
     param([string]$Value)
@@ -84,7 +85,7 @@ function Get-ZoneInformation {
     param([string]$Path)
 
     try {
-        [void](Get-Item -LiteralPath $Path -Stream 'Zone.Identifier' -ErrorAction Stop)
+        $streamInfo = Get-Item -LiteralPath $Path -Stream 'Zone.Identifier' -ErrorAction Stop
     }
     catch [System.NotSupportedException] {
         return [ordered]@{ status = 'unsupported'; zoneId = $null }
@@ -103,8 +104,16 @@ function Get-ZoneInformation {
     }
 
     try {
-        $lines = @(Get-Content -LiteralPath $Path -Stream 'Zone.Identifier' -ErrorAction Stop)
-        foreach ($line in $lines) {
+        if ([int64]$streamInfo.Length -gt 65536) {
+            return [ordered]@{ status = 'unreadable'; zoneId = $null }
+        }
+        $zoneText = Get-Content `
+            -LiteralPath $Path `
+            -Stream 'Zone.Identifier' `
+            -Raw `
+            -Encoding UTF8 `
+            -ErrorAction Stop
+        foreach ($line in @($zoneText -split '\r?\n')) {
             if ($line -match '^ZoneId\s*=\s*([0-9]+)\s*$') {
                 return [ordered]@{ status = 'read'; zoneId = [int]$matches[1] }
             }
@@ -217,6 +226,7 @@ function Get-CompoundInventory {
         }
 
         $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+        $directoryEntryIndex = 0
         $directorySector = $firstDirectorySector
         while ($directorySector -ge 0) {
             if ($seen.Count -ge 4096 -or -not $seen.Add($directorySector)) {
@@ -241,11 +251,16 @@ function Get-CompoundInventory {
                     )
                     if (-not [string]::IsNullOrWhiteSpace($name)) {
                         [void]$entries.Add([ordered]@{
+                            id = $directoryEntryIndex
                             name = $name
                             objectType = [int]$sector[$entryOffset + 66]
+                            leftSiblingId = [BitConverter]::ToInt32($sector, $entryOffset + 68)
+                            rightSiblingId = [BitConverter]::ToInt32($sector, $entryOffset + 72)
+                            childId = [BitConverter]::ToInt32($sector, $entryOffset + 76)
                         })
                     }
                 }
+                $directoryEntryIndex++
             }
             $directorySector = $fat[$directorySector]
         }
@@ -253,6 +268,73 @@ function Get-CompoundInventory {
     finally {
         $reader.Dispose()
         $stream.Dispose()
+    }
+
+    $entriesById = @{}
+    foreach ($entry in $entries) { $entriesById[[int]$entry.id] = $entry }
+    $pathsById = @{}
+    $hierarchyValid = $true
+    $rootEntry = @($entries | Where-Object { $_.objectType -eq 5 } | Select-Object -First 1)
+    if ($rootEntry.Count -eq 1) {
+        $visitedHierarchy = New-Object 'System.Collections.Generic.HashSet[int]'
+        $storageQueue = New-Object 'System.Collections.Generic.Queue[object]'
+        $storageQueue.Enqueue([ordered]@{ entry = $rootEntry[0]; path = '' })
+        while ($storageQueue.Count -gt 0) {
+            $storageContext = $storageQueue.Dequeue()
+            $childId = [int]$storageContext.entry.childId
+            if ($childId -lt 0) { continue }
+            $siblingStack = New-Object 'System.Collections.Generic.Stack[int]'
+            $siblingStack.Push($childId)
+            while ($siblingStack.Count -gt 0) {
+                $entryId = $siblingStack.Pop()
+                if (-not $entriesById.ContainsKey($entryId)) {
+                    $hierarchyValid = $false
+                    continue
+                }
+                if (-not $visitedHierarchy.Add($entryId)) {
+                    $hierarchyValid = $false
+                    continue
+                }
+                $childEntry = $entriesById[$entryId]
+                if ([int]$childEntry.leftSiblingId -ge 0) { $siblingStack.Push([int]$childEntry.leftSiblingId) }
+                if ([int]$childEntry.rightSiblingId -ge 0) { $siblingStack.Push([int]$childEntry.rightSiblingId) }
+                $entryPath = if ([string]::IsNullOrEmpty([string]$storageContext.path)) {
+                    "\$($childEntry.name)"
+                } else {
+                    "$($storageContext.path)\$($childEntry.name)"
+                }
+                $pathsById[$entryId] = $entryPath
+                if ([int]$childEntry.objectType -eq 1) {
+                    $storageQueue.Enqueue([ordered]@{ entry = $childEntry; path = $entryPath })
+                }
+            }
+        }
+    } else {
+        $hierarchyValid = $false
+    }
+
+    $dataSpacesPath = "\$([char]6)DataSpaces"
+    $dataSpaceMapPath = "$dataSpacesPath\DataSpaceMap"
+    $transformInfoPath = "$dataSpacesPath\TransformInfo"
+    $labelInfoPath = "$dataSpacesPath\TransformInfo\LabelInfo"
+    $hasDataSpacesStorage = $false
+    $hasDataSpaceMapStream = $false
+    $hasTransformInfoStorage = $false
+    $hasIrmLicenseStream = $false
+    $hasExactLabelInfoStream = $false
+    foreach ($entry in $entries) {
+        $entryPath = if ($pathsById.ContainsKey([int]$entry.id)) { [string]$pathsById[[int]$entry.id] } else { '' }
+        if ($entry.objectType -eq 1 -and $entryPath -ieq $dataSpacesPath) { $hasDataSpacesStorage = $true }
+        if ($entry.objectType -eq 2 -and $entryPath -ieq $dataSpaceMapPath) { $hasDataSpaceMapStream = $true }
+        if ($entry.objectType -eq 1 -and $entryPath -ieq $transformInfoPath) { $hasTransformInfoStorage = $true }
+        if (
+            $entry.objectType -eq 2 -and
+            $entry.name -like 'EUL-*' -and
+            $entryPath.StartsWith("$transformInfoPath\", [StringComparison]::OrdinalIgnoreCase)
+        ) {
+            $hasIrmLicenseStream = $true
+        }
+        if ($entry.objectType -eq 2 -and $entryPath -ieq $labelInfoPath) { $hasExactLabelInfoStream = $true }
     }
 
     $hasVbaStorage = $false
@@ -275,7 +357,14 @@ function Get-CompoundInventory {
         }
     }
     $hasVba = $hasVbaStorage -and $hasVbaProjectStream
-    $officePackageEncrypted = $hasEncryptionInfo -and $hasEncryptedPackage
+    $irmProtected =
+        $hierarchyValid -and
+        $hasEncryptedPackage -and
+        $hasDataSpacesStorage -and
+        $hasDataSpaceMapStream -and
+        $hasTransformInfoStorage -and
+        $hasIrmLicenseStream
+    $officePackageEncrypted = $hasEncryptedPackage -and ($hasEncryptionInfo -or $irmProtected)
     $vbaSignatureStatus = if ($officePackageEncrypted -or $hasVba) { 'unknown' } else { 'absent' }
     $packageSignatureStatus = if ($hasPackageSignature) {
         'present'
@@ -292,9 +381,21 @@ function Get-CompoundInventory {
         packageSignatureStatus = $packageSignatureStatus
 		packageSignatureVerificationStatus = if ($packageSignatureStatus -eq 'absent') { 'notPresent' } else { 'unverifiable' }
 		officePackageEncrypted = $officePackageEncrypted
+		irmProtected = $irmProtected
 		hasWorkbookPart = $hasWorkbookStream
         vbaProjectProtectionStatus = if ($hasVba) { 'unknown' } else { 'absent' }
         sensitivityLabelIds = @()
+        sensitivityLabels = @()
+        sensitivityMetadataStatus = 'unknown'
+        sensitivityMetadataSource = if (-not $hierarchyValid) {
+            'ambiguous'
+        } elseif ($hasExactLabelInfoStream) {
+            'labelInfoStream'
+        } elseif ($officePackageEncrypted) {
+            'encryptedContainer'
+        } else {
+            'unsupported'
+        }
     }
 }
 
@@ -430,6 +531,7 @@ function Read-OpcContentTypes {
                 if ($reader.NodeType -ne [Xml.XmlNodeType]::Element) { continue }
                 if ($reader.Depth -eq 0) {
                     if (
+                        $rootSeen -or
                         $reader.LocalName -cne 'Types' -or
                         $reader.NamespaceURI -cne 'http://schemas.openxmlformats.org/package/2006/content-types'
                     ) {
@@ -438,7 +540,12 @@ function Read-OpcContentTypes {
                     $rootSeen = $true
                     continue
                 }
-                if ($reader.NamespaceURI -cne 'http://schemas.openxmlformats.org/package/2006/content-types') {
+                if (
+                    $reader.Depth -ne 1 -or
+                    $reader.NamespaceURI -cne 'http://schemas.openxmlformats.org/package/2006/content-types' -or
+                    $reader.LocalName -notin @('Override', 'Default')
+                ) {
+                    $valid = $false
                     continue
                 }
                 if ($reader.LocalName -ceq 'Override') {
@@ -529,6 +636,7 @@ function Read-OpcRelationships {
                 if ($reader.NodeType -ne [Xml.XmlNodeType]::Element) { continue }
                 if ($reader.Depth -eq 0) {
                     if (
+                        $rootSeen -or
                         $reader.LocalName -cne 'Relationships' -or
                         $reader.NamespaceURI -cne 'http://schemas.openxmlformats.org/package/2006/relationships'
                     ) {
@@ -538,9 +646,11 @@ function Read-OpcRelationships {
                     continue
                 }
                 if (
+                    $reader.Depth -ne 1 -or
                     $reader.LocalName -cne 'Relationship' -or
                     $reader.NamespaceURI -cne 'http://schemas.openxmlformats.org/package/2006/relationships'
                 ) {
+                    $valid = $false
                     continue
                 }
                 $id = [string]$reader.GetAttribute('Id')
@@ -727,6 +837,472 @@ function Get-OpcPackageSignatureInventory {
     return [ordered]@{ status = 'present'; verificationStatus = 'verified'; present = $true }
 }
 
+function Convert-OpcBoolean {
+    param([AllowNull()][string]$Value)
+
+    if ($null -eq $Value) { return $null }
+    switch ($Value.Trim().ToLowerInvariant()) {
+        'true' { return $true }
+        '1' { return $true }
+        'false' { return $false }
+        '0' { return $false }
+        default { return $null }
+    }
+}
+
+function Convert-GuidText {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $parsed = [Guid]::Empty
+    if (-not [Guid]::TryParse($Value, [ref]$parsed)) { return $null }
+    return $parsed.ToString('D').ToLowerInvariant()
+}
+
+function Read-SensitivityLabelInfoPart {
+    param([IO.Compression.ZipArchiveEntry]$Entry)
+
+    $labels = New-Object System.Collections.ArrayList
+    $coveredSiteIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $labelIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $valid = $true
+    $rootSeen = $false
+    $extensionsSeen = $false
+    $labelElementCount = 0
+    try {
+        $bytes = Read-BoundedZipEntryBytes $Entry 1048576
+        $stream = New-Object IO.MemoryStream(, $bytes)
+        $reader = [Xml.XmlReader]::Create($stream, (New-SafeXmlReaderSettings))
+        try {
+            while ($reader.Read()) {
+                if ($reader.NodeType -ne [Xml.XmlNodeType]::Element) { continue }
+                if ($reader.Depth -eq 0) {
+                    if (
+                        $rootSeen -or
+                        $reader.LocalName -cne 'labelList' -or
+                        $reader.NamespaceURI -cne 'http://schemas.microsoft.com/office/2020/mipLabelMetadata'
+                    ) {
+                        $valid = $false
+                    }
+                    $rootSeen = $true
+                    continue
+                }
+                if (
+                    $reader.Depth -eq 1 -and
+                    $reader.LocalName -ceq 'extLst' -and
+                    $reader.NamespaceURI -ceq 'http://schemas.microsoft.com/office/2020/mipLabelMetadata'
+                ) {
+                    if ($extensionsSeen) { $valid = $false }
+                    $extensionsSeen = $true
+                    continue
+                }
+                if ($reader.Depth -gt 1 -and $extensionsSeen) { continue }
+                if (
+                    $reader.Depth -ne 1 -or
+                    $reader.LocalName -cne 'label' -or
+                    $reader.NamespaceURI -cne 'http://schemas.microsoft.com/office/2020/mipLabelMetadata' -or
+                    $extensionsSeen
+                ) {
+                    $valid = $false
+                    continue
+                }
+                $labelElementCount++
+                if ($labelElementCount -gt $script:MaxSensitivityLabels) {
+                    $valid = $false
+                    continue
+                }
+                $id = Convert-GuidText $reader.GetAttribute('id')
+                $siteId = Convert-GuidText $reader.GetAttribute('siteId')
+                $enabled = Convert-OpcBoolean $reader.GetAttribute('enabled')
+                $removed = Convert-OpcBoolean $reader.GetAttribute('removed')
+                $methodAttribute = $reader.GetAttribute('method')
+                $method = [string]$methodAttribute
+                $contentBitsText = $reader.GetAttribute('contentBits')
+                $contentBits = $null
+                if ($null -ne $contentBitsText) {
+                    $parsedBits = [uint32]0
+                    if ([uint32]::TryParse($contentBitsText, [ref]$parsedBits)) {
+                        $contentBits = [int64]$parsedBits
+                    } else {
+                        $valid = $false
+                    }
+                }
+                if (
+                    $null -eq $id -or
+                    $null -eq $siteId -or
+                    $null -eq $enabled -or
+                    $null -eq $removed -or
+                    $null -eq $methodAttribute -or
+                    $method.Length -gt 128 -or
+                    ([bool]$enabled -and -not [bool]$removed -and $method -cnotin @('Standard', 'Privileged')) -or
+                    ([bool]$removed -and $method.Length -ne 0) -or
+                    -not $labelIds.Add($id) -or
+                    -not $coveredSiteIds.Add($siteId)
+                ) {
+                    $valid = $false
+                    continue
+                }
+                if ([bool]$enabled -and -not [bool]$removed) {
+                    [void]$labels.Add([ordered]@{
+                        id = $id
+                        enabled = $true
+                        removed = $false
+                        name = $null
+                        method = $method
+                        setDate = $null
+                        contentBits = $contentBits
+                        siteId = $siteId
+                        source = 'labelInfoPart'
+                        confidence = 'localDeclaration'
+                    })
+                }
+            }
+        }
+        finally {
+            $reader.Dispose()
+            $stream.Dispose()
+        }
+    }
+    catch {
+        $valid = $false
+    }
+    if (-not $valid -or -not $rootSeen) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @(); coveredSiteIds = @() }
+    }
+    return [ordered]@{
+        status = if ($labels.Count -gt 0) { 'present' } else { 'absent' }
+        source = 'labelInfoPart'
+        labels = @($labels)
+        coveredSiteIds = @($coveredSiteIds)
+    }
+}
+
+function Read-CustomSensitivityLabelsPart {
+    param([IO.Compression.ZipArchiveEntry]$Entry)
+
+    $metadata = @{}
+    $propertyNames = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $propertyIds = New-Object 'System.Collections.Generic.HashSet[int]'
+    $sensitivityId = $null
+    $relevantSeen = $false
+    $valid = $true
+    $rootSeen = $false
+    try {
+        $bytes = Read-BoundedZipEntryBytes $Entry 1048576
+        $stream = New-Object IO.MemoryStream(, $bytes)
+        $reader = [Xml.XmlReader]::Create($stream, (New-SafeXmlReaderSettings))
+        try {
+            while ($reader.Read()) {
+                if ($reader.NodeType -ne [Xml.XmlNodeType]::Element) { continue }
+                if ($reader.Depth -eq 0) {
+                    if (
+                        $rootSeen -or
+                        $reader.LocalName -cne 'Properties' -or
+                        $reader.NamespaceURI -cne 'http://schemas.openxmlformats.org/officeDocument/2006/custom-properties'
+                    ) {
+                        $valid = $false
+                    }
+                    $rootSeen = $true
+                    continue
+                }
+                if (
+                    $reader.Depth -ne 1 -or
+                    $reader.LocalName -cne 'property' -or
+                    $reader.NamespaceURI -cne 'http://schemas.openxmlformats.org/officeDocument/2006/custom-properties'
+                ) {
+                    continue
+                }
+                $propertyName = [string]$reader.GetAttribute('name')
+                $isSensitivity = $propertyName -ieq 'Sensitivity'
+                $mipPropertyMatch = [regex]::Match(
+                    $propertyName,
+                    '^MSIP_Label_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_(Enabled(?:V2)?|Name|Method|SetDate|ContentBits|SiteId|ActionId)$',
+                    [Text.RegularExpressions.RegexOptions]::IgnoreCase
+                )
+                $isMipProperty = $mipPropertyMatch.Success
+                $unknownEnabledVersionMatch = [regex]::Match(
+                    $propertyName,
+                    '^MSIP_Label_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_EnabledV([0-9]+)$',
+                    [Text.RegularExpressions.RegexOptions]::IgnoreCase
+                )
+                $isUnknownEnabledVersion = $unknownEnabledVersionMatch.Success -and $unknownEnabledVersionMatch.Groups[1].Value -ne '2'
+                if ($isUnknownEnabledVersion) {
+                    $relevantSeen = $true
+                    $valid = $false
+                    continue
+                }
+                if (-not $isSensitivity -and -not $isMipProperty) { continue }
+                $relevantSeen = $true
+                $propertyId = 0
+                if (
+                    $reader.GetAttribute('fmtid') -ine '{D5CDD505-2E9C-101B-9397-08002B2CF9AE}' -or
+                    -not $propertyNames.Add($propertyName) -or
+                    -not [int]::TryParse([string]$reader.GetAttribute('pid'), [ref]$propertyId) -or
+                    $propertyId -lt 2 -or
+                    -not $propertyIds.Add($propertyId)
+                ) {
+                    $valid = $false
+                    continue
+                }
+                $propertyReader = $reader.ReadSubtree()
+                $propertyValueBuilder = New-Object Text.StringBuilder
+                $valueElementSeen = $false
+                $valueTextSeen = $false
+                try {
+                    while ($propertyReader.Read()) {
+                        if ($propertyReader.NodeType -eq [Xml.XmlNodeType]::Element -and $propertyReader.Depth -eq 1) {
+                            if (
+                                $valueElementSeen -or
+                                $propertyReader.LocalName -cne 'lpwstr' -or
+                                $propertyReader.NamespaceURI -cne 'http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes'
+                            ) {
+                                $valid = $false
+                            }
+                            $valueElementSeen = $true
+                        }
+                        if ($propertyReader.NodeType -eq [Xml.XmlNodeType]::Element -and $propertyReader.Depth -gt 1) {
+                            $valid = $false
+                        }
+                        if (
+                            $propertyReader.NodeType -eq [Xml.XmlNodeType]::Text -or
+                            $propertyReader.NodeType -eq [Xml.XmlNodeType]::CDATA
+                        ) {
+                            if ($propertyReader.Depth -ne 2) { $valid = $false }
+                            $valueTextSeen = $true
+                            if ($propertyValueBuilder.Length + $propertyReader.Value.Length -gt 512) {
+                                $valid = $false
+                            } else {
+                                [void]$propertyValueBuilder.Append($propertyReader.Value)
+                            }
+                        }
+                    }
+                }
+                finally {
+                    $propertyReader.Dispose()
+                }
+                $propertyValue = $propertyValueBuilder.ToString().Trim()
+                if (-not $valueElementSeen -or -not $valueTextSeen -or $propertyValue.Length -gt 512) {
+                    $valid = $false
+                    continue
+                }
+                if ($isSensitivity) {
+                    $sensitivityId = Convert-GuidText $propertyValue
+                    if ($null -eq $sensitivityId) { $valid = $false }
+                    continue
+                }
+                $labelId = $mipPropertyMatch.Groups[1].Value.ToLowerInvariant()
+                $metadataName = $mipPropertyMatch.Groups[2].Value
+                if (-not $metadata.ContainsKey($labelId)) {
+                    $metadata[$labelId] = [ordered]@{
+                        id = $labelId
+                        enabledPresent = $false
+                        enabled = $null
+                        enabledV2Present = $false
+                        enabledV2 = $null
+                        name = $null
+                        method = $null
+                        setDate = $null
+                        contentBits = $null
+                        siteId = $null
+                    }
+                }
+                $item = $metadata[$labelId]
+                switch -Regex ($metadataName) {
+                    '(?i)^Enabled$' {
+                        $item.enabledPresent = $true
+                        $item.enabled = Convert-OpcBoolean $propertyValue
+                        if ($null -eq $item.enabled) { $valid = $false }
+                    }
+                    '(?i)^EnabledV2$' {
+                        $item.enabledV2Present = $true
+                        $item.enabledV2 = $propertyValue.ToLowerInvariant()
+                        if ($item.enabledV2 -notin @('true', 'false', 'condition')) { $valid = $false }
+                    }
+                    '(?i)^Name$' { $item.name = $propertyValue }
+                    '(?i)^Method$' { $item.method = $propertyValue }
+                    '(?i)^SetDate$' { $item.setDate = $propertyValue }
+                    '(?i)^ContentBits$' {
+                        $parsedBits = [uint32]0
+                        if ([uint32]::TryParse($propertyValue, [ref]$parsedBits)) {
+                            $item.contentBits = [int64]$parsedBits
+                        } else {
+                            $valid = $false
+                        }
+                    }
+                    '(?i)^SiteId$' {
+                        $item.siteId = Convert-GuidText $propertyValue
+                        if ($null -eq $item.siteId) { $valid = $false }
+                    }
+                }
+            }
+        }
+        finally {
+            $reader.Dispose()
+            $stream.Dispose()
+        }
+    }
+    catch {
+        $valid = $false
+    }
+    if (-not $valid -or -not $rootSeen) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @(); coveredSiteIds = @() }
+    }
+    if (-not $relevantSeen) {
+        return [ordered]@{ status = 'absent'; source = 'customProperties'; labels = @(); coveredSiteIds = @() }
+    }
+    if ($null -eq $sensitivityId -or -not $metadata.ContainsKey($sensitivityId)) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @(); coveredSiteIds = @() }
+    }
+    $activeLabels = New-Object System.Collections.ArrayList
+    $activeSites = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $activeIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($item in $metadata.Values) {
+        $enabledState = if ([bool]$item.enabledV2Present) {
+            [string]$item.enabledV2
+        } elseif ([bool]$item.enabledPresent -and [bool]$item.enabled) {
+            'true'
+        } else {
+            'false'
+        }
+        if ($enabledState -eq 'condition') {
+            return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @(); coveredSiteIds = @() }
+        }
+        if ($enabledState -ne 'true') { continue }
+        if (
+            $null -eq $item.siteId -or
+            -not $activeSites.Add([string]$item.siteId) -or
+            -not $activeIds.Add([string]$item.id)
+        ) {
+            return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @(); coveredSiteIds = @() }
+        }
+        [void]$activeLabels.Add([ordered]@{
+            id = [string]$item.id
+            enabled = $true
+            removed = $false
+            name = if ([string]::IsNullOrWhiteSpace([string]$item.name)) { $null } else { [string]$item.name }
+            method = if ([string]::IsNullOrWhiteSpace([string]$item.method)) { $null } else { [string]$item.method }
+            setDate = if ([string]::IsNullOrWhiteSpace([string]$item.setDate)) { $null } else { [string]$item.setDate }
+            contentBits = $item.contentBits
+            siteId = [string]$item.siteId
+            source = 'customProperties'
+            confidence = 'localDeclaration'
+        })
+    }
+    if ($activeLabels.Count -gt $script:MaxSensitivityLabels -or -not $activeIds.Contains($sensitivityId)) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @(); coveredSiteIds = @() }
+    }
+    return [ordered]@{
+        status = if ($activeLabels.Count -gt 0) { 'present' } else { 'absent' }
+        source = 'customProperties'
+        labels = @($activeLabels)
+        coveredSiteIds = @($activeSites)
+    }
+}
+
+function Get-OpcSensitivityLabelInventory {
+    param(
+        [hashtable]$PartEntries,
+        [System.Collections.Generic.HashSet[string]]$DuplicateParts,
+        [bool]$ArchiveAmbiguous
+    )
+
+    $classificationRelationshipType = 'http://schemas.microsoft.com/office/2020/02/relationships/classificationlabels'
+    $customPropertiesRelationshipType = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties'
+    $customPropertiesContentType = 'application/vnd.openxmlformats-officedocument.custom-properties+xml'
+    $contentTypesEntry = if ($PartEntries.ContainsKey('/[Content_Types].xml')) { $PartEntries['/[Content_Types].xml'] } else { $null }
+    $contentTypes = Read-OpcContentTypes $contentTypesEntry
+    $rootRelationshipsEntry = if ($PartEntries.ContainsKey('/_rels/.rels')) { $PartEntries['/_rels/.rels'] } else { $null }
+    $rootRelationships = Read-OpcRelationships $rootRelationshipsEntry
+    if ($ArchiveAmbiguous -or $DuplicateParts.Count -gt 0 -or (-not $rootRelationships.valid -and $null -ne $rootRelationshipsEntry)) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+    }
+
+    $labelRelationships = @($rootRelationships.relationships | Where-Object { $_.type -ceq $classificationRelationshipType })
+    $knownLabelArtifacts = @($PartEntries.Keys | Where-Object { $_ -match '(?i)^/docMetadata/LabelInfo\.xml$' })
+    $customRelationships = @($rootRelationships.relationships | Where-Object { $_.type -ceq $customPropertiesRelationshipType })
+    if ($customRelationships.Count -gt 1) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+    }
+    $customResult = [ordered]@{ status = 'absent'; source = 'none'; labels = @(); coveredSiteIds = @() }
+    if ($customRelationships.Count -eq 1) {
+        if (-not $contentTypes.valid) {
+            return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+        }
+        $relationship = $customRelationships[0]
+        $partName = Resolve-OpcRelationshipTarget '/' $relationship.target
+        if (
+            (-not [string]::IsNullOrWhiteSpace($relationship.targetMode) -and $relationship.targetMode -ine 'Internal') -or
+            $null -eq $partName -or
+            -not $PartEntries.ContainsKey($partName) -or
+            $DuplicateParts.Contains($partName) -or
+            (Get-OpcContentType $contentTypes $partName) -cne $customPropertiesContentType
+        ) {
+            return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+        }
+        $customResult = Read-CustomSensitivityLabelsPart $PartEntries[$partName]
+    } elseif ($PartEntries.ContainsKey('/docProps/custom.xml')) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+    }
+
+    if ($labelRelationships.Count -eq 0) {
+        if ($knownLabelArtifacts.Count -gt 0) {
+            return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+        }
+        return $customResult
+    }
+    if ($labelRelationships.Count -ne 1 -or -not $contentTypes.valid) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+    }
+    $labelRelationship = $labelRelationships[0]
+    $labelPartName = Resolve-OpcRelationshipTarget '/' $labelRelationship.target
+    if (
+        (-not [string]::IsNullOrWhiteSpace($labelRelationship.targetMode) -and $labelRelationship.targetMode -ine 'Internal') -or
+        $null -eq $labelPartName -or
+        -not $PartEntries.ContainsKey($labelPartName) -or
+        $DuplicateParts.Contains($labelPartName) -or
+        (Get-OpcContentType $contentTypes $labelPartName) -cne 'application/xml'
+    ) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+    }
+    $labelInfoResult = Read-SensitivityLabelInfoPart $PartEntries[$labelPartName]
+    if ($labelInfoResult.status -eq 'unknown' -or $customResult.status -eq 'unknown') {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+    }
+
+    $coveredTenants = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($siteId in @($labelInfoResult.coveredSiteIds)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$siteId)) { [void]$coveredTenants.Add([string]$siteId) }
+    }
+    $combinedLabels = New-Object System.Collections.ArrayList
+    foreach ($label in @($labelInfoResult.labels)) { [void]$combinedLabels.Add($label) }
+    foreach ($legacyLabel in @($customResult.labels)) {
+        $legacySiteId = [string]$legacyLabel.siteId
+        if ([string]::IsNullOrWhiteSpace($legacySiteId)) {
+            return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+        }
+        if (-not $coveredTenants.Contains($legacySiteId)) {
+            [void]$combinedLabels.Add($legacyLabel)
+        }
+    }
+    if ($combinedLabels.Count -gt $script:MaxSensitivityLabels) {
+        return [ordered]@{ status = 'unknown'; source = 'ambiguous'; labels = @() }
+    }
+    $hasModernLabel = @($combinedLabels | Where-Object { $_.source -eq 'labelInfoPart' }).Count -gt 0
+    $hasLegacyLabel = @($combinedLabels | Where-Object { $_.source -eq 'customProperties' }).Count -gt 0
+    $source = if ($hasModernLabel -and $hasLegacyLabel) {
+        'mixed'
+    } elseif ($hasLegacyLabel) {
+        'customProperties'
+    } else {
+        'labelInfoPart'
+    }
+    return [ordered]@{
+        status = if ($combinedLabels.Count -gt 0) { 'present' } else { 'absent' }
+        source = $source
+        labels = @($combinedLabels)
+    }
+}
+
 function Get-ZipInventory {
     param([string]$Path)
 
@@ -743,7 +1319,6 @@ function Get-ZipInventory {
         $archiveAmbiguous = $false
         $partEntries = @{}
         $duplicateParts = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-        $customEntry = $null
         foreach ($entry in $archive.Entries) {
             if ($entry.FullName.EndsWith('/', [StringComparison]::Ordinal)) { continue }
             if ($entry.FullName.IndexOf('\\') -ge 0 -or $entry.FullName.StartsWith('/', [StringComparison]::Ordinal)) {
@@ -769,49 +1344,10 @@ function Get-ZipInventory {
             if ($lowerPartName -match '^/xl/vbaprojectsignature(?:agile|v3)?\.bin$') {
                 $hasVbaSignature = $true
             }
-            if ($lowerPartName -eq '/docprops/custom.xml') { $customEntry = $entry }
         }
 
         $packageSignature = Get-OpcPackageSignatureInventory $partEntries $duplicateParts $archiveAmbiguous
-
-        $labelIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-        if ($null -ne $customEntry) {
-            $xmlBytes = Read-BoundedZipEntryBytes $customEntry 1048576
-            $xmlStream = New-Object IO.MemoryStream(, $xmlBytes)
-            $xmlReader = [Xml.XmlReader]::Create($xmlStream, (New-SafeXmlReaderSettings))
-            try {
-                while ($xmlReader.Read()) {
-                    if ($xmlReader.NodeType -eq [Xml.XmlNodeType]::Element -and $xmlReader.LocalName -eq 'property') {
-                        $propertyName = $xmlReader.GetAttribute('name')
-                        if ($propertyName -match '(?i)^MSIP_Label_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_Enabled(?:V2)?$') {
-                            $labelId = $matches[1].ToLowerInvariant()
-                            $propertyReader = $xmlReader.ReadSubtree()
-                            $enabledValue = $null
-                            try {
-                                while ($propertyReader.Read()) {
-                                    if (
-                                        $propertyReader.NodeType -eq [Xml.XmlNodeType]::Text -or
-                                        $propertyReader.NodeType -eq [Xml.XmlNodeType]::CDATA
-                                    ) {
-                                        $enabledValue = $propertyReader.Value.Trim()
-                                    }
-                                }
-                            }
-                            finally {
-                                $propertyReader.Dispose()
-                            }
-                            if ($enabledValue -ieq 'true') {
-                                [void]$labelIds.Add($labelId)
-                            }
-                        }
-                    }
-                }
-            }
-            finally {
-                $xmlReader.Dispose()
-                $xmlStream.Dispose()
-            }
-        }
+        $sensitivityInventory = Get-OpcSensitivityLabelInventory $partEntries $duplicateParts $archiveAmbiguous
         return [ordered]@{
             hasVbaProject = $hasVba
             hasVbaSignature = $hasVbaSignature
@@ -820,11 +1356,15 @@ function Get-ZipInventory {
             packageSignatureStatus = [string]$packageSignature.status
             packageSignatureVerificationStatus = [string]$packageSignature.verificationStatus
 			officePackageEncrypted = $false
+			irmProtected = $false
 			hasWorkbookPart = $hasContentTypes -and ($hasWorkbookXml -or $hasWorkbookBinary)
 			hasWorkbookXml = $hasWorkbookXml
 			hasWorkbookBinary = $hasWorkbookBinary
             vbaProjectProtectionStatus = if ($hasVba) { 'unknown' } else { 'absent' }
-            sensitivityLabelIds = @($labelIds | Sort-Object)
+            sensitivityLabelIds = @($sensitivityInventory.labels | ForEach-Object { $_.id })
+            sensitivityLabels = @($sensitivityInventory.labels)
+            sensitivityMetadataStatus = [string]$sensitivityInventory.status
+            sensitivityMetadataSource = [string]$sensitivityInventory.source
         }
     }
     finally {
@@ -875,12 +1415,15 @@ function Add-RegistrySetting {
         [string]$Id,
         [string]$Category,
         [string]$Source,
-        [bool]$Managed
+        [bool]$Managed,
+        [bool]$SharedView,
+        [ref]$Unreadable
     )
 
-    $root = Open-RegistryRoot $Hive $View
+    $root = $null
     $key = $null
     try {
+        $root = Open-RegistryRoot $Hive $View
         $key = $root.OpenSubKey($KeyPath, $false)
         if ($null -eq $key) { return }
         $sentinel = New-Object object
@@ -900,12 +1443,15 @@ function Add-RegistrySetting {
             name = $Name
             value = Convert-RegistryValue $value
             valueKind = $kind
-            registryView = if ($View -eq [Microsoft.Win32.RegistryView]::Registry64) { '64' } else { '32' }
+            registryView = if ($SharedView) { $null } elseif ($View -eq [Microsoft.Win32.RegistryView]::Registry64) { '64' } else { '32' }
         })
+    }
+    catch {
+        $Unreadable.Value = $true
     }
     finally {
         if ($null -ne $key) { $key.Dispose() }
-        $root.Dispose()
+        if ($null -ne $root) { $root.Dispose() }
     }
 }
 
@@ -916,15 +1462,130 @@ function Test-RegistryKeyPresent {
         [string]$KeyPath
     )
 
-    $root = Open-RegistryRoot $Hive $View
+    $root = $null
     $key = $null
     try {
+        $root = Open-RegistryRoot $Hive $View
         $key = $root.OpenSubKey($KeyPath, $false)
-        return $null -ne $key
+        if ($null -ne $key) { return 'detected' }
+        return 'notDetected'
+    }
+    catch {
+        return 'unreadable'
     }
     finally {
         if ($null -ne $key) { $key.Dispose() }
-        $root.Dispose()
+        if ($null -ne $root) { $root.Dispose() }
+    }
+}
+
+function Get-MdmEnrollmentEvidence {
+    param([Microsoft.Win32.RegistryView]$View)
+
+    $root = $null
+    $enrollmentsKey = $null
+    $accountsKey = $null
+    try {
+        $root = Open-RegistryRoot 'HKLM' $View
+        $enrollmentsKey = $root.OpenSubKey('Software\Microsoft\Enrollments', $false)
+        $accountsKey = $root.OpenSubKey('Software\Microsoft\Provisioning\OMADM\Accounts', $false)
+        if (
+            ($null -ne $enrollmentsKey -and $enrollmentsKey.SubKeyCount -gt 64) -or
+            ($null -ne $accountsKey -and $accountsKey.SubKeyCount -gt 64)
+        ) {
+            return [ordered]@{ status = 'unreadable'; provider = 'unknown' }
+        }
+        $enrollmentNames = @(
+            if ($null -ne $enrollmentsKey) { $enrollmentsKey.GetSubKeyNames() }
+        )
+        $accountNames = @(
+            if ($null -ne $accountsKey) { $accountsKey.GetSubKeyNames() }
+        )
+        if ($enrollmentNames.Count -gt 64) {
+            return [ordered]@{ status = 'unreadable'; provider = 'unknown' }
+        }
+        if ($accountNames.Count -gt 64) {
+            return [ordered]@{ status = 'unreadable'; provider = 'unknown' }
+        }
+        $enrollmentIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        $strongEnrollmentIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        $intuneCandidateIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($enrollmentName in $enrollmentNames) {
+            $enrollmentId = Convert-GuidText $enrollmentName
+            if ($null -eq $enrollmentId) { continue }
+            [void]$enrollmentIds.Add($enrollmentId)
+            $enrollmentKey = $null
+            try {
+                $enrollmentKey = $enrollmentsKey.OpenSubKey($enrollmentName, $false)
+                if ($null -eq $enrollmentKey) { continue }
+                $sentinel = New-Object object
+                $discoveryUrl = $enrollmentKey.GetValue('DiscoveryServiceFullURL', $sentinel, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                $upn = $enrollmentKey.GetValue('UPN', $sentinel, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                $certificateThumbprint = $enrollmentKey.GetValue('DMPCertThumbPrint', $sentinel, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                if (
+                    (-not [object]::ReferenceEquals($upn, $sentinel) -and -not [string]::IsNullOrWhiteSpace([string]$upn)) -or
+                    (-not [object]::ReferenceEquals($certificateThumbprint, $sentinel) -and -not [string]::IsNullOrWhiteSpace([string]$certificateThumbprint))
+                ) {
+                    [void]$strongEnrollmentIds.Add($enrollmentId)
+                }
+                if (-not [object]::ReferenceEquals($discoveryUrl, $sentinel)) {
+                    $uri = $null
+                    if ([Uri]::TryCreate([string]$discoveryUrl, [UriKind]::Absolute, [ref]$uri)) {
+                        $host = $uri.DnsSafeHost.ToLowerInvariant()
+                        if ($host -eq 'manage.microsoft.com' -or $host.EndsWith('.manage.microsoft.com')) {
+                            [void]$intuneCandidateIds.Add($enrollmentId)
+                        }
+                    }
+                }
+            }
+            finally {
+                if ($null -ne $enrollmentKey) { $enrollmentKey.Dispose() }
+            }
+        }
+        $activeAccountIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($accountName in $accountNames) {
+            $accountId = Convert-GuidText $accountName
+            if ($null -eq $accountId) { continue }
+            $accountKey = $null
+            try {
+                $accountKey = $accountsKey.OpenSubKey($accountName, $false)
+                if ($null -eq $accountKey) { continue }
+                $sentinel = New-Object object
+                $serverId = $accountKey.GetValue('ServerId', $sentinel, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                $certificateReference = $accountKey.GetValue('SslClientCertReference', $sentinel, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                if (
+                    (-not [object]::ReferenceEquals($serverId, $sentinel) -and -not [string]::IsNullOrWhiteSpace([string]$serverId)) -or
+                    (-not [object]::ReferenceEquals($certificateReference, $sentinel) -and -not [string]::IsNullOrWhiteSpace([string]$certificateReference))
+                ) {
+                    [void]$activeAccountIds.Add($accountId)
+                }
+            }
+            finally {
+                if ($null -ne $accountKey) { $accountKey.Dispose() }
+            }
+        }
+        $detectedIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($enrollmentId in $strongEnrollmentIds) { [void]$detectedIds.Add($enrollmentId) }
+        foreach ($accountId in $activeAccountIds) {
+            if ($enrollmentIds.Contains($accountId)) { [void]$detectedIds.Add($accountId) }
+        }
+        $microsoftIntune = $false
+        foreach ($detectedId in $detectedIds) {
+            if ($intuneCandidateIds.Contains($detectedId)) { $microsoftIntune = $true }
+        }
+        $detected = $detectedIds.Count -gt 0
+        return [ordered]@{
+            status = if ($detected) { 'detected' } else { 'notDetected' }
+            provider = if ($microsoftIntune) { 'microsoftIntune' } elseif ($detected) { 'unknown' } else { 'none' }
+        }
+    }
+    catch {
+        return [ordered]@{ status = 'unreadable'; provider = 'unknown' }
+    }
+    finally {
+        if ($null -ne $accountsKey) { $accountsKey.Dispose() }
+        if ($null -ne $enrollmentsKey) { $enrollmentsKey.Dispose() }
+        if ($null -ne $root) { $root.Dispose() }
     }
 }
 
@@ -936,13 +1597,16 @@ function Add-TrustedLocations {
         [string]$KeyPath,
         [string]$Source,
         [bool]$Managed,
-        [System.Collections.Generic.HashSet[string]]$Seen
+        [bool]$SharedView,
+        [System.Collections.Generic.HashSet[string]]$Seen,
+        [ref]$Unreadable
     )
 
     if ($Target.Count -ge $script:MaxTrustedLocations) { return }
-    $root = Open-RegistryRoot $Hive $View
+    $root = $null
     $locationsKey = $null
     try {
+        $root = Open-RegistryRoot $Hive $View
         $locationsKey = $root.OpenSubKey($KeyPath, $false)
         if ($null -eq $locationsKey) { return }
         for ($locationIndex = 0; $locationIndex -lt 64; $locationIndex++) {
@@ -966,7 +1630,8 @@ function Add-TrustedLocations {
                     $allowSubfolders = [int64]$allowValue -ne 0
                 }
                 $registryPath = "$Hive\$KeyPath\$locationName"
-                $deduplicationKey = "$Source|$registryPath|$locationPath|$allowSubfolders".ToLowerInvariant()
+                $registryViewName = if ($SharedView) { $null } elseif ($View -eq [Microsoft.Win32.RegistryView]::Registry64) { '64' } else { '32' }
+                $deduplicationKey = "$Source|$registryPath|$locationPath|$allowSubfolders|$registryViewName".ToLowerInvariant()
                 if (-not $Seen.Add($deduplicationKey)) { continue }
                 $item = [ordered]@{
                     source = $Source
@@ -974,7 +1639,7 @@ function Add-TrustedLocations {
                     registryPath = $registryPath
                     path = if ($locationPath.Length -gt 2048) { $locationPath.Substring(0, 2048) } else { $locationPath }
                     allowSubfolders = $allowSubfolders
-                    registryView = if ($View -eq [Microsoft.Win32.RegistryView]::Registry64) { '64' } else { '32' }
+                    registryView = $registryViewName
                 }
                 $descriptionValue = $locationKey.GetValue('Description', $sentinel)
                 if (-not [object]::ReferenceEquals($descriptionValue, $sentinel)) {
@@ -983,19 +1648,28 @@ function Add-TrustedLocations {
                 }
                 [void]$Target.Add($item)
             }
+            catch {
+                $Unreadable.Value = $true
+            }
             finally {
                 if ($null -ne $locationKey) { $locationKey.Dispose() }
             }
         }
     }
+    catch {
+        $Unreadable.Value = $true
+    }
     finally {
         if ($null -ne $locationsKey) { $locationsKey.Dispose() }
-        $root.Dispose()
+        if ($null -ne $root) { $root.Dispose() }
     }
 }
 
 function Get-OfficeSecurity {
     $settings = New-Object System.Collections.ArrayList
+    $unreadableSettings = New-Object System.Collections.ArrayList
+    $clickToRunArchitectureSignals = New-Object System.Collections.ArrayList
+    $outlookArchitectureSignals = New-Object System.Collections.ArrayList
     $trustedLocations = New-Object System.Collections.ArrayList
     $seenTrustedLocations = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $sources = @(
@@ -1009,19 +1683,52 @@ function Get-OfficeSecurity {
         @{ Suffix = 'Excel\Security'; Name = 'VBAWarnings'; Id = 'vbaWarnings'; Category = 'vba' },
         @{ Suffix = 'Excel\Security'; Name = 'AccessVBOM'; Id = 'accessVbom'; Category = 'vba' },
         @{ Suffix = 'Excel\Security'; Name = 'BlockContentExecutionFromInternet'; Id = 'blockInternetMacros'; Category = 'vba' },
+        @{ Suffix = 'Excel\Security'; Name = 'XL4MacroOff'; Id = 'xl4MacroOff'; Category = 'xlm' },
         @{ Suffix = 'Common\Security'; Name = 'DisableAllActiveX'; Id = 'disableAllActiveX'; Category = 'activeX' },
         @{ Suffix = 'Common\Security'; Name = 'UFIControls'; Id = 'ufiControls'; Category = 'activeX' },
         @{ Suffix = 'Excel\Security\ProtectedView'; Name = 'DisableInternetFilesInPV'; Id = 'disableInternetFilesInProtectedView'; Category = 'protectedView' },
         @{ Suffix = 'Excel\Security\ProtectedView'; Name = 'DisableUnsafeLocationsInPV'; Id = 'disableUnsafeLocationsInProtectedView'; Category = 'protectedView' },
         @{ Suffix = 'Excel\Security\ProtectedView'; Name = 'DisableAttachmentsInPV'; Id = 'disableAttachmentsInProtectedView'; Category = 'protectedView' },
-        @{ Suffix = 'Excel\Security'; Name = 'DisableAllTrustedLocations'; Id = 'disableAllTrustedLocations'; Category = 'trustedLocations' },
+        @{ Suffix = 'Excel\Security\Trusted Locations'; Name = 'AllLocationsDisabled'; Id = 'disableAllTrustedLocations'; Category = 'trustedLocations' },
         @{ Suffix = 'Excel\Security\Trusted Locations'; Name = 'AllowNetworkLocations'; Id = 'allowNetworkTrustedLocations'; Category = 'trustedLocations' },
         @{ Suffix = 'Common\Security\Trusted Locations'; Name = 'Allow User Locations'; Id = 'allowUserTrustedLocations'; Category = 'trustedLocations' }
     )
     $views = @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)
+    $architectureRegistryUnreadable = $false
+    foreach ($view in $views) {
+        Add-RegistrySetting `
+            $clickToRunArchitectureSignals `
+            'HKLM' `
+            $view `
+            'Software\Microsoft\Office\ClickToRun\Configuration' `
+            'Platform' `
+            'officeArchitecture' `
+            'installation' `
+            'machinePreference' `
+            $false `
+            $false `
+            ([ref]$architectureRegistryUnreadable)
+        Add-RegistrySetting `
+            $outlookArchitectureSignals `
+            'HKLM' `
+            $view `
+            'Software\Microsoft\Office\16.0\Outlook' `
+            'Bitness' `
+            'officeArchitecture' `
+            'installation' `
+            'machinePreference' `
+            $false `
+            $false `
+            ([ref]$architectureRegistryUnreadable)
+    }
+    $sourceUnreadable = @{}
     foreach ($source in $sources) {
-        foreach ($view in $views) {
+        $readFailure = $false
+        $sharedView = $source.Hive -eq 'HKCU'
+        $sourceViews = if ($sharedView) { @($views[0]) } else { $views }
+        foreach ($view in $sourceViews) {
             foreach ($definition in $definitions) {
+                $settingUnreadable = $false
                 Add-RegistrySetting `
                     $settings `
                     $source.Hive `
@@ -1031,8 +1738,19 @@ function Get-OfficeSecurity {
                     $definition.Id `
                     $definition.Category `
                     $source.Source `
-                    $source.Managed
+                    $source.Managed `
+                    $sharedView `
+                    ([ref]$settingUnreadable)
+                if ($settingUnreadable) {
+                    $readFailure = $true
+                    [void]$unreadableSettings.Add([ordered]@{
+                        id = $definition.Id
+                        source = $source.Source
+                        registryView = if ($sharedView) { $null } elseif ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { '64' } else { '32' }
+                    })
+                }
             }
+            $locationReadFailure = $false
             Add-TrustedLocations `
                 $trustedLocations `
                 $source.Hive `
@@ -1040,7 +1758,9 @@ function Get-OfficeSecurity {
                 "$($source.Prefix)\Excel\Security\Trusted Locations" `
                 $source.Source `
                 $source.Managed `
-                $seenTrustedLocations
+                $sharedView `
+                $seenTrustedLocations `
+                ([ref]$locationReadFailure)
             Add-TrustedLocations `
                 $trustedLocations `
                 $source.Hive `
@@ -1048,8 +1768,12 @@ function Get-OfficeSecurity {
                 "$($source.Prefix)\Common\Security\Trusted Locations" `
                 $source.Source `
                 $source.Managed `
-                $seenTrustedLocations
+                $sharedView `
+                $seenTrustedLocations `
+                ([ref]$locationReadFailure)
+            if ($locationReadFailure) { $readFailure = $true }
         }
+        $sourceUnreadable[$source.Source] = $readFailure
     }
 
     $cloudPolicyDetected = @(
@@ -1058,18 +1782,118 @@ function Get-OfficeSecurity {
         $trustedLocations | Where-Object { $_.source -eq 'cloudPolicy' }
     ).Count -gt 0
     $cloudPolicyServiceDetected = $false
+    $cloudPolicyServiceUnreadable = $false
+    $intuneManagementExtensionDetected = $false
+    $intuneManagementExtensionUnreadable = $false
+    $mdmEnrollmentArtifactsDetected = $false
+    $mdmEnrollmentUnreadable = $false
+    $mdmProvider = 'none'
+    $groupPolicyHistoryDetected = $false
+    $groupPolicyHistoryUnreadable = $false
     foreach ($view in $views) {
-        if (Test-RegistryKeyPresent 'HKCU' $view 'Software\Microsoft\Office\16.0\Common\CloudPolicy') {
-            $cloudPolicyServiceDetected = $true
+        if ($view -eq $views[0]) {
+            $cloudStatus = Test-RegistryKeyPresent 'HKCU' $view 'Software\Microsoft\Office\16.0\Common\CloudPolicy'
+            if ($cloudStatus -eq 'detected') { $cloudPolicyServiceDetected = $true }
+            elseif ($cloudStatus -eq 'unreadable') { $cloudPolicyServiceUnreadable = $true }
         }
+        foreach ($intunePath in @(
+            'Software\Microsoft\IntuneManagementExtension',
+            'System\CurrentControlSet\Services\IntuneManagementExtension'
+        )) {
+            $intuneStatus = Test-RegistryKeyPresent 'HKLM' $view $intunePath
+            if ($intuneStatus -eq 'detected') { $intuneManagementExtensionDetected = $true }
+            elseif ($intuneStatus -eq 'unreadable') { $intuneManagementExtensionUnreadable = $true }
+        }
+        $enrollmentEvidence = Get-MdmEnrollmentEvidence $view
+        if ($enrollmentEvidence.status -eq 'detected') { $mdmEnrollmentArtifactsDetected = $true }
+        elseif ($enrollmentEvidence.status -eq 'unreadable') { $mdmEnrollmentUnreadable = $true }
+        if ($enrollmentEvidence.provider -eq 'microsoftIntune') { $mdmProvider = 'microsoftIntune' }
+        elseif ($mdmProvider -eq 'none' -and $enrollmentEvidence.provider -eq 'unknown') { $mdmProvider = 'unknown' }
+        foreach ($historySignal in @(
+            @{ Hive = 'HKLM'; Path = 'Software\Microsoft\Windows\CurrentVersion\Group Policy\History' },
+            @{ Hive = 'HKCU'; Path = 'Software\Microsoft\Windows\CurrentVersion\Group Policy\History' }
+        )) {
+            if ($historySignal.Hive -eq 'HKCU' -and $view -ne $views[0]) { continue }
+            $historyStatus = Test-RegistryKeyPresent $historySignal.Hive $view $historySignal.Path
+            if ($historyStatus -eq 'detected') { $groupPolicyHistoryDetected = $true }
+            elseif ($historyStatus -eq 'unreadable') { $groupPolicyHistoryUnreadable = $true }
+        }
+    }
+    $clickToRunArchitectures = @(
+        $clickToRunArchitectureSignals |
+            ForEach-Object {
+                $value = ([string]$_.value).Trim().ToLowerInvariant()
+                if ($value -in @('x64', '64', '64-bit', '64bit')) { 'x64' }
+                elseif ($value -in @('x86', '32', '32-bit', '32bit')) { 'x86' }
+            } |
+            Select-Object -Unique
+    )
+    $outlookArchitectures = @(
+        $outlookArchitectureSignals |
+            ForEach-Object {
+                $value = ([string]$_.value).Trim().ToLowerInvariant()
+                if ($value -in @('x64', '64', '64-bit', '64bit')) { 'x64' }
+                elseif ($value -in @('x86', '32', '32-bit', '32bit')) { 'x86' }
+            } |
+            Select-Object -Unique
+    )
+    $architecture = if ($clickToRunArchitectures.Count -eq 1) {
+        [string]$clickToRunArchitectures[0]
+    } elseif ($clickToRunArchitectures.Count -eq 0 -and $outlookArchitectures.Count -eq 1) {
+        [string]$outlookArchitectures[0]
+    } else {
+        'unknown'
+    }
+    $cloudPolicyDetectionStatus = if ($cloudPolicyDetected) {
+        'detected'
+    } elseif ([bool]$sourceUnreadable.cloudPolicy) {
+        'unknown'
+    } else {
+        'notDetected'
+    }
+    $cloudPolicyServiceStatus = if ($cloudPolicyServiceDetected) { 'detected' } elseif ($cloudPolicyServiceUnreadable) { 'unknown' } else { 'notDetected' }
+    $intuneManagementExtensionStatus = if ($intuneManagementExtensionDetected) { 'detected' } elseif ($intuneManagementExtensionUnreadable) { 'unknown' } else { 'notDetected' }
+    $mdmEnrollmentStatus = if ($mdmEnrollmentArtifactsDetected) { 'detected' } elseif ($mdmEnrollmentUnreadable) { 'unknown' } else { 'notDetected' }
+    $groupPolicyHistoryStatus = if ($groupPolicyHistoryDetected) { 'detected' } elseif ($groupPolicyHistoryUnreadable) { 'unknown' } else { 'notDetected' }
+    $windowsPolicyRegistryDetected = @(
+        $settings | Where-Object { $_.source -in @('machinePolicy', 'userPolicy') }
+    ).Count -gt 0 -or @(
+        $trustedLocations | Where-Object { $_.source -in @('machinePolicy', 'userPolicy') }
+    ).Count -gt 0
+    $windowsPolicyRegistryStatus = if ($windowsPolicyRegistryDetected) {
+        'detected'
+    } elseif ([bool]$sourceUnreadable.machinePolicy -or [bool]$sourceUnreadable.userPolicy) {
+        'unknown'
+    } else {
+        'notDetected'
     }
 
     return [ordered]@{
         version = '16.0'
+        architecture = $architecture
         settings = @($settings)
+        unreadableSettings = @($unreadableSettings)
         trustedLocations = @($trustedLocations)
         cloudPolicyDetected = $cloudPolicyDetected
         cloudPolicyServiceDetected = $cloudPolicyServiceDetected
+        intuneManagementExtensionDetected = $intuneManagementExtensionDetected
+        mdmEnrollmentArtifactsDetected = $mdmEnrollmentArtifactsDetected
+        groupPolicyHistoryDetected = $groupPolicyHistoryDetected
+        cloudPolicyDetectionStatus = $cloudPolicyDetectionStatus
+        cloudPolicyServiceStatus = $cloudPolicyServiceStatus
+        windowsPolicyRegistryStatus = $windowsPolicyRegistryStatus
+        intuneManagementExtensionStatus = $intuneManagementExtensionStatus
+        mdmEnrollmentStatus = $mdmEnrollmentStatus
+        mdmProvider = $mdmProvider
+        groupPolicyHistoryStatus = $groupPolicyHistoryStatus
+        registryInspectionPartial = [bool](
+            $architectureRegistryUnreadable -or
+            $sourceUnreadable.Values -contains $true -or
+            $cloudPolicyServiceUnreadable -or
+            $intuneManagementExtensionUnreadable -or
+            $mdmEnrollmentUnreadable -or
+            $groupPolicyHistoryUnreadable
+        )
     }
 }
 
@@ -1120,11 +1944,15 @@ function Get-WorkbookSecurity {
 			packageSignatureStatus = 'unknown'
 			packageSignatureVerificationStatus = 'unverifiable'
 			officePackageEncrypted = $false
+			irmProtected = $false
 			hasWorkbookPart = $false
 			hasWorkbookXml = $false
 			hasWorkbookBinary = $false
             vbaProjectProtectionStatus = 'absent'
             sensitivityLabelIds = @()
+            sensitivityLabels = @()
+            sensitivityMetadataStatus = 'unknown'
+            sensitivityMetadataSource = 'unsupported'
         }
     }
 
@@ -1166,8 +1994,12 @@ function Get-WorkbookSecurity {
         packageSignatureStatus = [string]$inventory.packageSignatureStatus
         packageSignatureVerificationStatus = [string]$inventory.packageSignatureVerificationStatus
         officePackageEncrypted = [bool]$inventory.officePackageEncrypted
+        irmProtected = [bool]$inventory.irmProtected
         vbaProjectProtectionStatus = [string]$inventory.vbaProjectProtectionStatus
         sensitivityLabelIds = @($inventory.sensitivityLabelIds)
+        sensitivityLabels = @($inventory.sensitivityLabels)
+        sensitivityMetadataStatus = [string]$inventory.sensitivityMetadataStatus
+        sensitivityMetadataSource = [string]$inventory.sensitivityMetadataSource
     }
 }
 

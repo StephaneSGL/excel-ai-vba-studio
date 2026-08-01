@@ -9,8 +9,6 @@ import {
 	OfficeSecurityStatus
 } from './officeSecurity';
 
-type OpenExcelCallback = (workbookUri: vscode.Uri) => Promise<boolean>;
-
 interface SecurityCenterMessage {
 	type?: unknown;
 }
@@ -19,6 +17,11 @@ const MICROSOFT_CLOUD_POLICY_DOCS_URL = vscode.Uri.parse(
 	'https://learn.microsoft.com/en-us/microsoft-365-apps/admin-center/overview-cloud-policy'
 );
 const MICROSOFT_365_APPS_ADMIN_URL = vscode.Uri.parse('https://config.office.com');
+const MICROSOFT_INTUNE_ADMIN_URL = vscode.Uri.parse('https://intune.microsoft.com');
+const MICROSOFT_PURVIEW_ADMIN_URL = vscode.Uri.parse('https://purview.microsoft.com');
+const MICROSOFT_GPO_RESULTS_DOCS_URL = vscode.Uri.parse(
+	'https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult'
+);
 
 const STATUS_LABELS: Record<OfficeSecurityStatus, string> = {
 	protected: 'Protégé',
@@ -32,12 +35,25 @@ const STATUS_LABELS: Record<OfficeSecurityStatus, string> = {
 };
 
 const SOURCE_LABELS: Record<OfficeSecuritySource, string> = {
-	machinePolicy: 'Stratégie ordinateur',
-	userPolicy: 'Stratégie utilisateur',
+	machinePolicy: 'Registre de stratégie Windows · ordinateur',
+	userPolicy: 'Registre de stratégie Windows · utilisateur',
 	cloudPolicy: 'Cloud Policy Microsoft 365',
 	userPreference: 'Préférence utilisateur',
 	machinePreference: 'Préférence ordinateur'
 };
+
+const SERVICE_STATUS_LABELS = {
+	detected: 'Détecté localement',
+	notDetected: 'Non détecté',
+	unknown: 'Indéterminé'
+} as const;
+
+const POLICY_DECISION_LABELS = {
+	effective: 'Effective',
+	conflict: 'Conflit',
+	unknown: 'Indéterminée',
+	default: 'Défaut Office'
+} as const;
 
 const LEVEL_LABELS: Record<EnterpriseSecurityReport['level'], string> = {
 	restricted: 'Restreint',
@@ -95,6 +111,30 @@ function renderSettingValue(value: string | number | boolean | null): string {
 	return String(value);
 }
 
+function renderContentBits(value: number | undefined): string {
+	if (value === undefined) {
+		return 'Non déclaré';
+	}
+	const markings = [
+		...(value & 1 ? ['en-tête'] : []),
+		...(value & 2 ? ['pied de page'] : []),
+		...(value & 4 ? ['filigrane'] : []),
+		...(value & 8 ? ['chiffrement déclaré'] : [])
+	];
+	return markings.length > 0 ? `${value} · ${markings.join(', ')}` : String(value);
+}
+
+function renderPurviewSource(source: string): string {
+	switch (source) {
+		case 'labelInfoPart':
+			return 'LabelInfo OPC';
+		case 'labelInfoStream':
+			return 'LabelInfo CFB/IRM';
+		default:
+			return 'Propriétés OOXML historiques';
+	}
+}
+
 function renderReport(report: EnterpriseSecurityReport): string {
 	const { probe } = report;
 	const zone = probe.workbook.zoneStatus === 'unreadable'
@@ -108,9 +148,72 @@ function renderReport(report: EnterpriseSecurityReport): string {
 			: `${ZONE_LABELS[probe.workbook.zoneId] || 'Zone inconnue'} (zone ${
 					probe.workbook.zoneId
 			  })`;
-	const managedCount = probe.office.settings.filter(setting => setting.managed)
-		.length;
-	const labelCount = probe.workbook.sensitivityLabelIds.length;
+	const managedCount =
+		report.policyDecisions.filter(decision => decision.managed).length +
+		(report.findings.find(finding => finding.id === 'trustedLocations')?.managed ? 1 : 0);
+	const labelCount = probe.workbook.sensitivityLabels.length;
+	const serviceCards = report.managementServices
+		.map(
+			service => `
+				<article class="service-card service-${escapeHtml(service.status)}">
+					<div class="rule-heading">
+						<h3>${escapeHtml(service.title)}</h3>
+						<span class="service-status">${escapeHtml(
+							SERVICE_STATUS_LABELS[service.status]
+						)}</span>
+					</div>
+					<p>${escapeHtml(service.detail)}</p>
+					<p class="impact"><strong>Limite :</strong> ${escapeHtml(
+						service.limitation
+					)}</p>
+				</article>`
+		)
+		.join('');
+	const serviceStatus = new Map(
+		report.managementServices.map(service => [service.id, service.status])
+	);
+	const contextualAdminActions = [
+		serviceStatus.get('cloudPolicy') !== 'notDetected'
+			? '<button data-action="openEnterpriseAdmin">Microsoft 365 Apps (admin)</button>'
+			: '',
+		serviceStatus.get('intune') !== 'notDetected' || serviceStatus.get('mdm') !== 'notDetected'
+			? '<button data-action="openIntuneAdmin">Microsoft Intune (admin)</button>'
+			: '',
+		serviceStatus.get('purview') !== 'notDetected'
+			? '<button data-action="openPurviewAdmin">Microsoft Purview (admin)</button>'
+			: '',
+		serviceStatus.get('windowsPolicy') !== 'notDetected'
+			? '<button data-action="openGpoDocs">Diagnostic GPO / gpresult</button>'
+			: ''
+	].filter(Boolean).join('');
+	const policyDecisionRows = report.policyDecisions
+		.map(
+			decision => `
+				<tr>
+					<td><strong>${escapeHtml(decision.title)}</strong><br><code>${escapeHtml(
+						decision.id
+					)}</code></td>
+					<td><span class="decision decision-${escapeHtml(decision.state)}">${escapeHtml(
+						POLICY_DECISION_LABELS[decision.state]
+					)}</span></td>
+					<td>${escapeHtml(
+						decision.value === undefined
+							? 'Défaut ou valeur indéterminée'
+							: renderSettingValue(decision.value)
+					)}</td>
+					<td>${escapeHtml(decision.source)}</td>
+					<td>${
+						decision.managed
+							? '<span class="managed-badge">Verrouillé</span>'
+							: 'Non géré'
+					}${
+						decision.shadowedEvidenceCount > 0
+							? `<br><span>${decision.shadowedEvidenceCount} preuve(s) remplacée(s)</span>`
+							: ''
+					}</td>
+				</tr>`
+		)
+		.join('');
 	const findingRows = report.findings
 		.map(
 			finding => `
@@ -127,7 +230,7 @@ function renderReport(report: EnterpriseSecurityReport): string {
 						<span>${escapeHtml(finding.source)}</span>
 						${
 							finding.managed
-								? '<span class="managed-badge">Verrouillé par l’organisation</span>'
+								? '<span class="managed-badge">Valeur issue d’un magasin de stratégie</span>'
 								: ''
 						}
 					</div>
@@ -171,6 +274,7 @@ function renderReport(report: EnterpriseSecurityReport): string {
 				<tr>
 					<td><code>${escapeHtml(location.path)}</code></td>
 					<td>${location.allowSubfolders ? 'Oui' : 'Non'}</td>
+					<td>${escapeHtml(location.registryView ? `${location.registryView} bits` : 'Toutes')}</td>
 					<td>${escapeHtml(renderSource(location.source))}${
 						location.managed
 							? '<br><span class="managed-badge">Géré</span>'
@@ -181,10 +285,31 @@ function renderReport(report: EnterpriseSecurityReport): string {
 		.join('');
 	const sensitivityLabels =
 		labelCount > 0
-			? `<ul>${probe.workbook.sensitivityLabelIds
-					.map(label => `<li><code>${escapeHtml(label)}</code></li>`)
-					.join('')}</ul>`
-			: '<p class="empty">Aucune métadonnée d’étiquette Microsoft Purview lisible.</p>';
+			? `<div class="table-wrap"><table>
+				<thead><tr><th>Nom technique enregistré</th><th>Identifiants déclarés</th><th>Application déclarée</th><th>Marquages</th><th>Provenance</th></tr></thead>
+				<tbody>${probe.workbook.sensitivityLabels
+					.map(
+						label => `<tr>
+							<td>${escapeHtml(label.name || 'Non enregistré')}</td>
+							<td><code>${escapeHtml(label.id)}</code>${
+								label.siteId
+									? `<br><span>Tenant déclaré</span><br><code>${escapeHtml(label.siteId)}</code>`
+									: ''
+							}</td>
+							<td>${escapeHtml(label.method || 'Non enregistrée')}${
+								label.setDate
+									? `<br><span>${escapeHtml(label.setDate)}</span>`
+									: ''
+							}</td>
+							<td>${escapeHtml(renderContentBits(label.contentBits))}</td>
+							<td>${escapeHtml(renderPurviewSource(label.source))}<br><span>Déclaration locale non authentifiée</span></td>
+						</tr>`
+					)
+					.join('')}</tbody>
+			</table></div>`
+			: probe.workbook.sensitivityMetadataStatus === 'unknown'
+				? '<p class="empty">Métadonnées de sensibilité ambiguës, illisibles ou non prises en charge. Aucun niveau n’est inventé.</p>'
+				: '<p class="empty">Aucune déclaration locale structurée d’étiquette Microsoft Purview applicable.</p>';
 
 	return `
 		<section class="hero level-${escapeHtml(report.level)}">
@@ -226,9 +351,14 @@ function renderReport(report: EnterpriseSecurityReport): string {
 							? 'Non détectée'
 							: 'À confirmer'
 				)}</strong></div>
-				<div role="listitem"><span>Chiffrement Office</span><strong>${probe.workbook.officePackageEncrypted ? 'Actif' : 'Non détecté'}</strong></div>
+				<div role="listitem"><span>Protection Office</span><strong>${probe.workbook.irmProtected ? 'IRM / droits détectés' : probe.workbook.officePackageEncrypted ? 'Chiffrement détecté' : 'Non détectée'}</strong></div>
 				<div role="listitem"><span>Chiffrement EFS</span><strong>${probe.workbook.efsEncrypted ? 'Actif' : 'Non détecté'}</strong></div>
 				<div role="listitem"><span>Attribut lecture seule</span><strong>${probe.workbook.readOnly ? 'Actif' : 'Non'}</strong></div>
+				<div role="listitem"><span>Architecture Office</span><strong>${escapeHtml(
+					probe.office.architecture === 'unknown'
+						? 'Non déterminée'
+						: probe.office.architecture
+				)}</strong></div>
 				<div role="listitem"><span>SHA-256 inspecté</span><strong><code>${escapeHtml(probe.workbook.sha256)}</code></strong></div>
 			</div>
 		</section>
@@ -241,12 +371,19 @@ function renderReport(report: EnterpriseSecurityReport): string {
 		<div class="toolbar" role="toolbar" aria-label="Actions du Centre de sécurité">
 			<button class="primary" data-action="refresh">Actualiser</button>
 			<button data-action="copyReport">Copier le rapport</button>
-			<button data-action="openExcelSecurity">Ouvrir le classeur dans Excel</button>
 			<button data-action="openExtensionSettings">Réglages de l’extension</button>
-			<button data-action="openEnterpriseAdmin">Portail entreprise Microsoft 365 (admin)</button>
+			${contextualAdminActions}
 			<button data-action="openAdminDocs">Documentation administrateur</button>
 		</div>
-		<p class="admin-note">Le portail nécessite un compte disposant d’un rôle administrateur autorisé. L’extension n’obtient aucun droit supplémentaire et ne modifie aucune règle.</p>
+		<p class="admin-note">Le portail nécessite un compte disposant d’un rôle administrateur autorisé. L’extension n’obtient aucun droit supplémentaire et ne modifie aucune règle. Pour consulter le Centre de gestion de la confidentialité d’Excel, ouvrez Excel séparément sans charger ce classeur.</p>
+
+		<section>
+			<div class="section-heading">
+				<div><p class="eyebrow">Attribution prudente</p><h2>Services et canaux de gestion</h2></div>
+				<span>Un signal Intune ne prouve pas l’origine d’une règle Office</span>
+			</div>
+			<div class="service-grid">${serviceCards}</div>
+		</section>
 
 		<section>
 			<div class="section-heading">
@@ -278,6 +415,13 @@ function renderReport(report: EnterpriseSecurityReport): string {
 							: 'Aucune Cloud Policy détectée'
 				}</span>
 			</div>
+			<h3>Décisions effectives selon la priorité Cloud Policy &gt; stratégie Windows &gt; préférence locale</h3>
+			<p class="section-intro">Une valeur du registre de stratégie Windows peut avoir été livrée par GPO, Intune/MDM, Configuration Manager ou un script. Le Centre n’invente pas ce canal.</p>
+			<div class="table-wrap"><table>
+				<thead><tr><th>Contrôle</th><th>Résolution</th><th>Valeur</th><th>Source effective</th><th>Gestion</th></tr></thead>
+				<tbody>${policyDecisionRows}</tbody>
+			</table></div>
+			<details class="raw-evidence"><summary>Afficher toutes les preuves registre observées</summary>
 			${
 				settingRows
 					? `<div class="table-wrap"><table>
@@ -286,6 +430,7 @@ function renderReport(report: EnterpriseSecurityReport): string {
 					</table></div>`
 					: '<p class="empty">Aucun réglage Office explicite n’a été trouvé dans les emplacements inspectés.</p>'
 			}
+			</details>
 		</section>
 
 		<section>
@@ -295,7 +440,7 @@ function renderReport(report: EnterpriseSecurityReport): string {
 			${
 				trustedLocationRows
 					? `<div class="table-wrap"><table>
-						<thead><tr><th>Chemin</th><th>Sous-dossiers</th><th>Source</th></tr></thead>
+						<thead><tr><th>Chemin</th><th>Sous-dossiers</th><th>Vue registre</th><th>Source</th></tr></thead>
 						<tbody>${trustedLocationRows}</tbody>
 					</table></div>`
 					: '<p class="empty">Aucun emplacement approuvé explicite n’a été détecté.</p>'
@@ -305,6 +450,7 @@ function renderReport(report: EnterpriseSecurityReport): string {
 		<section>
 			<p class="eyebrow">Classification</p>
 			<h2>Étiquettes Microsoft Purview</h2>
+			<p class="section-intro">Le Centre valide la structure locale de LabelInfo OPC ou des propriétés OOXML historiques. Il ne résout pas le nom affiché actuel, le rang de confidentialité ni l’authenticité du tenant.</p>
 			${sensitivityLabels}
 		</section>
 
@@ -324,8 +470,7 @@ export class SecurityCenterPanel implements vscode.Disposable {
 	constructor(
 		context: vscode.ExtensionContext,
 		private readonly service: OfficeSecurityService,
-		private readonly outputChannel: vscode.OutputChannel,
-		private readonly openExcelCallback: OpenExcelCallback
+		private readonly outputChannel: vscode.OutputChannel
 	) {
 		const packageJson = context.extension.packageJSON as {
 			publisher?: unknown;
@@ -470,27 +615,6 @@ export class SecurityCenterPanel implements vscode.Disposable {
 					'Le rapport de sécurité a été copié.'
 				);
 				return;
-			case 'openExcelSecurity':
-				if (!this.workbookUri) {
-					return;
-				}
-				try {
-					const opened = await this.openExcelCallback(this.workbookUri);
-					if (opened) {
-						void vscode.window.showInformationMessage(
-							'Dans Excel : Développeur > Sécurité des macros. Les options gérées par l’organisation restent verrouillées.'
-						);
-					}
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					this.outputChannel.appendLine(
-						`[security] Ouverture d’Excel impossible : ${message}`
-					);
-					void vscode.window.showErrorMessage(
-						`Ouverture d’Excel impossible : ${message}`
-					);
-				}
-				return;
 			case 'openExtensionSettings':
 				await vscode.commands.executeCommand(
 					'workbench.action.openSettings',
@@ -500,6 +624,21 @@ export class SecurityCenterPanel implements vscode.Disposable {
 			case 'openEnterpriseAdmin':
 				if (!(await vscode.env.openExternal(MICROSOFT_365_APPS_ADMIN_URL))) {
 					throw new Error('Le portail Microsoft 365 Apps n’a pas pu être ouvert.');
+				}
+				return;
+			case 'openIntuneAdmin':
+				if (!(await vscode.env.openExternal(MICROSOFT_INTUNE_ADMIN_URL))) {
+					throw new Error('Le portail Microsoft Intune n’a pas pu être ouvert.');
+				}
+				return;
+			case 'openPurviewAdmin':
+				if (!(await vscode.env.openExternal(MICROSOFT_PURVIEW_ADMIN_URL))) {
+					throw new Error('Le portail Microsoft Purview n’a pas pu être ouvert.');
+				}
+				return;
+			case 'openGpoDocs':
+				if (!(await vscode.env.openExternal(MICROSOFT_GPO_RESULTS_DOCS_URL))) {
+					throw new Error('La documentation de diagnostic GPO n’a pas pu être ouverte.');
 				}
 				return;
 			case 'openAdminDocs':
@@ -528,7 +667,7 @@ export class SecurityCenterPanel implements vscode.Disposable {
 		main{width:min(1180px,calc(100% - 40px));margin:0 auto;padding:28px 0 54px}
 		h1,h2,h3,p{margin-top:0} h1{font-size:30px;line-height:1.15;margin-bottom:8px} h2{font-size:20px;margin-bottom:12px} h3{font-size:15px;margin-bottom:0}
 		section{margin:0 0 28px}.eyebrow{margin:0 0 4px;text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:700;color:var(--vscode-descriptionForeground)}
-		.hero,.workbook-card,.notice,.rule-card,.error-card{border:1px solid var(--vscode-panel-border);border-radius:10px;background:var(--vscode-sideBar-background)}
+		.hero,.workbook-card,.notice,.rule-card,.service-card,.error-card{border:1px solid var(--vscode-panel-border);border-radius:10px;background:var(--vscode-sideBar-background)}
 		.hero{display:flex;align-items:center;justify-content:space-between;padding:24px;border-left-width:6px}.hero.level-restricted{border-left-color:var(--vscode-testing-iconFailed,#d13438)}.hero.level-managed{border-left-color:var(--vscode-editorInfo-foreground,#0078d4)}.hero.level-standard{border-left-color:var(--vscode-testing-iconPassed,#16825d)}.hero.level-unknown{border-left-color:var(--vscode-editorWarning-foreground,#bf8803)}
 		.summary{color:var(--vscode-descriptionForeground);margin:0}.level-mark{display:grid;place-items:center;flex:0 0 52px;height:52px;margin-left:18px;border:2px solid currentColor;border-radius:50%;font-size:24px;font-weight:800}
 		.workbook-card{padding:20px}.path{font-family:var(--vscode-editor-font-family);word-break:break-all;color:var(--vscode-descriptionForeground)}
@@ -537,12 +676,12 @@ export class SecurityCenterPanel implements vscode.Disposable {
 		.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:32px;position:sticky;top:0;z-index:2;padding:10px 0;background:var(--vscode-editor-background)}
 		button{appearance:none;border:1px solid var(--vscode-button-border,transparent);border-radius:4px;padding:7px 12px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);font:inherit;cursor:pointer}button:hover{background:var(--vscode-button-secondaryHoverBackground)}button:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}button.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button.primary:hover{background:var(--vscode-button-hoverBackground)}
 		.section-heading,.rule-heading,.source-line{display:flex;align-items:center;justify-content:space-between;gap:12px}.section-heading>span,.source-line{color:var(--vscode-descriptionForeground);font-size:12px}
-		.rule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.rule-card{padding:16px}.rule-card p{margin:10px 0}.rule-card .impact{font-size:12px;color:var(--vscode-descriptionForeground)}
-		.status,.managed-badge{display:inline-flex;align-items:center;width:max-content;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700;white-space:nowrap}.status-protected,.status-allowed{color:var(--vscode-testing-iconPassed,#16825d);background:color-mix(in srgb,var(--vscode-testing-iconPassed,#16825d) 14%,transparent)}.status-blocked{color:var(--vscode-testing-iconFailed,#d13438);background:color-mix(in srgb,var(--vscode-testing-iconFailed,#d13438) 14%,transparent)}.status-managed{color:var(--vscode-editorInfo-foreground,#0078d4);background:color-mix(in srgb,var(--vscode-editorInfo-foreground,#0078d4) 14%,transparent)}.status-prompt,.status-warning,.status-unknown{color:var(--vscode-editorWarning-foreground,#bf8803);background:color-mix(in srgb,var(--vscode-editorWarning-foreground,#bf8803) 14%,transparent)}.status-notApplicable{color:var(--vscode-descriptionForeground);background:var(--vscode-badge-background)}.managed-badge{color:var(--vscode-badge-foreground);background:var(--vscode-badge-background)}
+		.rule-grid,.service-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.rule-card,.service-card{padding:16px}.rule-card p,.service-card p{margin:10px 0}.rule-card .impact,.service-card .impact{font-size:12px;color:var(--vscode-descriptionForeground)}.service-card{border-left-width:4px}.service-detected{border-left-color:var(--vscode-editorInfo-foreground,#0078d4)}.service-notDetected{border-left-color:var(--vscode-panel-border)}.service-unknown{border-left-color:var(--vscode-editorWarning-foreground,#bf8803)}.service-status{font-size:11px;font-weight:700;color:var(--vscode-descriptionForeground)}
+		.status,.managed-badge,.decision{display:inline-flex;align-items:center;width:max-content;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700;white-space:nowrap}.status-protected,.status-allowed,.decision-effective{color:var(--vscode-testing-iconPassed,#16825d);background:color-mix(in srgb,var(--vscode-testing-iconPassed,#16825d) 14%,transparent)}.status-blocked{color:var(--vscode-testing-iconFailed,#d13438);background:color-mix(in srgb,var(--vscode-testing-iconFailed,#d13438) 14%,transparent)}.status-managed{color:var(--vscode-editorInfo-foreground,#0078d4);background:color-mix(in srgb,var(--vscode-editorInfo-foreground,#0078d4) 14%,transparent)}.status-prompt,.status-warning,.status-unknown,.decision-conflict,.decision-unknown{color:var(--vscode-editorWarning-foreground,#bf8803);background:color-mix(in srgb,var(--vscode-editorWarning-foreground,#bf8803) 14%,transparent)}.status-notApplicable,.decision-default{color:var(--vscode-descriptionForeground);background:var(--vscode-badge-background)}.managed-badge{color:var(--vscode-badge-foreground);background:var(--vscode-badge-background)}
 		.table-wrap{overflow:auto;border:1px solid var(--vscode-panel-border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:680px}th,td{padding:10px 12px;border-bottom:1px solid var(--vscode-panel-border);text-align:left;vertical-align:top}th{position:sticky;top:0;background:var(--vscode-sideBarSectionHeader-background);font-size:12px}tr:last-child td{border-bottom:0}code{font-family:var(--vscode-editor-font-family);font-size:12px;word-break:break-all}details summary{cursor:pointer;color:var(--vscode-textLink-foreground)}
-		.section-intro,.admin-note,.empty,footer{color:var(--vscode-descriptionForeground)}.admin-note{margin:-22px 0 32px;font-size:12px}.empty{padding:16px;border:1px dashed var(--vscode-panel-border);border-radius:8px}footer{border-top:1px solid var(--vscode-panel-border);padding-top:18px;font-size:12px}
+		.section-intro,.admin-note,.empty,footer{color:var(--vscode-descriptionForeground)}.admin-note{margin:-22px 0 32px;font-size:12px}.empty{padding:16px;border:1px dashed var(--vscode-panel-border);border-radius:8px}.raw-evidence{margin-top:14px}.raw-evidence>summary{cursor:pointer;color:var(--vscode-textLink-foreground);margin-bottom:10px}footer{border-top:1px solid var(--vscode-panel-border);padding-top:18px;font-size:12px}
 		.loading,.error-card{max-width:620px;margin:15vh auto;padding:28px;text-align:center}.spinner{width:34px;height:34px;margin:0 auto 18px;border:3px solid var(--vscode-panel-border);border-top-color:var(--vscode-progressBar-background);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-		@media (max-width:760px){main{width:min(calc(100% - 24px),1180px)}.facts,.rule-grid{grid-template-columns:1fr}.section-heading,.source-line{align-items:flex-start;flex-direction:column}.hero{align-items:flex-start}.level-mark{flex-basis:42px;height:42px;font-size:19px}}
+		@media (max-width:760px){main{width:min(calc(100% - 24px),1180px)}.facts,.rule-grid,.service-grid{grid-template-columns:1fr}.section-heading,.source-line{align-items:flex-start;flex-direction:column}.hero{align-items:flex-start}.level-mark{flex-basis:42px;height:42px;font-size:19px}}
 		@media (prefers-reduced-motion:reduce){.spinner{animation:none}}
 	</style>
 </head>
@@ -554,9 +693,11 @@ export class SecurityCenterPanel implements vscode.Disposable {
 			const allowedActions = new Set([
 				'refresh',
 				'copyReport',
-				'openExcelSecurity',
 				'openExtensionSettings',
 				'openEnterpriseAdmin',
+				'openIntuneAdmin',
+				'openPurviewAdmin',
+				'openGpoDocs',
 				'openAdminDocs'
 			]);
 			document.addEventListener('click', event => {

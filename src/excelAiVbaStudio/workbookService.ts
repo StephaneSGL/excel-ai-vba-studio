@@ -334,8 +334,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		this.securityCenterPanel = new SecurityCenterPanel(
 			this.extensionContext,
 			this.officeSecurityService,
-			this.outputChannel,
-			workbookUri => this.openExcel(workbookUri, false)
+			this.outputChannel
 		);
 	}
 
