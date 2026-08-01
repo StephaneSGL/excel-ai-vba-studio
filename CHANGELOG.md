@@ -19,6 +19,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 - Clarified the noncommercial community-use rights and the separate commercial-license boundary without changing the PolyForm Noncommercial 1.0.0 terms.
 - Removed obsolete upstream translations that described a different extension, unsupported features, and telemetry that this project does not collect.
+- Removed the dormant Vditor and PDF asset trees plus inactive Markdown, Java-decompiler, and web-extension provider/service entry points that were neither built nor included in the Excel-only VSIX.
 - Excluded local package-output directories consistently from Git.
 - Replaced the unsupported Marketplace `--oidc` invocation with a verified VSIX artifact; automatic publication remains intentionally disabled until a Microsoft Entra workload identity is configured for the publisher.
 - Moved bounded OOXML metadata inflation off the extension-host event loop. Virtual writes intentionally retain a final snapshot read because `workspace.fs` does not expose a conditional compare-and-swap write.
@@ -35,6 +36,10 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - A Windows policy-registry value is never attributed to GPO or Intune from enrollment presence alone, and local Purview metadata is never treated as authenticated tenant policy or proof of encryption.
 - The Center never opens the inspected workbook, rejects malformed policy value types, bounds Mark-of-the-Web and enrollment reads, and reports unreadable higher-priority policy stores as unknown instead of falling back to a weaker preference.
 - Every workbook mutation path now resolves OOXML package signatures through OPC origin/signature relationships and effective Content Types, including arbitrary valid part URIs; malformed, orphaned, external, unreadable, or otherwise ambiguous signature state fails closed.
+- Restored native TLS certificate verification in the HTTP client. Custom AI endpoints now require HTTPS except for loopback development services, reject embedded credentials and API keys in URLs, refuse redirects, and keep provider keys in request headers.
+- Bounded HTTP response bodies and streaming buffers, replaced exponential XML/CSS comment regexes with a linear scanner, and removed quadratic XML-format traversal.
+- Restricted webview event dispatch, icon URLs, OOXML relationship namespaces, and generated CSS font strings to validated structures instead of dynamic or partially escaped values.
+- Made Mark-of-the-Web reads compatible with Windows PowerShell 5.1 while retaining a 64 KiB byte cap; registry subkey enumeration is now natively bounded before materialization, and LabelInfo assignment methods follow the specification's case-sensitive values and tombstone semantics.
 
 ### Tests
 
@@ -42,6 +47,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Added regressions for invalid and ambiguous Mark-of-the-Web streams, macro-capable containers with inconclusive inventories, built-in Excel Trusted Locations, deep compound-file hierarchies, and Linux-safe package-signature validation.
 - Added an executable signed-package regression covering XLSX/XLSM grid writes, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX without running a macro.
 - Retained the virtual-provider race regression that changes an unsigned package to a signed package between inspection and the final pre-write read.
+- Added CodeQL-focused regressions for hostile API URLs, TLS settings, oversized and unterminated HTTP streams, webview icon sources, event dispatch, OOXML namespace confusion, CSS escaping, linear XML/CSS comment removal, repeated PowerShell bootstrap, bounded ADS reads, and LabelInfo edge cases.
 
 ## [0.5.1] - 2026-07-28
 

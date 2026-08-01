@@ -77,6 +77,7 @@ for (const token of [
   'Allow User Locations',
   'Software\\Policies\\Microsoft\\Cloud\\Office\\16.0',
   'MaxTrustedLocations = 64',
+  'MaxZoneIdentifierBytes = 65536',
   'MaxOutputBytes = 262144',
   'MaxWorkbookBytes = 536870912',
   'zoneStatus',
@@ -126,7 +127,14 @@ for (const token of [
   assert.ok(probe.includes(token), `probe is missing expected token: ${token}`);
 }
 
-assert.match(probe, /Get-Content[\s\S]+-Stream\s+'Zone\.Identifier'/, 'MOTW must be read as an alternate stream');
+assert.match(probe, /\$streamPath\s*=\s*'\{0\}:Zone\.Identifier'\s+-f\s+\$Path/, 'MOTW must be opened as an alternate data stream');
+assert.match(
+  probe,
+  /BoundedAlternateDataStreamReader[\s\S]+while \(\(read = stream\.Read[\s\S]{0,240}total > maximumBytes/,
+  'MOTW reads must enforce a streaming byte cap compatible with Windows PowerShell 5.1',
+);
+assert.match(probe, /CreateFile\([\s\S]+OpenExisting/, 'MOTW must use the native Windows ADS path rather than an unsupported FileStream path');
+assert.doesNotMatch(probe, /Get-Content[\s\S]{0,160}-Stream\s+'Zone\.Identifier'/, 'MOTW must not rely on Get-Content dynamic stream parameters');
 assert.doesNotMatch(probe, /HostUrl|ReferrerUrl/i, 'MOTW URLs must never be returned');
 assert.match(probe, /DtdProcessing\s*=\s*\[Xml\.DtdProcessing\]::Prohibit/, 'custom XML must prohibit DTD processing');
 assert.match(
@@ -140,16 +148,19 @@ assert.match(
   'CFB hierarchy reconstruction must fail closed on depth or path growth',
 );
 assert.doesNotMatch(probe, /GetValueNames\s*\(/, 'registry reads must not enumerate arbitrary value names');
-const subKeyEnumerationLines = probe
-  .split(/\r?\n/)
-  .filter(line => /\.GetSubKeyNames\s*\(\s*\)/.test(line));
-assert.equal(subKeyEnumerationLines.length, 3, 'only the bounded MDM and trusted-location containers may enumerate subkeys');
-for (const line of subKeyEnumerationLines) {
-  assert.match(line, /\$(?:enrollmentsKey|accountsKey|locationsKey)\.GetSubKeyNames/, 'subkey enumeration must stay on an allowlisted registry container');
-}
-assert.match(probe, /\$enrollmentNames\.Count\s+-gt\s+64/, 'MDM enrollment enumeration must be capped at 64');
-assert.match(probe, /\$accountNames\.Count\s+-gt\s+64/, 'MDM account enumeration must be capped at 64');
-assert.match(probe, /\$locationsKey\.SubKeyCount\s+-gt\s+256/, 'trusted-location registry enumeration must have a pre-enumeration cap');
+assert.doesNotMatch(probe, /\.GetSubKeyNames\s*\(/, 'registry subkeys must not be materialized by an unbounded managed API');
+assert.match(probe, /RegEnumKeyEx/, 'registry subkeys must use the bounded native enumerator');
+assert.match(
+  probe,
+  /if \(\$null -eq \('ExcelAiVbaStudio\.Security\.BoundedAlternateDataStreamReader' -as \[type\]\)\)[\s\S]{0,100}Add-Type -TypeDefinition/,
+  'native helper types must not be redefined when the script is loaded repeatedly in one PowerShell host',
+);
+assert.match(probe, /names\.Count\s*>=\s*maximumNames[\s\S]{0,180}throw/, 'the native registry enumerator must fail before exceeding its cap');
+assert.match(probe, /\[string\[\]\]\$enrollmentNames\s*=\s*@\(\)/, 'MDM enrollment names must always be an array under StrictMode');
+assert.match(probe, /\[string\[\]\]\$accountNames\s*=\s*@\(\)/, 'MDM account names must always be an array under StrictMode');
+assert.match(probe, /Get-BoundedRegistrySubKeyNames\s+\$enrollmentsKey\s+64/, 'MDM enrollment enumeration must be capped at 64');
+assert.match(probe, /Get-BoundedRegistrySubKeyNames\s+\$accountsKey\s+64/, 'MDM account enumeration must be capped at 64');
+assert.match(probe, /Get-BoundedRegistrySubKeyNames\s+\$locationsKey\s+256/, 'trusted-location registry enumeration must be capped before filtering');
 assert.match(probe, /\^Location\(\?:0\|\[1-9\]\[0-9\]\{0,8\}\)\$/, 'trusted locations must accept only explicitly numbered Location keys');
 assert.match(probe, /\$locationNames\.Count\s+-gt\s+\$script:MaxTrustedLocations/, 'trusted-location results must be capped');
 assert.match(probe, /\[Environment\]::ExpandEnvironmentVariables\(\$rawLocationPath\)/, 'trusted-location environment variables must be expanded before path matching');
@@ -160,6 +171,8 @@ assert.doesNotMatch(probe, /FileShare\][^\r\n]*Delete|FileShare\]::Delete/, 'wor
 assert.doesNotMatch(probe, /HKLM[^\r\n]+Microsoft\\Cloud\\Office\\16\.0/, 'Cloud Policy security detection must not use HKLM Cloud Update keys');
 assert.match(probe, /enabledV2Present[\s\S]+enabledV2/, 'Purview detection must version EnabledV2 separately');
 assert.match(probe, /\$enabledState\s*=\s*if \(\[bool\]\$item\.enabledV2Present\)/, 'EnabledV2 must take precedence over the legacy Enabled value');
+assert.match(probe, /-not \[bool\]\$removed\s+-and\s+\$method\s+-cnotin\s+@\('Standard', 'Privileged'\)/, 'LabelInfo method values must be validated with exact case');
+assert.match(probe, /\[bool\]\$removed\s+-and\s+\$method\.Length\s+-ne\s+0/, 'a LabelInfo tombstone must have the empty method required by the specification');
 assert.match(probe, /propertyName -ieq 'Sensitivity'/, 'legacy Purview metadata must corroborate the active label with Sensitivity');
 assert.match(probe, /GetValueKind\(\$Name\)/, 'registry evidence must retain its native value kind');
 assert.ok(
@@ -794,6 +807,25 @@ if (process.platform === 'win32') {
     const powershell = process.env.SystemRoot
       ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
       : 'powershell.exe';
+    const nativeBootstrapStart = probe.indexOf('Add-Type -AssemblyName System.IO.Compression.FileSystem');
+    const nativeBootstrapEnd = probe.indexOf('$script:MaxOutputBytes');
+    assert.ok(nativeBootstrapStart >= 0 && nativeBootstrapEnd > nativeBootstrapStart, 'native helper bootstrap must be extractable');
+    const nativeBootstrap = probe.slice(nativeBootstrapStart, nativeBootstrapEnd);
+    const repeatedBootstrap = await execFileAsync(
+      powershell,
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        `$ErrorActionPreference = 'Stop'\n${nativeBootstrap}\n${nativeBootstrap}\n[Console]::Out.Write('native-bootstrap-ok')`,
+      ],
+      { windowsHide: true, maxBuffer: 64 * 1024 },
+    );
+    assert.equal(repeatedBootstrap.stderr.trim(), '', 'native helper bootstrap must not emit diagnostics under Windows PowerShell 5.1');
+    assert.equal(repeatedBootstrap.stdout.trim(), 'native-bootstrap-ok', 'native helper bootstrap must be repeat-safe in one PowerShell 5.1 host');
     const inspectWorkbook = async targetPath => {
       const execution = await execFileAsync(
         powershell,
@@ -1045,6 +1077,41 @@ if (process.platform === 'win32') {
       'a LabelInfo tombstone must suppress stale legacy metadata for the same tenant',
     );
 
+    const wrongCaseMethodPath = await writePurviewOpc('labelinfo-wrong-method-case.xlsx', {
+      labelInfoXml:
+        '<labelList xmlns="http://schemas.microsoft.com/office/2020/mipLabelMetadata">' +
+        `<label id="${modernLabelId}" enabled="true" method="standard" siteId="${siteId}" removed="false"/>` +
+        '</labelList>',
+      customXml: undefined,
+    });
+    const wrongCaseMethodResult = await inspectWorkbook(wrongCaseMethodPath);
+    assert.equal(
+      wrongCaseMethodResult.workbook.sensitivityMetadataStatus,
+      'unknown',
+      'LabelInfo method values are case-sensitive and lowercase standard must fail closed',
+    );
+    assert.equal(wrongCaseMethodResult.workbook.sensitivityMetadataSource, 'ambiguous');
+
+    const contradictoryTombstonePath = await writePurviewOpc('labelinfo-enabled-tombstone.xlsx', {
+      labelInfoXml:
+        '<labelList xmlns="http://schemas.microsoft.com/office/2020/mipLabelMetadata">' +
+        `<label id="${tombstoneId}" enabled="true" method="" siteId="${siteId}" removed="true"/>` +
+        '</labelList>',
+      customXml: legacyCustomXml({ id: legacyShadowedId, tenantId: siteId }),
+    });
+    const contradictoryTombstoneResult = await inspectWorkbook(contradictoryTombstonePath);
+    assert.equal(
+      contradictoryTombstoneResult.workbook.sensitivityMetadataStatus,
+      'absent',
+      'removed=true remains a tombstone even when enabled=true violates only the specification recommendation',
+    );
+    assert.equal(contradictoryTombstoneResult.workbook.sensitivityMetadataSource, 'labelInfoPart');
+    assert.deepEqual(
+      contradictoryTombstoneResult.workbook.sensitivityLabelIds,
+      [],
+      'removed=true must take precedence and suppress stale legacy metadata for that tenant',
+    );
+
     const enabledV2Id = 'd8f11135-857d-4128-aafe-79115d26be2d';
     const enabledV2TruePath = await writePurviewOpc('enabled-v2-true.xlsx', {
       labelInfoXml: undefined,
@@ -1230,6 +1297,11 @@ if (process.platform === 'win32') {
     const duplicateZoneResult = await inspectWorkbook(workbookPath);
     assert.equal(duplicateZoneResult.workbook.zoneStatus, 'unreadable');
     assert.equal(duplicateZoneResult.workbook.zoneId, null, 'ambiguous ZoneTransfer sections must fail closed');
+
+    await writeFile(`${workbookPath}:Zone.Identifier`, Buffer.alloc(65537, 0x41));
+    const oversizedZoneResult = await inspectWorkbook(workbookPath);
+    assert.equal(oversizedZoneResult.workbook.zoneStatus, 'unreadable');
+    assert.equal(oversizedZoneResult.workbook.zoneId, null, 'MOTW larger than 64 KiB must be rejected by the bounded native reader');
 
     const signedPath = path.join(temporaryDirectory, 'synthetic-signed.xlsm');
     const signedZip = new JSZip();

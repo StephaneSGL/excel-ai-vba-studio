@@ -19,6 +19,34 @@ export class PrettyData {
     }
 
     /**
+     * Remove complete delimited comments without a backtracking regular expression.
+     * An unterminated comment is preserved so malformed input is not silently lost.
+     */
+    private stripDelimitedComments(text: string, opening: string, closing: string): string {
+        const fragments: string[] = [];
+        let cursor = 0;
+
+        while (cursor < text.length) {
+            const commentStart = text.indexOf(opening, cursor);
+            if (commentStart === -1) {
+                fragments.push(text.slice(cursor));
+                break;
+            }
+
+            fragments.push(text.slice(cursor, commentStart));
+            const commentEnd = text.indexOf(closing, commentStart + opening.length);
+            if (commentEnd === -1) {
+                fragments.push(text.slice(commentStart));
+                break;
+            }
+
+            cursor = commentEnd + closing.length;
+        }
+
+        return fragments.join('');
+    }
+
+    /**
      * Pretty print XML
      * @param text XML string to beautify
      */
@@ -33,33 +61,35 @@ export class PrettyData {
         let deep = 0;
         let str = '';
 
-        for (const line of ar) {
+        for (let index = 0; index < ar.length; index++) {
+            const line = ar[index];
+            const previousLine = ar[index - 1];
             // start comment or <![CDATA[...]]> or <!DOCTYPE
-            if (line.search(/<!/) > -1) {
+            if (line.includes('<!')) {
                 str += this.shift[deep] + line;
                 inComment = true;
                 // end comment or <![CDATA[...]]>
-                if (line.search(/-->/) > -1 || line.search(/\]>/) > -1 || line.search(/!DOCTYPE/) > -1) {
+                if (line.includes('-->') || line.includes(']>') || line.includes('!DOCTYPE')) {
                     inComment = false;
                 }
-            } else if (line.search(/-->/) > -1 || line.search(/\]>/) > -1) {
+            } else if (line.includes('-->') || line.includes(']>')) {
                 str += line;
                 inComment = false;
-            } else if (/^<\w/.test(ar[ar.indexOf(line) - 1]) && /^<\/\w/.test(line) &&
-                /^<[\w:\-\.\,]+/.exec(ar[ar.indexOf(line) - 1])?.[0] === /^<\/[\w:\-\.\,]+/.exec(line)?.[0].replace('/', '')) {
+            } else if (/^<\w/.test(previousLine) && /^<\/\w/.test(line) &&
+                /^<[\w:\-\.\,]+/.exec(previousLine)?.[0] === /^<\/[\w:\-\.\,]+/.exec(line)?.[0].replace('/', '')) {
                 str += line;
                 if (!inComment) deep--;
-            } else if (line.search(/<\w/) > -1 && line.search(/<\//) === -1 && line.search(/\/>/) === -1) {
+            } else if (line.search(/<\w/) > -1 && !line.includes('</') && !line.includes('/>')) {
                 str = !inComment ? str += this.shift[deep++] + line : str += line;
-            } else if (line.search(/<\w/) > -1 && line.search(/<\//) > -1) {
+            } else if (line.search(/<\w/) > -1 && line.includes('</')) {
                 str = !inComment ? str += this.shift[deep] + line : str += line;
-            } else if (line.search(/<\//) > -1) {
+            } else if (line.includes('</')) {
                 str = !inComment ? str += this.shift[--deep] + line : str += line;
-            } else if (line.search(/\/>/) > -1) {
+            } else if (line.includes('/>')) {
                 str = !inComment ? str += this.shift[deep] + line : str += line;
-            } else if (line.search(/<\?/) > -1) {
+            } else if (line.includes('<?')) {
                 str += this.shift[deep] + line;
-            } else if (line.search(/xmlns\:/) > -1 || line.search(/xmlns\=/) > -1) {
+            } else if (line.includes('xmlns:') || line.includes('xmlns=')) {
                 str += this.shift[deep] + line;
             } else {
                 str += line;
@@ -219,7 +249,7 @@ export class PrettyData {
      */
     xmlmin(text: string, preserveComments?: boolean): string {
         const str = preserveComments ? text
-            : text.replace(/\<![ \r\n\t]*(--([^\-]|[\r\n]|-[^\-])*--[ \r\n\t]*)\>/g, "");
+            : this.stripDelimitedComments(text, '<!--', '-->');
         return str.replace(/>\s{0,}</g, "><");
     }
 
@@ -251,7 +281,7 @@ export class PrettyData {
      */
     cssmin(text: string, preserveComments?: boolean): string {
         const str = preserveComments ? text
-            : text.replace(/\/\*([^*]|[\r\n]|(\*+([^*/]|[\r\n])))*\*+\//g, "");
+            : this.stripDelimitedComments(text, '/*', '*/');
         return str.replace(/\s{1,}/g, ' ')
             .replace(/\{\s{1,}/g, "{")
             .replace(/\}\s{1,}/g, "}")
@@ -272,4 +302,4 @@ export class PrettyData {
 }
 
 // Export a singleton instance
-export const pd = new PrettyData(); 
+export const pd = new PrettyData();

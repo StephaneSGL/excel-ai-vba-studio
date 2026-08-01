@@ -15,7 +15,7 @@ Aucune disposition non commerciale du projet ne limite les droits déjà accord�
 
 Le fork modifie son identité publique et ajoute des fonctions Excel, VBA et IA. Il n’est ni publié, ni approuvé, ni affilié à l’auteur du projet d’origine ou à Microsoft.
 
-Le webview contient également du code adapté de `x-data-spreadsheet`, Copyright (c) 2017 myliang, sous licence MIT. L’arbre source contient un fork de Vditor, Copyright (c) 2019 B3log 开源, b3log.org, sous licence MIT. Leurs avis complets sont conservés dans le dossier [LICENSES](LICENSES).
+Le webview contient également du code adapté de `x-data-spreadsheet`, Copyright (c) 2017 myliang, sous licence MIT. L’ancien fork autonome de Vditor, Copyright (c) 2019 B3log 开源, b3log.org, n’est plus présent ni construit ; son texte MIT reste conservé à titre de provenance historique. Les avis complets sont disponibles dans le dossier [LICENSES](LICENSES).
 
 Microsoft, Visual Studio, Visual Studio Code, Excel, VBA et les noms de produits associés sont des marques de leurs propriétaires respectifs. Leur utilisation décrit uniquement la compatibilité.
 

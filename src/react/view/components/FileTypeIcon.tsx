@@ -7,11 +7,37 @@ interface FileTypeIconProps {
     className?: string;
 }
 
+const VSCODE_RESOURCE_HOST_SUFFIX = '.vscode-resource.vscode-cdn.net';
+
+export function sanitizeFileIconUrl(iconUrl: string | null): string | null {
+    if (!iconUrl) return null;
+    try {
+        const parsed = new URL(iconUrl);
+        const trustedHost = parsed.hostname.endsWith(VSCODE_RESOURCE_HOST_SUFFIX);
+        if (
+            parsed.protocol !== 'https:'
+            || !trustedHost
+            || parsed.username
+            || parsed.password
+            || parsed.port
+            || parsed.search
+            || parsed.hash
+            || !parsed.pathname.toLowerCase().endsWith('.svg')
+        ) {
+            return null;
+        }
+        return parsed.href;
+    } catch {
+        return null;
+    }
+}
+
 export function FileTypeIcon({ name, isDirectory, className }: FileTypeIconProps) {
     const [failed, setFailed] = useState(false);
     const iconUrl = useMemo(() => {
         if (!name) return null;
-        return isDirectory ? getFolderIconUrl(name) : getFileIconUrl(name);
+        const candidate = isDirectory ? getFolderIconUrl(name) : getFileIconUrl(name);
+        return sanitizeFileIconUrl(candidate);
     }, [name, isDirectory]);
 
     if (!iconUrl || failed) {

@@ -11,6 +11,13 @@ const EDITOR_CELL_HORIZONTAL_PADDING = 20;
 // editor-area uses border-box; 2px border on top and bottom
 const EDITOR_AREA_BORDER_INSET = 4;
 
+function escapeCssDoubleQuotedString(value) {
+  return `${value}`
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/[\r\n\f]/g, ' ');
+}
+
 function applyTextareaLayout(editor, fontSizePt) {
   const { textEl, areaOffset } = editor;
   if (!areaOffset) return;
@@ -33,7 +40,7 @@ function buildEditorFontCss(font, defaultFontName = 'Arial') {
   if (font?.italic) parts.push('italic');
   if (font?.bold) parts.push('bold');
   parts.push(`${sizePx}px`);
-  const name = (font?.name || defaultFontName).replace(/"/g, '\\"');
+  const name = escapeCssDoubleQuotedString(font?.name || defaultFontName);
   parts.push(`"${name}"`);
   return parts.join(' ');
 }
@@ -410,3 +417,5 @@ export default class Editor {
     textEl.css('background-color', 'transparent');
   }
 }
+
+export { escapeCssDoubleQuotedString };
