@@ -10,6 +10,10 @@ export type OfficeSecuritySource =
 	| 'userPreference'
 	| 'machinePreference';
 
+export type OfficeTrustedLocationSource =
+	| OfficeSecuritySource
+	| 'officeDefault';
+
 export type OfficeSecurityStatus =
 	| 'protected'
 	| 'blocked'
@@ -58,7 +62,7 @@ export interface OfficeUnreadableSetting {
 }
 
 export interface OfficeTrustedLocation {
-	source: OfficeSecuritySource;
+	source: OfficeTrustedLocationSource;
 	managed: boolean;
 	registryPath: string;
 	path: string;
@@ -120,6 +124,7 @@ export interface OfficeSecurityProbe {
 		mdmEnrollmentStatus: EnterpriseServiceDetectionStatus;
 		mdmProvider: MdmProvider;
 		groupPolicyHistoryStatus: EnterpriseServiceDetectionStatus;
+		trustedLocationInspectionPartial: boolean;
 		registryInspectionPartial: boolean;
 	};
 }
@@ -241,7 +246,14 @@ function asFiniteNumber(value: unknown, fallback = 0): number {
 }
 
 function asNullableInteger(value: unknown): number | null {
-	return typeof value === 'number' && Number.isInteger(value)
+	return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
+
+function asNullableZoneId(value: unknown): number | null {
+	return typeof value === 'number' &&
+		Number.isInteger(value) &&
+		value >= 0 &&
+		value <= 4
 		? value
 		: null;
 }
@@ -296,6 +308,14 @@ function securitySource(value: unknown): OfficeSecuritySource | undefined {
 		: undefined;
 }
 
+function trustedLocationSource(
+	value: unknown
+): OfficeTrustedLocationSource | undefined {
+	return value === 'officeDefault'
+		? 'officeDefault'
+		: securitySource(value);
+}
+
 function parseSetting(value: unknown): OfficeSecuritySetting | undefined {
 	const record = asRecord(value);
 	const source = securitySource(record?.source);
@@ -333,7 +353,7 @@ function parseSetting(value: unknown): OfficeSecuritySetting | undefined {
 
 function parseTrustedLocation(value: unknown): OfficeTrustedLocation | undefined {
 	const record = asRecord(value);
-	const source = securitySource(record?.source);
+	const source = trustedLocationSource(record?.source);
 	if (!record || !source) {
 		return undefined;
 	}
@@ -440,7 +460,9 @@ export function parseOfficeSecurityProbe(value: unknown): OfficeSecurityProbe {
 	) {
 		throw new Error('Le diagnostic de sécurité ne confirme pas le classeur inspecté.');
 	}
-	const zoneId = asNullableInteger(workbook.zoneId);
+	const zoneId = asNullableZoneId(workbook.zoneId);
+	const invalidReportedZoneId =
+		workbook.zoneId !== null && workbook.zoneId !== undefined && zoneId === null;
 	const hasVbaSignature = asBoolean(workbook.hasVbaSignature);
 	const hasPackageSignature = asBoolean(workbook.hasPackageSignature);
 	const containerKind = ['zip', 'compound', 'other'].includes(
@@ -499,7 +521,9 @@ export function parseOfficeSecurityProbe(value: unknown): OfficeSecurityProbe {
 			officePackageEncrypted: asBoolean(workbook.officePackageEncrypted),
 			irmProtected: asBoolean(workbook.irmProtected),
 			zoneId,
-			zoneStatus: asZoneReadStatus(workbook.zoneStatus, zoneId),
+			zoneStatus: invalidReportedZoneId
+				? 'unreadable'
+				: asZoneReadStatus(workbook.zoneStatus, zoneId),
 			containerKind,
 			hasVbaProject: asBoolean(workbook.hasVbaProject),
 			hasVbaSignature,
@@ -605,6 +629,9 @@ export function parseOfficeSecurityProbe(value: unknown): OfficeSecurityProbe {
 				office.groupPolicyHistoryStatus,
 				asBoolean(office.groupPolicyHistoryDetected) ? 'detected' : 'notDetected'
 			),
+			trustedLocationInspectionPartial: asBoolean(
+				office.trustedLocationInspectionPartial
+			),
 			registryInspectionPartial: asBoolean(office.registryInspectionPartial)
 		}
 	};
@@ -707,7 +734,7 @@ function resolveSetting(
 	};
 }
 
-function sourceName(source: OfficeSecuritySource): string {
+function sourceName(source: OfficeTrustedLocationSource): string {
 	switch (source) {
 		case 'machinePolicy':
 			return 'Registre de stratégie Windows · ordinateur';
@@ -717,6 +744,8 @@ function sourceName(source: OfficeSecuritySource): string {
 			return 'Stratégie Microsoft 365 Cloud Policy';
 		case 'machinePreference':
 			return 'Préférence locale · ordinateur';
+		case 'officeDefault':
+			return 'Emplacement approuvé par défaut d’Excel';
 		default:
 			return 'Préférence locale · utilisateur';
 	}
@@ -1087,9 +1116,14 @@ export function buildEnterpriseSecurityReport(
 	const matchingManagedLocation = matchingTrustedLocations.find(
 		location => location.managed
 	);
-	const matchingLocalLocation = matchingTrustedLocations.find(
-		location => !location.managed
+	const matchingDefaultLocation = matchingTrustedLocations.find(
+		location => location.source === 'officeDefault'
 	);
+	const matchingLocalLocation = matchingTrustedLocations.find(
+		location => !location.managed && location.source !== 'officeDefault'
+	);
+	const matchingUnmanagedLocation =
+		matchingDefaultLocation || matchingLocalLocation;
 	const managed =
 		settings.some(setting => setting.managed) ||
 		Boolean(matchingManagedLocation) ||
@@ -1102,22 +1136,41 @@ export function buildEnterpriseSecurityReport(
 		networkTrustedLocationUncertain ||
 		trustedLocationArchitectureUncertain ||
 		resolutionUnknown(disableAllTrustedResolution) ||
-		Boolean(matchingLocalLocation && resolutionUnknown(allowUserTrustedResolution));
+		Boolean(
+			probe.office.trustedLocationInspectionPartial &&
+				!matchingManagedLocation &&
+				!matchingDefaultLocation &&
+				!matchingLocalLocation
+		) ||
+		Boolean(
+			matchingUnmanagedLocation &&
+				resolutionUnknown(allowUserTrustedResolution)
+		);
 	const workbookInTrustedLocation = Boolean(
 		!trustedLocationsDisabled &&
 			!resolutionUnknown(disableAllTrustedResolution) &&
 			(matchingManagedLocation ||
 				(!userTrustedLocationsDisabled &&
 					!resolutionUnknown(allowUserTrustedResolution) &&
-					matchingLocalLocation))
+					matchingUnmanagedLocation))
 	);
 	const macroCapable = probe.workbook.hasVbaProject;
+	const macroContainerFormat = [
+		'.xls',
+		'.xlt',
+		'.xla',
+		'.xlsm',
+		'.xlsb',
+		'.xltm',
+		'.xlam'
+	].includes(probe.workbook.extension);
+	const macroPresenceUnknown = macroContainerFormat && !macroCapable;
 	const isXlsx = probe.workbook.extension === '.xlsx';
 	const isXlsm = probe.workbook.extension === '.xlsm';
 	const isLegacyXls = probe.workbook.extension === '.xls';
-	const legacyXlmPotential = ['.xls', '.xlt'].includes(probe.workbook.extension);
-	const legacyXlmBlocked =
-		legacyXlmPotential &&
+	const xlmCapableFormat = macroContainerFormat;
+	const xlmBlocked =
+		xlmCapableFormat &&
 		!resolutionUnknown(xl4MacroResolution) &&
 		numericValue(xl4MacroSetting) === 1;
 	const gridSupported = isXlsx || isXlsm || isLegacyXls;
@@ -1125,7 +1178,7 @@ export function buildEnterpriseSecurityReport(
 	const vbaSignaturePresent =
 		probe.workbook.vbaSignatureStatus === 'present';
 	const vbaSignatureUnknown =
-		probe.workbook.vbaSignatureStatus === 'unknown';
+		probe.workbook.vbaSignatureStatus === 'unknown' || macroPresenceUnknown;
 	const internetOrigin =
 		probe.workbook.zoneStatus === 'read' &&
 		(probe.workbook.zoneId === 3 || probe.workbook.zoneId === 4);
@@ -1176,7 +1229,7 @@ export function buildEnterpriseSecurityReport(
 	const vbaProtectionPresent =
 		probe.workbook.vbaProjectProtectionStatus === 'present';
 	const vbaProtectionUnknown =
-		probe.workbook.vbaProjectProtectionStatus === 'unknown';
+		probe.workbook.vbaProjectProtectionStatus === 'unknown' || macroPresenceUnknown;
 	const packageSignaturePresent =
 		probe.workbook.packageSignatureStatus === 'present';
 	const packageSignatureUnknown =
@@ -1214,8 +1267,10 @@ export function buildEnterpriseSecurityReport(
 		{
 			id: 'macros',
 			title: 'Macros VBA',
-			status: !macroCapable
-				? 'notApplicable'
+			status: macroPresenceUnknown
+				? 'unknown'
+				: !macroCapable
+					? 'notApplicable'
 				: workbookInTrustedLocation
 					? 'warning'
 				: explicitInternetMacroBlock
@@ -1223,8 +1278,10 @@ export function buildEnterpriseSecurityReport(
 					: internetMacroDecisionUnknown
 						? 'unknown'
 					: macroDescription[0],
-			detail: !macroCapable
-				? 'Aucun projet VBA n’est détecté dans ce fichier.'
+			detail: macroPresenceUnknown
+				? 'Le format peut contenir un projet VBA, mais cette inspection n’en confirme ni la présence ni l’absence.'
+				: !macroCapable
+					? 'Aucun projet VBA n’est détecté dans ce fichier.'
 				: workbookInTrustedLocation
 					? 'Le classeur se trouve dans un emplacement approuvé effectif : Excel peut activer le contenu, indépendamment du niveau VBAWarnings.'
 				: explicitInternetMacroBlock
@@ -1232,7 +1289,9 @@ export function buildEnterpriseSecurityReport(
 					: internetMacroDecisionUnknown
 						? 'Origine Internet détectée ; le diagnostic statique ne prouve pas la décision finale d’Excel.'
 						: macroDescription[1],
-			impact: macroCapable
+			impact: macroPresenceUnknown
+				? 'Traitez le classeur comme contenu actif potentiel jusqu’à confirmation par le moteur VBA natif.'
+				: macroCapable
 				? workbookInTrustedLocation
 					? 'Les emplacements approuvés contournent plusieurs contrôles Office et doivent être strictement protégés.'
 					: 'Ce réglage détermine si Excel peut exécuter le VBA du classeur.'
@@ -1241,8 +1300,15 @@ export function buildEnterpriseSecurityReport(
 				macroResolution.managed ||
 				(macroCapable && internetOrigin && blockInternetResolution.managed) ||
 				Boolean(matchingManagedLocation),
-			source: workbookInTrustedLocation && (matchingManagedLocation || matchingLocalLocation)
-				? `${sourceName((matchingManagedLocation || matchingLocalLocation)!.source)} · emplacement approuvé`
+			source: workbookInTrustedLocation &&
+				(matchingManagedLocation || matchingDefaultLocation || matchingLocalLocation)
+				? `${sourceName(
+						(
+							matchingManagedLocation ||
+							matchingDefaultLocation ||
+							matchingLocalLocation
+						)!.source
+				  )} · emplacement approuvé`
 				: explicitInternetMacroBlock
 				? `${sourceLabel(blockInternetResolution)} + origine du fichier`
 				: internetMacroDecisionUnknown &&
@@ -1253,19 +1319,19 @@ export function buildEnterpriseSecurityReport(
 		{
 			id: 'xlmMacros',
 			title: 'Macros Excel 4.0 (XLM)',
-			status: !legacyXlmPotential
+			status: !xlmCapableFormat
 				? 'notApplicable'
-				: legacyXlmBlocked
+				: xlmBlocked
 					? 'blocked'
 					: 'unknown',
-			detail: !legacyXlmPotential
+			detail: !xlmCapableFormat
 				? 'Le format de ce classeur ne peut pas contenir de feuille macro XLM héritée.'
-				: legacyXlmBlocked
+				: xlmBlocked
 					? 'La stratégie XL4MacroOff désactive les macros Excel 4.0.'
 					: resolutionUnknown(xl4MacroResolution)
 						? 'La stratégie XL4MacroOff est contradictoire, invalide ou partiellement illisible.'
-						: 'Le conteneur XLS/XLT peut contenir des feuilles macro XLM ; leur présence n’est pas déterminée par cette inspection statique.',
-			impact: legacyXlmPotential
+						: 'Ce format peut contenir des feuilles macro XLM ; leur présence n’est pas déterminée par cette inspection statique.',
+			impact: xlmCapableFormat
 				? 'Ouvrez le fichier comme contenu actif potentiel tant que l’absence de feuilles macro XLM n’est pas confirmée par Excel.'
 				: 'Sans objet pour ce format.',
 			managed: xl4MacroResolution.managed,
@@ -1347,7 +1413,9 @@ export function buildEnterpriseSecurityReport(
 				? 'blocked'
 				: networkTrustedLocationBlocked
 					? 'blocked'
-				: matchingLocalLocation && userTrustedLocationsDisabled && !matchingManagedLocation
+				: matchingUnmanagedLocation &&
+					  userTrustedLocationsDisabled &&
+					  !matchingManagedLocation
 					? 'blocked'
 				: workbookInTrustedLocation
 					? 'allowed'
@@ -1360,8 +1428,10 @@ export function buildEnterpriseSecurityReport(
 				? 'Tous les emplacements approuvés sont désactivés.'
 				: networkTrustedLocationBlocked
 					? 'Le chemin correspond à un emplacement réseau déclaré, mais les emplacements réseau approuvés ne sont pas autorisés.'
-				: matchingLocalLocation && userTrustedLocationsDisabled && !matchingManagedLocation
-					? 'Le dossier correspond à un emplacement utilisateur, mais la politique d’entreprise autorise uniquement les emplacements définis par stratégie.'
+				: matchingUnmanagedLocation &&
+					  userTrustedLocationsDisabled &&
+					  !matchingManagedLocation
+					? 'Le dossier correspond à un emplacement non géré, mais la politique d’entreprise autorise uniquement les emplacements définis par stratégie.'
 				: workbookInTrustedLocation
 					? 'Le dossier du classeur correspond à un emplacement approuvé déclaré.'
 					: `${probe.office.trustedLocations.length} emplacement(s) déclaré(s) ; ce fichier n’en fait pas partie.`,
@@ -1373,6 +1443,8 @@ export function buildEnterpriseSecurityReport(
 				Boolean(matchingManagedLocation),
 			source: matchingManagedLocation
 				? `${sourceName(matchingManagedLocation.source)} · ${matchingManagedLocation.registryPath}`
+				: matchingDefaultLocation
+					? `${sourceName(matchingDefaultLocation.source)} · ${matchingDefaultLocation.path}`
 				: matchingNetworkLocation
 					? sourceLabel(allowNetworkTrustedResolution)
 					: sourceLabel(
@@ -1415,7 +1487,7 @@ export function buildEnterpriseSecurityReport(
 				probe.workbook.vbaSignatureStatus === 'present' ||
 				packageSignaturePresent
 				? 'protected'
-				: probe.workbook.vbaSignatureStatus === 'unknown' ||
+				: vbaSignatureUnknown ||
 					  probe.workbook.packageSignatureStatus === 'unknown'
 					? 'unknown'
 					: macroCapable
@@ -1425,7 +1497,7 @@ export function buildEnterpriseSecurityReport(
 				? 'Signature du projet VBA détectée ; l’extension refusera de modifier ce projet.'
 				: packageSignaturePresent
 					? 'Signature du package Office détectée ; toute modification invaliderait cette signature.'
-					: probe.workbook.vbaSignatureStatus === 'unknown' ||
+					: vbaSignatureUnknown ||
 						  probe.workbook.packageSignatureStatus === 'unknown'
 						? 'La présence d’une signature ne peut pas être déterminée statiquement pour ce format.'
 						: 'Aucune signature lisible détectée.',
@@ -1436,15 +1508,19 @@ export function buildEnterpriseSecurityReport(
 		{
 			id: 'vbaProtection',
 			title: 'Protection du projet VBA',
-			status: !macroCapable
-				? 'notApplicable'
+			status: macroPresenceUnknown
+				? 'unknown'
+				: !macroCapable
+					? 'notApplicable'
 				: vbaProtectionPresent
 					? 'blocked'
 					: vbaProtectionUnknown
 						? 'unknown'
 						: 'protected',
-			detail: !macroCapable
-				? 'Aucun projet VBA n’est détecté.'
+			detail: macroPresenceUnknown
+				? 'Le format autorise un projet VBA non détecté à un emplacement OPC non standard ; la protection reste indéterminée.'
+				: !macroCapable
+					? 'Aucun projet VBA n’est détecté.'
 				: vbaProtectionPresent
 					? 'Projet VBA protégé par mot de passe détecté.'
 					: vbaProtectionUnknown
@@ -1570,8 +1646,10 @@ export function buildEnterpriseSecurityReport(
 			title: 'Inspection VBA',
 			status: encryptedPackage
 				? 'blocked'
-				: !macroCapable
-				? 'notApplicable'
+				: macroPresenceUnknown
+					? 'unknown'
+					: !macroCapable
+						? 'notApplicable'
 				: resolutionUnknown(accessVbomResolution)
 					? 'unknown'
 				: accessVbomAllowed
@@ -1579,8 +1657,10 @@ export function buildEnterpriseSecurityReport(
 					: 'blocked',
 			detail: encryptedPackage
 				? 'Le projet n’est pas lisible dans un package Office chiffré.'
-				: !macroCapable
-				? 'Aucun projet VBA n’est détecté.'
+				: macroPresenceUnknown
+					? 'La présence d’un projet VBA doit être confirmée par le moteur natif.'
+					: !macroCapable
+						? 'Aucun projet VBA n’est détecté.'
 				: resolutionUnknown(accessVbomResolution)
 					? 'La valeur AccessVBOM effective doit être confirmée dans Excel.'
 				: accessVbomAllowed

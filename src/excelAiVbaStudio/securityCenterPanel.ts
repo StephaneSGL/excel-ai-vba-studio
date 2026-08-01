@@ -5,8 +5,8 @@ import {
 	EnterpriseSecurityReport,
 	formatEnterpriseSecurityReport,
 	OfficeSecurityService,
-	OfficeSecuritySource,
-	OfficeSecurityStatus
+	OfficeSecurityStatus,
+	OfficeTrustedLocationSource
 } from './officeSecurity';
 
 interface SecurityCenterMessage {
@@ -34,12 +34,13 @@ const STATUS_LABELS: Record<OfficeSecurityStatus, string> = {
 	notApplicable: 'Sans objet'
 };
 
-const SOURCE_LABELS: Record<OfficeSecuritySource, string> = {
+const SOURCE_LABELS: Record<OfficeTrustedLocationSource, string> = {
 	machinePolicy: 'Registre de stratégie Windows · ordinateur',
 	userPolicy: 'Registre de stratégie Windows · utilisateur',
 	cloudPolicy: 'Cloud Policy Microsoft 365',
 	userPreference: 'Préférence utilisateur',
-	machinePreference: 'Préférence ordinateur'
+	machinePreference: 'Préférence ordinateur',
+	officeDefault: 'Emplacement approuvé par défaut d’Excel'
 };
 
 const SERVICE_STATUS_LABELS = {
@@ -97,7 +98,7 @@ function renderStatus(status: OfficeSecurityStatus): string {
 	)}</span>`;
 }
 
-function renderSource(source: OfficeSecuritySource): string {
+function renderSource(source: OfficeTrustedLocationSource): string {
 	return SOURCE_LABELS[source] || source;
 }
 
@@ -137,6 +138,17 @@ function renderPurviewSource(source: string): string {
 
 function renderReport(report: EnterpriseSecurityReport): string {
 	const { probe } = report;
+	const macroContainerFormat = [
+		'.xls',
+		'.xlt',
+		'.xla',
+		'.xlsm',
+		'.xlsb',
+		'.xltm',
+		'.xlam'
+	].includes(probe.workbook.extension);
+	const vbaPresenceUnconfirmed =
+		macroContainerFormat && !probe.workbook.hasVbaProject;
 	const zone = probe.workbook.zoneStatus === 'unreadable'
 		? 'Origine illisible'
 		: probe.workbook.zoneStatus === 'unsupported'
@@ -336,11 +348,18 @@ function renderReport(report: EnterpriseSecurityReport): string {
 			</div>
 			<div class="facts" role="list">
 				<div role="listitem"><span>Origine Windows</span><strong>${escapeHtml(zone)}</strong></div>
-				<div role="listitem"><span>Projet VBA</span><strong>${probe.workbook.hasVbaProject ? 'Présent' : 'Absent'}</strong></div>
+				<div role="listitem"><span>Projet VBA</span><strong>${
+					probe.workbook.hasVbaProject
+						? 'Présent'
+						: vbaPresenceUnconfirmed
+							? 'Non confirmé'
+							: 'Absent'
+				}</strong></div>
 				<div role="listitem"><span>Signature VBA</span><strong>${escapeHtml(
 					probe.workbook.vbaSignatureStatus === 'present'
 						? 'Détectée'
-						: probe.workbook.vbaSignatureStatus === 'absent'
+						: probe.workbook.vbaSignatureStatus === 'absent' &&
+							  !vbaPresenceUnconfirmed
 							? 'Non détectée'
 							: 'À confirmer'
 				)}</strong></div>
@@ -559,6 +578,7 @@ export class SecurityCenterPanel implements vscode.Disposable {
 			return;
 		}
 		const sequence = ++this.inspectionSequence;
+		this.report = undefined;
 		panel.webview.html = this.getHtml(
 			panel.webview,
 			'<section class="loading" role="status"><div class="spinner"></div><h1>Analyse de la sécurité Office</h1><p>Lecture du fichier, de son origine Windows et des stratégies Office visibles…</p></section>'

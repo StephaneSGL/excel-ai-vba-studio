@@ -20,10 +20,15 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Clarified the noncommercial community-use rights and the separate commercial-license boundary without changing the PolyForm Noncommercial 1.0.0 terms.
 - Removed obsolete upstream translations that described a different extension, unsupported features, and telemetry that this project does not collect.
 - Excluded local package-output directories consistently from Git.
+- Replaced the unsupported Marketplace `--oidc` invocation with a verified VSIX artifact; automatic publication remains intentionally disabled until a Microsoft Entra workload identity is configured for the publisher.
 
 ### Security
 
 - The enterprise probe is bounded, local, and read-only: it never opens Excel, runs VBA, removes Mark of the Web, writes the registry, changes Trust Center, or attempts to bypass managed policy.
+- The audit now holds a read-only file lock across the complete inspection, parses only one valid `ZoneTransfer` section with `ZoneId` 0–4, expands bounded Trusted Location environment variables, and includes Excel's documented built-in Trusted Locations.
+- Macro-capable containers whose VBA or XLM inventory cannot be proven now remain `unknown`; they are never presented as safely macro-free merely because a conventional part path was absent.
+- Compound-file traversal is capped by directory-entry count, hierarchy depth, and reconstructed path length; ambiguous structures fail closed.
+- GitHub Actions are pinned to immutable commits, CodeQL scans JavaScript/TypeScript and Python, native Python build wheels are pinned by SHA-256, the release workflow rebuilds and compares the native helper on Windows, and package validation uses an explicit allowlist.
 - Cloud, machine, user, and preference sources remain visible independently; unknown effective decisions are reported as unknown instead of being treated as permission.
 - A Windows policy-registry value is never attributed to GPO or Intune from enrollment presence alone, and local Purview metadata is never treated as authenticated tenant policy or proof of encryption.
 - The Center never opens the inspected workbook, rejects malformed policy value types, bounds Mark-of-the-Web and enrollment reads, and reports unreadable higher-priority policy stores as unknown instead of falling back to a weaker preference.
@@ -32,6 +37,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 ### Tests
 
 - Added static guards against registry/file/network writes and Excel automation plus synthetic workbook probes for bounded JSON, modern and legacy Purview metadata, `EnabledV2` precedence, orphan rejection, Intune non-attribution, policy precedence, registry bitness, source typing, and Trusted Location limits.
+- Added regressions for invalid and ambiguous Mark-of-the-Web streams, macro-capable containers with inconclusive inventories, built-in Excel Trusted Locations, deep compound-file hierarchies, and Linux-safe package-signature validation.
 - Added an executable signed-package regression covering XLSX/XLSM grid writes, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX without running a macro.
 
 ## [0.5.1] - 2026-07-28

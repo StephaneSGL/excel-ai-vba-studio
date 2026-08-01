@@ -30,11 +30,14 @@ const required = [
   'package.json',
   'README.md',
   'CHANGELOG.md',
+  'SECURITY.md',
+  'SUPPORT.md',
   'LICENSE',
   'LICENSING.md',
   'LICENSES/POLYFORM-NONCOMMERCIAL-1.0.0.md',
   'LICENSES/OFFICE-VIEWER-MIT.txt',
   'LICENSES/X-DATA-SPREADSHEET-MIT.txt',
+  'LICENSES/VDITOR-MIT.txt',
   'LICENSES/PYOPENVBA-MIT.txt',
   'LICENSES/PYINSTALLER-GPL2-EXCEPTION.txt',
   'LICENSES/PYTHON-3.11-PSF.txt',
@@ -47,6 +50,7 @@ const required = [
   'out/webview/index.html',
   'scripts/office-ai-export.ps1',
   'scripts/office-ai-apply-edits.ps1',
+  'scripts/apply-vba-designer.ps1',
   'scripts/inspect-office-security.ps1',
   'scripts/ooxml-package-signature.ps1',
   'scripts/open-excel-developer.ps1',
@@ -77,7 +81,15 @@ const forbiddenPrefixes = [
   'vditor/',
   'work/',
 ];
+const allowedFiles = new Set(required);
+const allowedGeneratedAsset = /^out\/webview\/assets\/[A-Za-z0-9._-]+\.(?:js|css|ttf|woff2?)$/;
 for (const file of files) {
+  if (
+    !allowedFiles.has(file) &&
+    !allowedGeneratedAsset.test(file)
+  ) {
+    errors.push(`unexpected file is not on the package allowlist: ${file}`);
+  }
   if (forbiddenPrefixes.some((prefix) => file.startsWith(prefix))) {
     errors.push(`development or unrelated file would be packaged: ${file}`);
   }

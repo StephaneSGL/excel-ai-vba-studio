@@ -62,6 +62,7 @@ try {
         throw 'Could not create the isolated Python 3.11 build environment.'
     }
     & $python -m pip install --disable-pip-version-check --require-virtualenv `
+        --require-hashes `
         -r $requirements
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not install the pinned VBA write-back build dependencies.'

@@ -1,4 +1,4 @@
-name: Publish to Visual Studio Marketplace
+name: Build verified Marketplace package
 
 on:
   push:
@@ -7,22 +7,68 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: marketplace-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  verify-native-helper:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11.9'
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Test the committed VBA helper signature lock
+        run: npm run test:package-signatures
+
+      - name: Rebuild the VBA helper from pinned source
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-vba-writeback.ps1
+
+      - name: Verify shipped helper provenance
+        shell: pwsh
+        run: |
+          git diff --exit-code -- bin/win32-x64/excel-ai-vba-writeback.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Bundled helper differs from the reproducible source build.'
+          }
+
+      - name: Test the rebuilt VBA helper signature lock
+        run: npm run test:package-signatures
+
+      - name: Upload verified VBA helper
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: verified-vba-writeback-${{ github.sha }}
+          path: bin/win32-x64/excel-ai-vba-writeback.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    needs: verify-native-helper
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: npm
@@ -30,11 +76,25 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Use the helper rebuilt and verified from this tag
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-vba-writeback-${{ github.sha }}
+          path: bin/win32-x64
+
       - name: Verify tag matches package version
         run: npm run release:check -- "${GITHUB_REF_NAME}"
 
       - name: Validate manifest, build, and package contents
         run: npm run validate
 
-      - name: Publish trusted win32-x64 package
-        run: npx --no-install vsce publish --oidc --target win32-x64 --no-dependencies
+      - name: Package trusted win32-x64 VSIX
+        run: npm run package
+
+      - name: Upload verified Marketplace package
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: excel-ai-vba-studio-${{ github.ref_name }}-win32-x64
+          path: output/vsix/*.vsix
+          if-no-files-found: error
+          retention-days: 30

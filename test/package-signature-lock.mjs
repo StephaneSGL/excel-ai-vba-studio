@@ -19,15 +19,15 @@ import JSZip from 'jszip';
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const powershell = process.env.SystemRoot
+const powershell = process.platform === 'win32'
   ? path.join(
-      process.env.SystemRoot,
+      process.env.SystemRoot || 'C:\\Windows',
       'System32',
       'WindowsPowerShell',
       'v1.0',
       'powershell.exe',
     )
-  : 'powershell.exe';
+  : 'pwsh';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const base64 = (value) => Buffer.from(value, 'utf8').toString('base64');
@@ -806,6 +806,7 @@ try {
     'designer refusal must happen before staging is created',
   );
 
+  if (process.platform === 'win32') {
   const writebackRequestPath = path.join(tempRoot, 'writeback-request.json');
   await writeFile(
     writebackRequestPath,
@@ -928,6 +929,7 @@ try {
       false,
       'origin-only analysis must not leak a write-back work file',
     );
+  }
   }
 } finally {
   await rm(tempRoot, { recursive: true, force: true });

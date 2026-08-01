@@ -12,6 +12,11 @@ const languageTool = readFileSync(
   resolve(root, 'src/excelAiVbaStudio/languageModelTool.ts'),
   'utf8',
 );
+const buildScript = readFileSync(resolve(root, 'tools/build-vba-writeback.ps1'), 'utf8');
+const buildRequirements = readFileSync(
+  resolve(root, 'native/vba-writeback/requirements.lock'),
+  'utf8',
+);
 const helperPath = resolve(
   root,
   'bin/win32-x64/excel-ai-vba-writeback.exe',
@@ -36,6 +41,17 @@ assert.doesNotMatch(
   cli,
   /import\s+winreg|Excel\.Application|Dispatch\(|RunAutoMacros|\.Run\(/i,
   'write-back helper must not touch Office automation, registry, or macros',
+);
+assert.match(buildScript, /--require-hashes/, 'native helper dependencies must be installed with hash verification');
+assert.equal(
+  [...buildRequirements.matchAll(/--hash=sha256:[a-f0-9]{64}/g)].length,
+  7,
+  'every pinned native helper build dependency must include its wheel SHA-256',
+);
+assert.doesNotMatch(
+  buildRequirements,
+  /^[A-Za-z0-9_.-]+==[^\r\n]+(?<!\\)$/gm,
+  'every native helper requirement must continue to an explicit hash',
 );
 assert.match(
   service,

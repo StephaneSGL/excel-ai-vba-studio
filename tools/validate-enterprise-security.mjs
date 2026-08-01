@@ -98,6 +98,7 @@ for (const token of [
   'mdmEnrollmentStatus',
   'groupPolicyHistoryStatus',
   'mdmProvider',
+  'trustedLocationInspectionPartial',
   'registryInspectionPartial',
   'officeArchitecture',
   'EncryptionInfo',
@@ -109,6 +110,12 @@ for (const token of [
   'application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml',
   'MaxCharactersInDocument = 1048576',
   'MaxSensitivityLabels = 32',
+  'MaxCompoundDirectoryEntries = 16384',
+  'MaxCompoundHierarchyDepth = 128',
+  'MaxCompoundPathChars = 2048',
+  "source = 'officeDefault'",
+  'Add-DefaultTrustedLocations',
+  'ExpandEnvironmentVariables',
   'http://schemas.microsoft.com/office/2020/02/relationships/classificationlabels',
   'http://schemas.microsoft.com/office/2020/mipLabelMetadata',
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties',
@@ -122,17 +129,33 @@ for (const token of [
 assert.match(probe, /Get-Content[\s\S]+-Stream\s+'Zone\.Identifier'/, 'MOTW must be read as an alternate stream');
 assert.doesNotMatch(probe, /HostUrl|ReferrerUrl/i, 'MOTW URLs must never be returned');
 assert.match(probe, /DtdProcessing\s*=\s*\[Xml\.DtdProcessing\]::Prohibit/, 'custom XML must prohibit DTD processing');
+assert.match(
+  probe,
+  /\$directoryEntryIndex\s+-ge\s+\$script:MaxCompoundDirectoryEntries[\s\S]{0,160}throw/,
+  'CFB directory entry enumeration must fail closed at its explicit cap',
+);
+assert.match(
+  probe,
+  /\$childDepth\s+-gt\s+\$script:MaxCompoundHierarchyDepth[\s\S]{0,160}\$childPathLength\s+-gt\s+\$script:MaxCompoundPathChars[\s\S]{0,160}throw/,
+  'CFB hierarchy reconstruction must fail closed on depth or path growth',
+);
 assert.doesNotMatch(probe, /GetValueNames\s*\(/, 'registry reads must not enumerate arbitrary value names');
 const subKeyEnumerationLines = probe
   .split(/\r?\n/)
   .filter(line => /\.GetSubKeyNames\s*\(\s*\)/.test(line));
-assert.equal(subKeyEnumerationLines.length, 2, 'only the two bounded MDM enrollment containers may enumerate subkeys');
+assert.equal(subKeyEnumerationLines.length, 3, 'only the bounded MDM and trusted-location containers may enumerate subkeys');
 for (const line of subKeyEnumerationLines) {
-  assert.match(line, /\$(?:enrollmentsKey|accountsKey)\.GetSubKeyNames/, 'subkey enumeration must stay on the allowlisted MDM containers');
+  assert.match(line, /\$(?:enrollmentsKey|accountsKey|locationsKey)\.GetSubKeyNames/, 'subkey enumeration must stay on an allowlisted registry container');
 }
 assert.match(probe, /\$enrollmentNames\.Count\s+-gt\s+64/, 'MDM enrollment enumeration must be capped at 64');
 assert.match(probe, /\$accountNames\.Count\s+-gt\s+64/, 'MDM account enumeration must be capped at 64');
-assert.match(probe, /for \(\$locationIndex = 0; \$locationIndex -lt 64; \$locationIndex\+\+\)/, 'trusted locations must use the exact bounded Location0..Location63 range');
+assert.match(probe, /\$locationsKey\.SubKeyCount\s+-gt\s+256/, 'trusted-location registry enumeration must have a pre-enumeration cap');
+assert.match(probe, /\^Location\(\?:0\|\[1-9\]\[0-9\]\{0,8\}\)\$/, 'trusted locations must accept only explicitly numbered Location keys');
+assert.match(probe, /\$locationNames\.Count\s+-gt\s+\$script:MaxTrustedLocations/, 'trusted-location results must be capped');
+assert.match(probe, /\[Environment\]::ExpandEnvironmentVariables\(\$rawLocationPath\)/, 'trusted-location environment variables must be expanded before path matching');
+assert.match(probe, /\$locationPath\s+-match\s+'%\[\^%\]\+%'/, 'unresolved trusted-location variables must fail closed');
+assert.match(probe, /if \(\$locationReadFailure\)[\s\S]{0,180}\$trustedLocationInspectionPartial\s*=\s*\$true/, 'truncated trusted-location reads must be reported explicitly');
+assert.match(probe, /\$inspectionLock[\s\S]+\[IO\.FileShare\]::Read[\s\S]+\$sha256Before/, 'inspection must hold a non-write-sharing workbook handle across all reads');
 assert.doesNotMatch(probe, /FileShare\][^\r\n]*Delete|FileShare\]::Delete/, 'workbook handles must not allow deletion during inspection');
 assert.doesNotMatch(probe, /HKLM[^\r\n]+Microsoft\\Cloud\\Office\\16\.0/, 'Cloud Policy security detection must not use HKLM Cloud Update keys');
 assert.match(probe, /enabledV2Present[\s\S]+enabledV2/, 'Purview detection must version EnabledV2 separately');
@@ -251,6 +274,7 @@ function syntheticProbe(overrides = {}) {
       mdmEnrollmentStatus: 'notDetected',
       mdmProvider: 'none',
       groupPolicyHistoryStatus: 'notDetected',
+      trustedLocationInspectionPartial: false,
       registryInspectionPartial: false,
       ...(overrides.office ?? {}),
     },
@@ -333,6 +357,46 @@ assert.equal(
   internetWithoutExplicitPolicyReport.findings.find(({ id }) => id === 'macros').status,
   'unknown',
   'MOTW without an explicit Internet macro policy must not be reported as a proven block or permission',
+);
+
+const invalidZoneProbe = parseOfficeSecurityProbe(syntheticProbe({
+  workbook: { zoneId: 999, zoneStatus: 'read' },
+}));
+assert.equal(invalidZoneProbe.workbook.zoneId, null);
+assert.equal(invalidZoneProbe.workbook.zoneStatus, 'unreadable');
+assert.equal(
+  buildEnterpriseSecurityReport(invalidZoneProbe).findings.find(({ id }) => id === 'origin').status,
+  'unknown',
+  'an out-of-range ZoneId must fail closed',
+);
+assert.equal(
+  parseOfficeSecurityProbe(syntheticProbe({
+    workbook: { zoneId: 999, zoneStatus: 'absent' },
+  })).workbook.zoneStatus,
+  'unreadable',
+  'an invalid ZoneId must fail closed even when paired with a contradictory status',
+);
+
+const unconfirmedMacroProbe = parseOfficeSecurityProbe(syntheticProbe({
+  workbook: {
+    hasVbaProject: false,
+    hasVbaSignature: false,
+    vbaSignatureStatus: 'absent',
+    vbaProjectProtectionStatus: 'absent',
+  },
+}));
+const unconfirmedMacroReport = buildEnterpriseSecurityReport(unconfirmedMacroProbe);
+for (const findingId of ['macros', 'xlmMacros', 'signatures', 'vbaProtection']) {
+  assert.equal(
+    unconfirmedMacroReport.findings.find(({ id }) => id === findingId).status,
+    'unknown',
+    `${findingId} must remain unknown for a macro-capable container without conclusive OPC inventory`,
+  );
+}
+assert.equal(
+  unconfirmedMacroReport.capabilities.find(({ id }) => id === 'vbaRead').status,
+  'unknown',
+  'VBA inspection must remain unknown until the native engine confirms project absence',
 );
 
 const efsReport = buildEnterpriseSecurityReport(syntheticProbe({
@@ -466,6 +530,62 @@ const userTrustedLocationsBlockedReport = buildEnterpriseSecurityReport(syntheti
 assert.equal(userTrustedLocationsBlockedReport.workbookInTrustedLocation, false);
 assert.equal(userTrustedLocationsBlockedReport.findings.find(({ id }) => id === 'trustedLocations').status, 'blocked');
 assert.equal(userTrustedLocationsBlockedReport.findings.find(({ id }) => id === 'macros').status, 'blocked');
+
+const defaultTrustedLocationProbe = parseOfficeSecurityProbe(syntheticProbe({
+  workbook: { path: 'C:\\Users\\Tester\\AppData\\Roaming\\Microsoft\\Excel\\XLSTART\\book.xlsm' },
+  office: {
+    settings: [sourceSetting('userPolicy', 'allowUserTrustedLocations', 0)],
+    trustedLocations: [{
+      source: 'officeDefault',
+      managed: false,
+      registryPath: 'Excel default trusted location',
+      path: 'C:\\Users\\Tester\\AppData\\Roaming\\Microsoft\\Excel\\XLSTART',
+      allowSubfolders: false,
+      description: 'Excel startup',
+    }],
+  },
+}));
+const defaultTrustedLocationReport = buildEnterpriseSecurityReport(defaultTrustedLocationProbe);
+assert.equal(
+  defaultTrustedLocationReport.workbookInTrustedLocation,
+  false,
+  'built-in Excel trusted locations are disabled when policy permits only policy-defined locations',
+);
+assert.equal(
+  defaultTrustedLocationReport.findings.find(({ id }) => id === 'trustedLocations').status,
+  'blocked',
+);
+
+const effectiveDefaultTrustedLocationReport = buildEnterpriseSecurityReport(parseOfficeSecurityProbe(syntheticProbe({
+  workbook: { path: 'C:\\Users\\Tester\\AppData\\Roaming\\Microsoft\\Excel\\XLSTART\\book.xlsm' },
+  office: {
+    trustedLocations: [{
+      source: 'officeDefault',
+      managed: false,
+      registryPath: 'Excel default trusted location',
+      path: 'C:\\Users\\Tester\\AppData\\Roaming\\Microsoft\\Excel\\XLSTART',
+      allowSubfolders: false,
+    }],
+  },
+})));
+assert.equal(
+  effectiveDefaultTrustedLocationReport.workbookInTrustedLocation,
+  true,
+  'a documented built-in Excel location remains effective when policy permits non-policy locations',
+);
+assert.match(
+  effectiveDefaultTrustedLocationReport.findings.find(({ id }) => id === 'trustedLocations').source,
+  /défaut d.Excel/,
+);
+
+const partialTrustedLocationReport = buildEnterpriseSecurityReport(parseOfficeSecurityProbe(syntheticProbe({
+  office: { trustedLocationInspectionPartial: true },
+})));
+assert.equal(
+  partialTrustedLocationReport.findings.find(({ id }) => id === 'trustedLocations').status,
+  'unknown',
+  'a truncated trusted-location inventory without a known match must fail closed',
+);
 
 const accessVbomBlockedReport = buildEnterpriseSecurityReport(syntheticProbe({
   office: { settings: [sourceSetting('userPolicy', 'accessVbom', 0)] },
@@ -683,6 +803,23 @@ if (process.platform === 'win32') {
       assert.equal(execution.stderr.trim(), '', 'probe must not emit non-JSON diagnostics');
       return JSON.parse(execution.stdout.trim());
     };
+    const inspectWorkbookFailure = async targetPath => {
+      let failure;
+      try {
+        await execFileAsync(
+          powershell,
+          ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probePath, '-WorkbookPathBase64', Buffer.from(targetPath, 'utf8').toString('base64')],
+          { windowsHide: true, maxBuffer: 264 * 1024 },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      assert.ok(failure, 'the adversarial workbook must fail closed');
+      assert.equal(String(failure.stderr ?? '').trim(), '', 'failure must not emit non-JSON stderr');
+      const lines = String(failure.stdout ?? '').trim().split(/\r?\n/);
+      assert.equal(lines.length, 1, 'failure must emit exactly one JSON object');
+      return JSON.parse(lines[0]);
+    };
     const writePurviewOpc = async (fileName, { labelInfoXml, customXml }) => {
       const targetPath = path.join(temporaryDirectory, fileName);
       const packageZip = new JSZip();
@@ -804,6 +941,7 @@ if (process.platform === 'win32') {
       assert.ok(['detected', 'notDetected', 'unknown'].includes(result.office[field]), `${field} must use the bounded detection status vocabulary`);
     }
     assert.ok(['microsoftIntune', 'unknown', 'none'].includes(result.office.mdmProvider));
+    assert.equal(typeof result.office.trustedLocationInspectionPartial, 'boolean');
     assert.equal(typeof result.office.registryInspectionPartial, 'boolean');
     for (const setting of result.office.settings) {
       assert.ok(['machinePolicy', 'userPolicy', 'cloudPolicy', 'userPreference', 'machinePreference'].includes(setting.source));
@@ -960,6 +1098,31 @@ if (process.platform === 'win32') {
       'CFB/IRM detection must remain read-only',
     );
 
+    const deepCompoundPath = path.join(temporaryDirectory, 'deep-hierarchy.xls');
+    const deepCompound = XLSX.CFB.utils.cfb_new();
+    XLSX.CFB.utils.cfb_add(deepCompound, 'Workbook', Buffer.from([0x09, 0x08]));
+    const deepStoragePath = Array.from(
+      { length: 130 },
+      (_, index) => `storage${index}`,
+    ).join('/');
+    XLSX.CFB.utils.cfb_add(
+      deepCompound,
+      `${deepStoragePath}/payload`,
+      Buffer.from([1]),
+    );
+    await writeFile(
+      deepCompoundPath,
+      XLSX.CFB.write(deepCompound, { type: 'buffer' }),
+    );
+    const deepCompoundResult = await inspectWorkbookFailure(deepCompoundPath);
+    assert.equal(deepCompoundResult.schemaVersion, 1);
+    assert.equal(deepCompoundResult.error?.code, 'inspection_failed');
+    assert.match(
+      deepCompoundResult.error?.message ?? '',
+      /directory hierarchy exceeds the inspection limit/i,
+      'an over-deep CFB hierarchy must be rejected before unbounded path construction',
+    );
+
     const orphanLabelPath = path.join(temporaryDirectory, 'orphan-label.xlsx');
     const orphanLabelZip = new JSZip();
     orphanLabelZip.file('[Content_Types].xml',
@@ -1047,6 +1210,27 @@ if (process.platform === 'win32') {
     assert.equal(zoneResult.workbook.sha256, sha256Before, 'MOTW inspection must not alter workbook content');
     assert.deepEqual((await readdir(temporaryDirectory)).sort(), neighborsBeforeZone, 'an ADS must not be treated as a neighboring file');
 
+    await writeFile(
+      `${workbookPath}:Zone.Identifier`,
+      '[Unrelated]\r\nZoneId=0\r\n[ZoneTransfer]\r\nZoneId=3\r\n',
+    );
+    const sectionAwareZoneResult = await inspectWorkbook(workbookPath);
+    assert.equal(sectionAwareZoneResult.workbook.zoneStatus, 'read');
+    assert.equal(sectionAwareZoneResult.workbook.zoneId, 3, 'only ZoneId in the ZoneTransfer section may be trusted');
+
+    await writeFile(`${workbookPath}:Zone.Identifier`, '[ZoneTransfer]\r\nZoneId=999\r\n');
+    const invalidZoneResult = await inspectWorkbook(workbookPath);
+    assert.equal(invalidZoneResult.workbook.zoneStatus, 'unreadable');
+    assert.equal(invalidZoneResult.workbook.zoneId, null, 'out-of-range MOTW values must fail closed');
+
+    await writeFile(
+      `${workbookPath}:Zone.Identifier`,
+      '[ZoneTransfer]\r\nZoneId=3\r\n[ZoneTransfer]\r\nZoneId=3\r\n',
+    );
+    const duplicateZoneResult = await inspectWorkbook(workbookPath);
+    assert.equal(duplicateZoneResult.workbook.zoneStatus, 'unreadable');
+    assert.equal(duplicateZoneResult.workbook.zoneId, null, 'ambiguous ZoneTransfer sections must fail closed');
+
     const signedPath = path.join(temporaryDirectory, 'synthetic-signed.xlsm');
     const signedZip = new JSZip();
     signedZip.file('[Content_Types].xml',
@@ -1082,7 +1266,7 @@ if (process.platform === 'win32') {
     assert.equal(signedResult.workbook.vbaSignatureStatus, 'present');
     assert.equal(signedResult.workbook.hasPackageSignature, true);
     assert.equal(signedResult.workbook.packageSignatureStatus, 'present');
-    assert.equal(signedResult.workbook.packageSignatureVerificationStatus, 'verified');
+    assert.equal(signedResult.workbook.packageSignatureVerificationStatus, 'structureVerified');
     assert.equal(signedResult.workbook.vbaProjectProtectionStatus, 'unknown');
 
     const badContentTypePath = path.join(temporaryDirectory, 'bad-signature-content-type.xlsx');

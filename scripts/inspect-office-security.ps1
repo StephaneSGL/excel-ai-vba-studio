@@ -13,6 +13,9 @@ $script:MaxOutputBytes = 262144
 $script:MaxTrustedLocations = 64
 $script:MaxWorkbookBytes = 536870912
 $script:MaxSensitivityLabels = 32
+$script:MaxCompoundDirectoryEntries = 16384
+$script:MaxCompoundHierarchyDepth = 128
+$script:MaxCompoundPathChars = 2048
 
 function Decode-Base64Utf8 {
     param([string]$Value)
@@ -113,12 +116,40 @@ function Get-ZoneInformation {
             -Raw `
             -Encoding UTF8 `
             -ErrorAction Stop
+        $currentSection = ''
+        $zoneTransferSeen = $false
+        $zoneIdSeen = $false
+        $parsedZoneId = 0
         foreach ($line in @($zoneText -split '\r?\n')) {
-            if ($line -match '^ZoneId\s*=\s*([0-9]+)\s*$') {
-                return [ordered]@{ status = 'read'; zoneId = [int]$matches[1] }
+            if ($line -match '^\s*\[([^\]]+)\]\s*$') {
+                $currentSection = $matches[1].Trim()
+                if ($currentSection -ieq 'ZoneTransfer') {
+                    if ($zoneTransferSeen) {
+                        return [ordered]@{ status = 'unreadable'; zoneId = $null }
+                    }
+                    $zoneTransferSeen = $true
+                }
+                continue
+            }
+            if (
+                $currentSection -ieq 'ZoneTransfer' -and
+                $line -match '^\s*ZoneId\s*=\s*([0-9]+)\s*$'
+            ) {
+                if (
+                    $zoneIdSeen -or
+                    -not [int]::TryParse($matches[1], [ref]$parsedZoneId) -or
+                    $parsedZoneId -lt 0 -or
+                    $parsedZoneId -gt 4
+                ) {
+                    return [ordered]@{ status = 'unreadable'; zoneId = $null }
+                }
+                $zoneIdSeen = $true
             }
         }
-        return [ordered]@{ status = 'read'; zoneId = $null }
+        if (-not $zoneTransferSeen -or -not $zoneIdSeen) {
+            return [ordered]@{ status = 'unreadable'; zoneId = $null }
+        }
+        return [ordered]@{ status = 'read'; zoneId = $parsedZoneId }
     }
     catch {
         return [ordered]@{ status = 'unreadable'; zoneId = $null }
@@ -242,6 +273,9 @@ function Get-CompoundInventory {
             $stream.Position = $offset
             $sector = $reader.ReadBytes($sectorSize)
             for ($entryOffset = 0; $entryOffset -lt $sectorSize; $entryOffset += 128) {
+                if ($directoryEntryIndex -ge $script:MaxCompoundDirectoryEntries) {
+                    throw 'The compound file directory contains too many entries.'
+                }
                 $nameBytes = [BitConverter]::ToUInt16($sector, $entryOffset + 64)
                 if ($nameBytes -ge 2 -and $nameBytes -le 64 -and ($nameBytes % 2) -eq 0) {
                     $name = [Text.Encoding]::Unicode.GetString(
@@ -278,7 +312,7 @@ function Get-CompoundInventory {
     if ($rootEntry.Count -eq 1) {
         $visitedHierarchy = New-Object 'System.Collections.Generic.HashSet[int]'
         $storageQueue = New-Object 'System.Collections.Generic.Queue[object]'
-        $storageQueue.Enqueue([ordered]@{ entry = $rootEntry[0]; path = '' })
+        $storageQueue.Enqueue([ordered]@{ entry = $rootEntry[0]; path = ''; depth = 0 })
         while ($storageQueue.Count -gt 0) {
             $storageContext = $storageQueue.Dequeue()
             $childId = [int]$storageContext.entry.childId
@@ -296,16 +330,30 @@ function Get-CompoundInventory {
                     continue
                 }
                 $childEntry = $entriesById[$entryId]
+                $parentPath = [string]$storageContext.path
+                $childName = [string]$childEntry.name
+                $childDepth = [int]$storageContext.depth + 1
+                $childPathLength = $parentPath.Length + 1 + $childName.Length
+                if (
+                    $childDepth -gt $script:MaxCompoundHierarchyDepth -or
+                    $childPathLength -gt $script:MaxCompoundPathChars
+                ) {
+                    throw 'The compound file directory hierarchy exceeds the inspection limit.'
+                }
                 if ([int]$childEntry.leftSiblingId -ge 0) { $siblingStack.Push([int]$childEntry.leftSiblingId) }
                 if ([int]$childEntry.rightSiblingId -ge 0) { $siblingStack.Push([int]$childEntry.rightSiblingId) }
-                $entryPath = if ([string]::IsNullOrEmpty([string]$storageContext.path)) {
-                    "\$($childEntry.name)"
+                $entryPath = if ([string]::IsNullOrEmpty($parentPath)) {
+                    "\$childName"
                 } else {
-                    "$($storageContext.path)\$($childEntry.name)"
+                    "$parentPath\$childName"
                 }
                 $pathsById[$entryId] = $entryPath
                 if ([int]$childEntry.objectType -eq 1) {
-                    $storageQueue.Enqueue([ordered]@{ entry = $childEntry; path = $entryPath })
+                    $storageQueue.Enqueue([ordered]@{
+                        entry = $childEntry
+                        path = $entryPath
+                        depth = $childDepth
+                    })
                 }
             }
         }
@@ -834,7 +882,7 @@ function Get-OpcPackageSignatureInventory {
     if ($referencedSignatureParts.Count -eq 0) {
         return [ordered]@{ status = 'absent'; verificationStatus = 'notPresent'; present = $false }
     }
-    return [ordered]@{ status = 'present'; verificationStatus = 'verified'; present = $true }
+    return [ordered]@{ status = 'present'; verificationStatus = 'structureVerified'; present = $true }
 }
 
 function Convert-OpcBoolean {
@@ -1602,16 +1650,33 @@ function Add-TrustedLocations {
         [ref]$Unreadable
     )
 
-    if ($Target.Count -ge $script:MaxTrustedLocations) { return }
+    if ($Target.Count -ge $script:MaxTrustedLocations) {
+        $Unreadable.Value = $true
+        return
+    }
     $root = $null
     $locationsKey = $null
     try {
         $root = Open-RegistryRoot $Hive $View
         $locationsKey = $root.OpenSubKey($KeyPath, $false)
         if ($null -eq $locationsKey) { return }
-        for ($locationIndex = 0; $locationIndex -lt 64; $locationIndex++) {
-            if ($Target.Count -ge $script:MaxTrustedLocations) { break }
-            $locationName = "Location$locationIndex"
+        if ($locationsKey.SubKeyCount -gt 256) {
+            $Unreadable.Value = $true
+            return
+        }
+        $locationNames = @(
+            $locationsKey.GetSubKeyNames() |
+                Where-Object { $_ -match '^Location(?:0|[1-9][0-9]{0,8})$' } |
+                Sort-Object { [int64]$_.Substring(8) }
+        )
+        if ($locationNames.Count -gt $script:MaxTrustedLocations) {
+            $Unreadable.Value = $true
+        }
+        foreach ($locationName in $locationNames) {
+            if ($Target.Count -ge $script:MaxTrustedLocations) {
+                $Unreadable.Value = $true
+                break
+            }
             $locationKey = $locationsKey.OpenSubKey($locationName, $false)
             try {
                 if ($null -eq $locationKey) { continue }
@@ -1622,8 +1687,20 @@ function Add-TrustedLocations {
                     [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
                 )
                 if ([object]::ReferenceEquals($locationValue, $sentinel)) { continue }
-                $locationPath = [string]$locationValue
-                if ([string]::IsNullOrWhiteSpace($locationPath)) { continue }
+                $rawLocationPath = [string]$locationValue
+                if (
+                    [string]::IsNullOrWhiteSpace($rawLocationPath) -or
+                    $rawLocationPath.Length -gt 2048
+                ) { continue }
+                $locationPath = [Environment]::ExpandEnvironmentVariables($rawLocationPath)
+                if (
+                    [string]::IsNullOrWhiteSpace($locationPath) -or
+                    $locationPath.Length -gt 2048 -or
+                    $locationPath -match '%[^%]+%'
+                ) {
+                    $Unreadable.Value = $true
+                    continue
+                }
                 $allowSubfolders = $false
                 $allowValue = $locationKey.GetValue('AllowSubfolders', $sentinel)
                 if (-not [object]::ReferenceEquals($allowValue, $sentinel)) {
@@ -1637,7 +1714,7 @@ function Add-TrustedLocations {
                     source = $Source
                     managed = $Managed
                     registryPath = $registryPath
-                    path = if ($locationPath.Length -gt 2048) { $locationPath.Substring(0, 2048) } else { $locationPath }
+                    path = $locationPath
                     allowSubfolders = $allowSubfolders
                     registryView = $registryViewName
                 }
@@ -1665,6 +1742,95 @@ function Add-TrustedLocations {
     }
 }
 
+function Add-DefaultTrustedLocations {
+    param(
+        [System.Collections.IList]$Target,
+        [System.Collections.Generic.HashSet[string]]$Seen
+    )
+
+    $records = New-Object System.Collections.ArrayList
+    $applicationData = [Environment]::GetFolderPath(
+        [Environment+SpecialFolder]::ApplicationData
+    )
+    if (-not [string]::IsNullOrWhiteSpace($applicationData)) {
+        [void]$records.Add(@{
+            Path = [IO.Path]::Combine($applicationData, 'Microsoft', 'Templates')
+            AllowSubfolders = $false
+            Description = 'Modèles utilisateur Excel'
+            RegistryView = $null
+        })
+        [void]$records.Add(@{
+            Path = [IO.Path]::Combine($applicationData, 'Microsoft', 'Excel', 'XLSTART')
+            AllowSubfolders = $false
+            Description = 'Démarrage utilisateur Excel'
+            RegistryView = $null
+        })
+    }
+    $programRoots = @(
+        @{
+            Path = [Environment]::GetFolderPath(
+                [Environment+SpecialFolder]::ProgramFiles
+            )
+            RegistryView = '64'
+        },
+        @{
+            Path = [Environment]::GetFolderPath(
+                [Environment+SpecialFolder]::ProgramFilesX86
+            )
+            RegistryView = '32'
+        }
+    )
+    foreach ($programRoot in $programRoots) {
+        if ([string]::IsNullOrWhiteSpace([string]$programRoot.Path)) { continue }
+        foreach ($definition in @(
+            @{ Relative = 'Microsoft Office\Root\Templates'; Description = "Modèles d’application Excel" },
+            @{ Relative = 'Microsoft Office\Root\Office16\XLSTART'; Description = 'Démarrage Excel' },
+            @{ Relative = 'Microsoft Office\Root\Office16\STARTUP'; Description = 'Démarrage Office' },
+            @{ Relative = 'Microsoft Office\Root\Office16\Library'; Description = 'Compléments Excel' }
+        )) {
+            [void]$records.Add(@{
+                Path = [IO.Path]::Combine(
+                    [string]$programRoot.Path,
+                    [string]$definition.Relative
+                )
+                AllowSubfolders = $true
+                Description = [string]$definition.Description
+                RegistryView = [string]$programRoot.RegistryView
+            })
+        }
+    }
+
+    foreach ($record in $records) {
+        if ($Target.Count -ge $script:MaxTrustedLocations) { break }
+        try {
+            $locationPath = [IO.Path]::GetFullPath([string]$record.Path)
+        }
+        catch {
+            continue
+        }
+        if (
+            [string]::IsNullOrWhiteSpace($locationPath) -or
+            $locationPath.Length -gt 2048
+        ) { continue }
+        $registryView = if ([string]::IsNullOrWhiteSpace([string]$record.RegistryView)) {
+            $null
+        } else {
+            [string]$record.RegistryView
+        }
+        $deduplicationKey = "officeDefault|$locationPath|$($record.AllowSubfolders)|$registryView".ToLowerInvariant()
+        if (-not $Seen.Add($deduplicationKey)) { continue }
+        [void]$Target.Add([ordered]@{
+            source = 'officeDefault'
+            managed = $false
+            registryPath = 'Excel default trusted location'
+            path = $locationPath
+            allowSubfolders = [bool]$record.AllowSubfolders
+            description = [string]$record.Description
+            registryView = $registryView
+        })
+    }
+}
+
 function Get-OfficeSecurity {
     $settings = New-Object System.Collections.ArrayList
     $unreadableSettings = New-Object System.Collections.ArrayList
@@ -1672,6 +1838,8 @@ function Get-OfficeSecurity {
     $outlookArchitectureSignals = New-Object System.Collections.ArrayList
     $trustedLocations = New-Object System.Collections.ArrayList
     $seenTrustedLocations = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $trustedLocationInspectionPartial = $false
+    Add-DefaultTrustedLocations $trustedLocations $seenTrustedLocations
     $sources = @(
         @{ Hive = 'HKCU'; Prefix = 'Software\Policies\Microsoft\Cloud\Office\16.0'; Source = 'cloudPolicy'; Managed = $true },
         @{ Hive = 'HKLM'; Prefix = 'Software\Policies\Microsoft\Office\16.0'; Source = 'machinePolicy'; Managed = $true },
@@ -1771,7 +1939,10 @@ function Get-OfficeSecurity {
                 $sharedView `
                 $seenTrustedLocations `
                 ([ref]$locationReadFailure)
-            if ($locationReadFailure) { $readFailure = $true }
+            if ($locationReadFailure) {
+                $readFailure = $true
+                $trustedLocationInspectionPartial = $true
+            }
         }
         $sourceUnreadable[$source.Source] = $readFailure
     }
@@ -1886,6 +2057,7 @@ function Get-OfficeSecurity {
         mdmEnrollmentStatus = $mdmEnrollmentStatus
         mdmProvider = $mdmProvider
         groupPolicyHistoryStatus = $groupPolicyHistoryStatus
+        trustedLocationInspectionPartial = $trustedLocationInspectionPartial
         registryInspectionPartial = [bool](
             $architectureRegistryUnreadable -or
             $sourceUnreadable.Values -contains $true -or
@@ -2024,12 +2196,19 @@ function Write-SingleJson {
     exit $ExitCode
 }
 
+$inspectionLock = $null
 try {
     $workbookPath = Resolve-SafeWorkbookPath (Decode-Base64Utf8 $WorkbookPathBase64)
     $workbookFile = Get-Item -LiteralPath $workbookPath -Force
     if ($workbookFile.Length -gt $script:MaxWorkbookBytes) {
         throw 'The workbook exceeds the 512 MiB inspection limit.'
     }
+    $inspectionLock = New-Object IO.FileStream(
+        $workbookPath,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        [IO.FileShare]::Read
+    )
     $sha256Before = Get-Sha256 $workbookPath
     $workbookSecurity = Get-WorkbookSecurity $workbookPath
     $officeSecurity = Get-OfficeSecurity
@@ -2044,9 +2223,15 @@ try {
         workbook = $workbookSecurity
         office = $officeSecurity
     }
+    $inspectionLock.Dispose()
+    $inspectionLock = $null
     Write-SingleJson $result 0
 }
 catch {
+    if ($null -ne $inspectionLock) {
+        $inspectionLock.Dispose()
+        $inspectionLock = $null
+    }
     Write-SingleJson ([ordered]@{
         schemaVersion = 1
         error = [ordered]@{

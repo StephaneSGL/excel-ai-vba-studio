@@ -6,6 +6,11 @@ import react from '@vitejs/plugin-react'
 const cwd = process.cwd()
 const argv = process.argv
 const isProdBuild = argv.includes('build') && argv.some((arg) => arg.includes('production'))
+const devWebviewOrigins = [
+  /^vscode-webview:\/\/[a-z0-9-]+$/i,
+  /^https:\/\/[a-z0-9-]+\.(?:vscode-cdn|vscode-webview)\.net$/i,
+  /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/i,
+]
 
 if (isProdBuild) {
   rmSync(resolve(cwd, 'out'), { recursive: true, force: true })
@@ -34,7 +39,7 @@ export default defineConfig(() => ({
   },
   server: {
     cors: {
-      origin: true,
+      origin: devWebviewOrigins,
     },
     host: '127.0.0.1',
     port: 5739,

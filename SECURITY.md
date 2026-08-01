@@ -36,6 +36,18 @@ Le Centre n’ouvre jamais le classeur inspecté. Cette séparation évite qu’
 `Workbook_Open`, une feuille macro Excel 4.0 ou un autre contenu actif soit
 déclenché simplement pour consulter le diagnostic.
 
+L’inspection conserve un verrou de lecture pendant tout le diagnostic afin que
+le fichier ne puisse pas être remplacé entre deux contrôles. Les flux
+`Zone.Identifier`, les registres, les parties XML et les conteneurs CFB sont
+bornés. Un `ZoneId` invalide, des sections `ZoneTransfer` ambiguës, une
+hiérarchie CFB excessive ou un inventaire macro incomplet donnent un état
+indéterminé plutôt qu’une autorisation implicite.
+
+Les emplacements approuvés incluent les chemins intégrés documentés par Excel
+et les clés `LocationN` effectivement présentes. Les variables d’environnement
+sont développées localement ; un chemin non résolu ou une énumération tronquée
+est signalé comme partiellement illisible.
+
 Ce diagnostic et les liens explicites vers les portails ne remplacent pas Microsoft 365 Apps admin center, Intune, les
 résultats de stratégie de groupe, Microsoft Defender ou Microsoft Purview. Il
 ne modifie jamais le registre, le Centre de gestion de la confidentialité,
@@ -50,6 +62,9 @@ l’URI valide des parties), l’extension le laisse en lecture seule et refuse
 toutes ses voies d’écriture, y compris Enregistrer sous, la grille XLSM, le
 bootstrap VBA, les UserForms, les boutons et ActiveX. Si cet état ne peut pas
 être vérifié de façon sûre, l’écriture est également refusée.
+Le Centre confirme uniquement la structure OPC d’une signature de package ; il
+ne valide pas cryptographiquement le certificat, sa chaîne de confiance ou sa
+révocation.
 
 ## Signaler une vulnérabilité
 
