@@ -1,4 +1,3 @@
-import { Agent } from 'https';
 import { RestClientSettings } from '../models/configurationSettings';
 import { HttpRequest } from '../models/httpRequest';
 import { HttpResponse } from '../models/httpResponse';
@@ -6,6 +5,9 @@ import { RequestHeaders, ResponseHeaders } from '../models/types';
 import { MimeUtility } from './mimeUtility';
 import { encodeUrl, getHeader, removeHeader } from './misc';
 import { convertBufferToStream, convertStreamToBuffer } from './streamUtility';
+
+const MAX_HTTP_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_HTTP_RESPONSE_CHUNKS = 16 * 1024;
 
 export interface RequestProgress {
     phase: 'sending' | 'receiving';
@@ -22,7 +24,6 @@ interface RequestOption {
 
 export class HttpClient {
     private readonly _settings = RestClientSettings.Instance;
-    private readonly _httpsAgent = new Agent({ rejectUnauthorized: false });
 
     public async send(
         httpRequest: HttpRequest,
@@ -44,8 +45,6 @@ export class HttpClient {
             body: body as BodyInit | undefined,
             redirect: this._settings.followRedirect ? 'follow' : 'manual',
             signal: httpRequest.signal,
-            // @ts-expect-error Node fetch supports https agent
-            agent: requestUrl.startsWith('https') ? this._httpsAgent : undefined,
         });
 
         if (httpRequest.isCancelled) {
@@ -102,11 +101,20 @@ export class HttpClient {
             return Buffer.alloc(0);
         }
 
-        const contentLength = response.headers.get('content-length');
-        const total = contentLength ? Number.parseInt(contentLength, 10) : undefined;
         const reader = response.body.getReader();
+        const contentLength = response.headers.get('content-length')?.trim();
+        let total: number | undefined;
+        if (contentLength && /^\d+$/.test(contentLength)) {
+            const declaredLength = Number(contentLength);
+            if (!Number.isSafeInteger(declaredLength) || declaredLength > MAX_HTTP_RESPONSE_BYTES) {
+                await this.cancelReader(reader);
+                throw this.createResponseTooLargeError();
+            }
+            total = declaredLength;
+        }
         const chunks: Uint8Array[] = [];
         let loaded = 0;
+        let chunkCount = 0;
 
         onProgress?.({ phase: 'receiving', loaded, total });
 
@@ -121,12 +129,39 @@ export class HttpClient {
                 break;
             }
 
-            chunks.push(value);
+            chunkCount += 1;
+            if (chunkCount > MAX_HTTP_RESPONSE_CHUNKS) {
+                await this.cancelReader(reader);
+                throw this.createResponseChunkLimitError();
+            }
+            if (loaded + value.byteLength > MAX_HTTP_RESPONSE_BYTES) {
+                await this.cancelReader(reader);
+                throw this.createResponseTooLargeError();
+            }
+            if (value.byteLength > 0) {
+                chunks.push(value);
+            }
             loaded += value.byteLength;
             onProgress?.({ phase: 'receiving', loaded, total });
         }
 
-        return Buffer.concat(chunks);
+        return Buffer.concat(chunks, loaded);
+    }
+
+    private async cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+        try {
+            await reader.cancel();
+        } catch {
+            // Preserve the deterministic size-limit error if cancellation itself fails.
+        }
+    }
+
+    private createResponseTooLargeError(): Error {
+        return new Error(`HTTP response exceeds the ${MAX_HTTP_RESPONSE_BYTES}-byte limit.`);
+    }
+
+    private createResponseChunkLimitError(): Error {
+        return new Error(`HTTP response exceeds the ${MAX_HTTP_RESPONSE_CHUNKS}-chunk limit.`);
     }
 
     private createCancelledError(): Error {

@@ -11,7 +11,7 @@ The complete license texts shipped with the extension are collected in [THIRD_PA
 | pyOpenVBA | 3.1.0 | MIT | <https://github.com/WilliamSmithEdward/pyOpenVBA> |
 | PyInstaller bootloader | 6.15.0 | GPL-2.0-or-later with Bootloader Exception | <https://github.com/pyinstaller/pyinstaller> |
 | Python runtime | 3.11.9 | Python Software Foundation License | <https://www.python.org/> |
-| Vditor by B3log | source tree only | MIT | <https://github.com/Vanessa219/vditor> |
+| Vditor by B3log | historical source provenance; not bundled | MIT | <https://github.com/Vanessa219/vditor> |
 | SheetJS Community Edition (`xlsx`) | 0.20.3 | Apache-2.0 | <https://git.sheetjs.com/SheetJS/sheetjs> |
 | ExcelJS (`@cweijan/exceljs`) | 5.0.2 | MIT | <https://github.com/exceljs/exceljs> |
 | React / React DOM | 19.2.8 | MIT | <https://github.com/facebook/react> |
@@ -35,6 +35,7 @@ The helper also embeds the PyInstaller 6.15.0 bootloader under its explicit
 Bootloader Exception and the Python 3.11.9 runtime.
 
 The preserved license texts for the Office Viewer baseline, vendored
-x-data-spreadsheet code, and the Vditor source tree are stored in the
-[LICENSES](LICENSES) directory. Vditor is retained in the public source tree
-but is excluded from the targeted Excel AI & VBA Studio VSIX.
+x-data-spreadsheet code, and historical Vditor source provenance are stored in
+the [LICENSES](LICENSES) directory. The obsolete standalone Vditor source tree
+is no longer built or retained in this Excel-only repository; its MIT text is
+kept for attribution and provenance.

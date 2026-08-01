@@ -82,6 +82,28 @@ l’éditeur ne sont pas configurées. Ces deux limites sont des travaux de
 durcissement de livraison ; elles ne réduisent pas les refus d’écriture et les
 contrôles locaux décrits ci-dessus.
 
+## Réseau et contenu webview
+
+Le client d’API personnalisée conserve la validation TLS native. Il exige
+HTTPS, sauf pour une adresse loopback locale, refuse les identifiants et les
+paramètres `key` dans l’URL, transmet les clés dans les en-têtes et ne suit pas
+les redirections. Les réponses non streamées sont limitées à 16 Mio ; les flux
+à 64 Mio, avec un tampon de ligne limité à 1 Mio de caractères. Le client HTTP
+générique limite également chaque corps de réponse à 64 Mio. Les lectures non
+streamées refusent aussi les réponses fragmentées en plus de 16 384 blocs.
+
+Les URI d’icônes rendues dans les webviews sont limitées aux ressources SVG
+HTTPS émises par l’hôte de ressources VS Code. Le dispatch de messages exige un
+gestionnaire explicitement enregistré, les namespaces OOXML sont comparés dans
+leur intégralité et les chaînes de police générées pour le canvas sont
+échappées avant insertion dans une propriété CSS.
+
+Les anciens arbres d’actifs Vditor/PDF et les points d’entrée inactifs des
+providers Markdown/Java qui n’étaient ni construits ni inclus dans le VSIX ont
+été supprimés. Leur remise en service nécessiterait une nouvelle revue de
+sécurité et, pour PDF.js, une mise à niveau complète plutôt qu’un patch isolé
+de l’ancienne copie.
+
 ## Signaler une vulnérabilité
 
 Ne publiez pas de vulnérabilité présumée dans une issue, une discussion, un journal ou un classeur partagé publiquement.

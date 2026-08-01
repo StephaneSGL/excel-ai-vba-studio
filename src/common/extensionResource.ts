@@ -20,20 +20,6 @@ export function getReactWebviewResourceRoots(context: vscode.ExtensionContext): 
     ];
 }
 
-export function getMarkdownWebviewResourceRoots(context: vscode.ExtensionContext): vscode.Uri[] {
-    return [
-        extensionResource(context, 'resource', 'markdown'),
-        extensionResource(context, 'resource', 'lib'),
-    ];
-}
-
-export function getPdfWebviewResourceRoots(context: vscode.ExtensionContext): vscode.Uri[] {
-    return [
-        extensionResource(context, 'resource', 'pdf'),
-        extensionResource(context, 'resource', 'lib'),
-    ];
-}
-
 export interface WebviewCspOptions {
     allowRemoteImages?: boolean;
     allowDataFrames?: boolean;

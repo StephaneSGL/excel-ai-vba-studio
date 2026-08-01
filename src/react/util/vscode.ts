@@ -31,12 +31,15 @@ export function applyDarkMode(dark: boolean) {
     saveDarkMode(dark);
 }
 
-const events = {}
-function receive({ data }) {
-    if (!data)
+type VscodeEventHandler = (content: unknown) => void;
+
+const events = new Map<string, VscodeEventHandler>();
+function receive({ data }: MessageEvent) {
+    if (!data || typeof data !== 'object' || typeof data.type !== 'string')
         return;
-    if (events[data.type]) {
-        events[data.type](data.content);
+    const eventHandler = events.get(data.type);
+    if (typeof eventHandler === 'function') {
+        eventHandler(data.content);
     }
 }
 window.addEventListener('message', receive)
@@ -49,8 +52,10 @@ window.addEventListener('keydown', e => {
 
 const getVscodeEvent = () => {
     return {
-        on(event: string, data) {
-            events[event] = data
+        on(event: string, data: VscodeEventHandler) {
+            if (typeof data === 'function') {
+                events.set(event, data)
+            }
             return this;
         },
         emit(event: string, data?: any) {

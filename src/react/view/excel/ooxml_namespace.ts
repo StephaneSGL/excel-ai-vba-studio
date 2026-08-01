@@ -1,5 +1,7 @@
 const SPREADSHEETML_MAIN_NAMESPACE =
     'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+const PACKAGE_RELATIONSHIPS_NAMESPACE =
+    'http://schemas.openxmlformats.org/package/2006/relationships';
 
 type MarkupVisitor = (tagStart: number, tagEnd: number, closing: boolean) => void;
 
@@ -143,14 +145,55 @@ const makeRelativePackageTarget = (
         : null;
 };
 
+const getPackageRelationshipsPrefix = (xml: string): string | null => {
+    let rootSeen = false;
+    let rootPrefix: string | null = null;
+    let rootBindingCount = 0;
+    let conflictingBinding = false;
+
+    const wellFormed = scanMarkup(xml, (tagStart, tagEnd, closing) => {
+        if (closing) return;
+        const tag = xml.slice(tagStart, tagEnd + 1);
+        const isRoot = !rootSeen;
+        if (isRoot) {
+            rootSeen = true;
+            const rootName =
+                /^<([A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)(?=[\s/>])/.exec(tag);
+            if (rootName?.[2] !== 'Relationships') {
+                conflictingBinding = true;
+                return;
+            }
+            rootPrefix = rootName[1]?.slice(0, -1) ?? '';
+        }
+
+        if (rootPrefix === null) return;
+        const declaration =
+            /\sxmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(["'])([^"']*)\2/g;
+        for (const match of tag.matchAll(declaration)) {
+            if ((match[1] ?? '') !== rootPrefix) continue;
+            if (isRoot) rootBindingCount += 1;
+            if (match[3] !== PACKAGE_RELATIONSHIPS_NAMESPACE) {
+                conflictingBinding = true;
+            }
+        }
+    });
+
+    return wellFormed
+        && rootSeen
+        && rootPrefix !== null
+        && rootBindingCount === 1
+        && !conflictingBinding
+        ? rootPrefix
+        : null;
+};
+
 export function normalizeOoxmlRelationshipTargets(
     xml: string,
     relationshipPath: string,
 ): { xml: string; changed: boolean } {
+    const relationshipPrefix = getPackageRelationshipsPrefix(xml);
     if (
-        !xml.includes(
-            'http://schemas.openxmlformats.org/package/2006/relationships',
-        )
+        relationshipPrefix === null
         || relationshipBaseSegments(relationshipPath) === null
     ) {
         return { xml, changed: false };
@@ -163,7 +206,8 @@ export function normalizeOoxmlRelationshipTargets(
         if (closing) return;
         const tag = xml.slice(tagStart, tagEnd + 1);
         const name = /^<([A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)/.exec(tag);
-        if (name?.[2] !== 'Relationship') return;
+        const prefix = name?.[1]?.slice(0, -1) ?? '';
+        if (name?.[2] !== 'Relationship' || prefix !== relationshipPrefix) return;
         if (/\sTargetMode\s*=\s*(["'])External\1/i.test(tag)) return;
 
         const target = /\sTarget\s*=\s*(["'])(.*?)\1/.exec(tag);

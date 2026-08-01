@@ -4,6 +4,13 @@
 // horizontal spacing and is too large to reuse vertically.
 const VERTICAL_TEXT_PADDING = 2;
 
+function escapeCssSingleQuotedString(value) {
+  return `${value}`
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/[\r\n\f]/g, ' ');
+}
+
 function dpr() {
   return window.devicePixelRatio || 1;
 }
@@ -232,7 +239,7 @@ class Draw {
     const {
       align, valign, font, color, strike, underline,
     } = attr;
-    const fontName = (font.name || 'Arial').replace(/'/g, "\\'");
+    const fontName = escapeCssSingleQuotedString(font.name || 'Arial');
     const tx = box.textx(align);
     ctx.save();
     ctx.beginPath();
@@ -449,6 +456,7 @@ export default {};
 export {
   Draw,
   DrawBox,
+  escapeCssSingleQuotedString,
   thinLineWidth,
   npx,
 };

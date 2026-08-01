@@ -17,27 +17,88 @@ const DEFAULT_MODELS: Record<Exclude<CustomAIApiFormat, "auto">, string> = {
     ollama: "llama3.2",
 };
 
-const trimTrailingSlash = (url: string) => url.replace(/\/+$/, "");
+const MAX_AI_RESPONSE_BYTES = 16 * 1024 * 1024;
+const MAX_AI_RESPONSE_CHUNKS = 16 * 1024;
+const MAX_AI_STREAM_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_AI_STREAM_BUFFER_CHARACTERS = 1024 * 1024;
+
+const parseApiUrl = (rawUrl: string): URL | undefined => {
+    try {
+        return new URL(rawUrl);
+    } catch {
+        return undefined;
+    }
+};
+
+const normalizeHostname = (hostname: string): string => hostname.toLowerCase().replace(/\.$/, "");
+
+const hostnameMatchesDomain = (hostname: string, domain: string): boolean => {
+    const normalizedHostname = normalizeHostname(hostname);
+    return normalizedHostname === domain || normalizedHostname.endsWith(`.${domain}`);
+};
+
+const isLoopbackHostname = (hostname: string): boolean => {
+    const normalizedHostname = normalizeHostname(hostname);
+    return normalizedHostname === "localhost"
+        || normalizedHostname === "[::1]"
+        || /^127(?:\.\d{1,3}){3}$/.test(normalizedHostname);
+};
+
+const hasQueryApiKey = (url: URL): boolean => {
+    for (const key of url.searchParams.keys()) {
+        if (key.toLowerCase() === "key") {
+            return true;
+        }
+    }
+    return false;
+};
+
+const validateApiUrl = (rawUrl: string): string => {
+    const parsed = parseApiUrl(rawUrl);
+    if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+        throw new Error("API URL must be an absolute HTTP(S) URL.");
+    }
+    if (parsed.username || parsed.password) {
+        throw new Error("API URL must not contain embedded credentials.");
+    }
+    if (hasQueryApiKey(parsed)) {
+        throw new Error("API URL must not contain a 'key' query parameter. Use the API key field instead.");
+    }
+    if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
+        throw new Error("HTTPS is required for non-local AI endpoints.");
+    }
+    return parsed.toString();
+};
+
+const trimTrailingPathSlash = (pathname: string): string => pathname.replace(/\/+$/, "");
+
+const withPathname = (url: URL, pathname: string): string => {
+    url.pathname = pathname || "/";
+    return url.toString();
+};
 
 /** 根据 URL 猜测 API 格式 */
 export const detectCustomAIFormat = (url: string): Exclude<CustomAIApiFormat, "auto"> => {
-    const lower = url.toLowerCase();
-    if (lower.includes("anthropic.com") || lower.includes("/v1/messages")) {
+    const parsed = parseApiUrl(url);
+    if (!parsed) {
+        return "openai";
+    }
+
+    const pathname = parsed.pathname.toLowerCase();
+    if (hostnameMatchesDomain(parsed.hostname, "anthropic.com") || pathname.endsWith("/v1/messages")) {
         return "anthropic";
     }
     if (
-        lower.includes("generativelanguage.googleapis.com")
-        || lower.includes("googleapis.com")
-        || lower.includes(":generatecontent")
-        || lower.includes("/gemini")
+        hostnameMatchesDomain(parsed.hostname, "generativelanguage.googleapis.com")
+        || hostnameMatchesDomain(parsed.hostname, "googleapis.com")
+        || pathname.endsWith(":generatecontent")
+        || pathname.split("/").some((segment) => segment.startsWith("gemini"))
     ) {
         return "gemini";
     }
     if (
-        lower.includes("ollama")
-        || lower.includes(":11434")
-        || lower.endsWith("/api/chat")
-        || /\/api\/chat(?:\?|$)/.test(lower)
+        parsed.port === "11434"
+        || pathname.endsWith("/api/chat")
     ) {
         return "ollama";
     }
@@ -56,59 +117,58 @@ const resolveModel = (format: Exclude<CustomAIApiFormat, "auto">, model?: string
 };
 
 const resolveOpenAIUrl = (rawUrl: string) => {
-    const url = trimTrailingSlash(rawUrl);
-    if (url.endsWith("/chat/completions")) {
-        return url;
+    const url = new URL(rawUrl);
+    const pathname = trimTrailingPathSlash(url.pathname);
+    if (pathname.endsWith("/chat/completions")) {
+        return withPathname(url, pathname);
     }
-    if (url.endsWith("/v1")) {
-        return `${url}/chat/completions`;
+    if (pathname.endsWith("/v1")) {
+        return withPathname(url, `${pathname}/chat/completions`);
     }
-    if (/\/v\d+$/.test(url)) {
-        return `${url}/chat/completions`;
+    if (/\/v\d+$/.test(pathname)) {
+        return withPathname(url, `${pathname}/chat/completions`);
     }
-    return `${url}/v1/chat/completions`;
+    return withPathname(url, `${pathname}/v1/chat/completions`);
 };
 
 const resolveAnthropicUrl = (rawUrl: string) => {
-    const url = trimTrailingSlash(rawUrl);
-    if (url.endsWith("/messages")) {
-        return url;
+    const url = new URL(rawUrl);
+    const pathname = trimTrailingPathSlash(url.pathname);
+    if (pathname.endsWith("/messages")) {
+        return withPathname(url, pathname);
     }
-    if (url.endsWith("/v1")) {
-        return `${url}/messages`;
+    if (pathname.endsWith("/v1")) {
+        return withPathname(url, `${pathname}/messages`);
     }
-    return `${url}/v1/messages`;
+    return withPathname(url, `${pathname}/v1/messages`);
 };
 
 const resolveOllamaUrl = (rawUrl: string) => {
-    const url = trimTrailingSlash(rawUrl);
-    if (url.endsWith("/api/chat")) {
-        return url;
+    const url = new URL(rawUrl);
+    const pathname = trimTrailingPathSlash(url.pathname);
+    if (pathname.endsWith("/api/chat")) {
+        return withPathname(url, pathname);
     }
-    if (url.endsWith("/api")) {
-        return `${url}/chat`;
+    if (pathname.endsWith("/api")) {
+        return withPathname(url, `${pathname}/chat`);
     }
-    return `${url}/api/chat`;
+    return withPathname(url, `${pathname}/api/chat`);
 };
 
 const resolveGeminiUrl = (rawUrl: string, model: string) => {
-    const url = trimTrailingSlash(rawUrl);
-    if (url.includes(":generateContent")) {
-        return url;
+    const url = new URL(rawUrl);
+    const pathname = trimTrailingPathSlash(url.pathname);
+    const normalizedPathname = pathname.toLowerCase();
+    if (normalizedPathname.endsWith(":generatecontent")) {
+        return withPathname(url, pathname);
     }
-    if (url.includes("/models/")) {
-        return `${url}:generateContent`;
+    if (pathname.split("/").includes("models")) {
+        return withPathname(url, `${pathname}:generateContent`);
     }
-    const base = url.includes("googleapis.com") ? url : `${url}/v1beta`;
-    return `${base}/models/${model}:generateContent`;
-};
-
-const appendQueryKey = (url: string, apiKey?: string) => {
-    if (!apiKey || /[?&]key=/.test(url)) {
-        return url;
-    }
-    const joiner = url.includes("?") ? "&" : "?";
-    return `${url}${joiner}key=${encodeURIComponent(apiKey)}`;
+    const basePath = hostnameMatchesDomain(url.hostname, "googleapis.com")
+        ? pathname
+        : `${pathname}/v1beta`;
+    return withPathname(url, `${basePath}/models/${encodeURIComponent(model)}:generateContent`);
 };
 
 const buildRequest = (
@@ -134,11 +194,12 @@ const buildRequest = (
                 },
             };
         case "gemini":
+            const geminiUrl = resolveGeminiUrl(rawUrl, model);
             return {
-                url: appendQueryKey(resolveGeminiUrl(rawUrl, model), apiKey),
+                url: geminiUrl,
                 headers: {
                     "Content-Type": "application/json",
-                    ...(apiKey && !rawUrl.includes("key=") ? { "x-goog-api-key": apiKey } : {}),
+                    ...(apiKey ? { "x-goog-api-key": apiKey } : {}),
                 },
                 body: {
                     contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -330,6 +391,78 @@ const parseErrorMessage = (data: any, status: number, statusText: string): strin
     return `HTTP ${status} ${statusText}`;
 };
 
+const declaredContentLength = (response: Response): number | undefined => {
+    const rawLength = response.headers.get("content-length")?.trim();
+    if (!rawLength || !/^\d+$/.test(rawLength)) {
+        return undefined;
+    }
+    const length = Number(rawLength);
+    return Number.isSafeInteger(length) ? length : Number.POSITIVE_INFINITY;
+};
+
+const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> => {
+    try {
+        await reader.cancel();
+    } catch {
+        // Preserve the deterministic size-limit error if cancellation itself fails.
+    }
+};
+
+class ResponseReadLimitError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ResponseReadLimitError";
+    }
+}
+
+const responseTooLargeError = (limit: number): Error =>
+    new ResponseReadLimitError(`AI API response exceeds the ${limit}-byte limit.`);
+
+const responseChunkLimitError = (): Error =>
+    new ResponseReadLimitError(`AI API response exceeds the ${MAX_AI_RESPONSE_CHUNKS}-chunk limit.`);
+
+const readResponseTextLimited = async (
+    response: Response,
+    limit = MAX_AI_RESPONSE_BYTES,
+): Promise<string> => {
+    const reader = response.body?.getReader();
+    const contentLength = declaredContentLength(response);
+    if (contentLength !== undefined && contentLength > limit) {
+        if (reader) await cancelReader(reader);
+        throw responseTooLargeError(limit);
+    }
+    if (!reader) return "";
+
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    let chunkCount = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunkCount += 1;
+        if (chunkCount > MAX_AI_RESPONSE_CHUNKS) {
+            await cancelReader(reader);
+            throw responseChunkLimitError();
+        }
+        if (totalBytes + value.byteLength > limit) {
+            await cancelReader(reader);
+            throw responseTooLargeError(limit);
+        }
+        if (value.byteLength > 0) {
+            chunks.push(value);
+        }
+        totalBytes += value.byteLength;
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(bytes);
+};
+
 export interface StreamCustomAIOptions extends CustomAIRequestOptions {
     onChunk: (chunk: string) => void;
 }
@@ -389,9 +522,10 @@ export const streamCustomAI = async (options: StreamCustomAIOptions): Promise<vo
     const rawUrl = options.url?.trim();
     if (!rawUrl) throw new Error("API URL is required.");
 
-    const format = resolveFormat(rawUrl, options.format);
+    const validatedUrl = validateApiUrl(rawUrl);
+    const format = resolveFormat(validatedUrl, options.format);
     const model = resolveModel(format, options.model);
-    const request = buildRequest(format, options.prompt, model, rawUrl, options.apiKey?.trim());
+    const request = buildRequest(format, options.prompt, model, validatedUrl, options.apiKey?.trim());
 
     const streamUrl = format === "gemini" ? toGeminiStreamUrl(request.url) : request.url;
     const streamBody = buildStreamBody(format, request.body as Record<string, unknown>);
@@ -401,10 +535,14 @@ export const streamCustomAI = async (options: StreamCustomAIOptions): Promise<vo
         headers: request.headers,
         body: JSON.stringify(streamBody),
         signal: options.signal,
+        redirect: "error",
     });
 
     if (!resp.ok) {
-        const rawText = await resp.text().catch(() => "");
+        const rawText = await readResponseTextLimited(resp).catch((error) => {
+            if (error instanceof ResponseReadLimitError) throw error;
+            return "";
+        });
         let data: any;
         try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = {}; }
         throw new Error(parseErrorMessage(data, resp.status, resp.statusText));
@@ -412,19 +550,50 @@ export const streamCustomAI = async (options: StreamCustomAIOptions): Promise<vo
 
     const reader = resp.body?.getReader();
     if (!reader) throw new Error("No response body.");
+    const contentLength = declaredContentLength(resp);
+    if (contentLength !== undefined && contentLength > MAX_AI_STREAM_RESPONSE_BYTES) {
+        await cancelReader(reader);
+        throw responseTooLargeError(MAX_AI_STREAM_RESPONSE_BYTES);
+    }
 
     const decoder = new TextDecoder();
     let buf = "";
+    let totalBytes = 0;
+    let newlineSearchStart = 0;
     while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (totalBytes + value.byteLength > MAX_AI_STREAM_RESPONSE_BYTES) {
+            await cancelReader(reader);
+            throw responseTooLargeError(MAX_AI_STREAM_RESPONSE_BYTES);
+        }
+        totalBytes += value.byteLength;
         buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
+        let lineStart = 0;
+        let newlineIndex = buf.indexOf("\n", newlineSearchStart);
+        while (newlineIndex !== -1) {
+            const line = buf.slice(lineStart, newlineIndex);
             const chunk = parseStreamChunk(format, line);
             if (chunk) options.onChunk(chunk);
+            lineStart = newlineIndex + 1;
+            newlineIndex = buf.indexOf("\n", lineStart);
         }
+        if (lineStart > 0) {
+            buf = buf.slice(lineStart);
+        }
+        newlineSearchStart = buf.length;
+        if (buf.length > MAX_AI_STREAM_BUFFER_CHARACTERS) {
+            await cancelReader(reader);
+            throw new Error(
+                `AI API streaming buffer exceeds the ${MAX_AI_STREAM_BUFFER_CHARACTERS}-character limit without a line break.`,
+            );
+        }
+    }
+    buf += decoder.decode();
+    if (buf.length > MAX_AI_STREAM_BUFFER_CHARACTERS) {
+        throw new Error(
+            `AI API streaming buffer exceeds the ${MAX_AI_STREAM_BUFFER_CHARACTERS}-character limit without a line break.`,
+        );
     }
     // flush remaining buffer
     if (buf.trim()) {
@@ -440,18 +609,20 @@ export const callCustomAI = async (options: CustomAIRequestOptions): Promise<str
         throw new Error("API URL is required.");
     }
 
-    const format = resolveFormat(rawUrl, options.format);
+    const validatedUrl = validateApiUrl(rawUrl);
+    const format = resolveFormat(validatedUrl, options.format);
     const model = resolveModel(format, options.model);
-    const request = buildRequest(format, options.prompt, model, rawUrl, options.apiKey?.trim());
+    const request = buildRequest(format, options.prompt, model, validatedUrl, options.apiKey?.trim());
 
     const resp = await fetch(request.url, {
         method: "POST",
         headers: request.headers,
         body: JSON.stringify(request.body),
         signal: options.signal,
+        redirect: "error",
     });
 
-    const rawText = await resp.text();
+    const rawText = await readResponseTextLimited(resp);
     let data: any;
     try {
         data = rawText ? JSON.parse(rawText) : {};

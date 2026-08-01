@@ -17,7 +17,7 @@ const scopeConfig = (config, files) => ({
 
 export default [
 	{
-		ignores: ["**/*.d.ts", "dist", "vditor"],
+		ignores: ["**/*.d.ts", "dist"],
 	},
 	...tseslint.configs["flat/recommended"].map((config) => scopeConfig(config, tsFiles)),
 	{

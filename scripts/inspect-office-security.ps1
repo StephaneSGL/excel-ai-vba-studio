@@ -8,9 +8,135 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+if ($null -eq ('ExcelAiVbaStudio.Security.BoundedAlternateDataStreamReader' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
+
+namespace ExcelAiVbaStudio.Security
+{
+    public static class BoundedAlternateDataStreamReader
+    {
+        private const uint GenericRead = 0x80000000;
+        private const uint FileShareRead = 0x00000001;
+        private const uint OpenExisting = 3;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        public static byte[] Read(string streamPath, int maximumBytes)
+        {
+            if (String.IsNullOrWhiteSpace(streamPath)) throw new ArgumentNullException("streamPath");
+            if (maximumBytes < 0) throw new ArgumentOutOfRangeException("maximumBytes");
+
+            var handle = CreateFile(
+                streamPath,
+                GenericRead,
+                FileShareRead,
+                IntPtr.Zero,
+                OpenExisting,
+                0,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                var error = Marshal.GetLastWin32Error();
+                handle.Dispose();
+                if (error == 2 || error == 3) throw new FileNotFoundException("Alternate data stream not found.");
+                if (error == 1 || error == 50) throw new NotSupportedException("Alternate data streams are not supported.");
+                throw new Win32Exception(error);
+            }
+
+            using (handle)
+            using (var stream = new FileStream(handle, FileAccess.Read, 4096, false))
+            using (var memory = new MemoryStream())
+            {
+                if (stream.Length > maximumBytes)
+                {
+                    throw new InvalidDataException("The alternate data stream exceeds the inspection limit.");
+                }
+                var buffer = new byte[4096];
+                int total = 0;
+                int read;
+                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += read;
+                    if (total > maximumBytes)
+                    {
+                        throw new InvalidDataException("The alternate data stream exceeds the inspection limit.");
+                    }
+                    memory.Write(buffer, 0, read);
+                }
+                return memory.ToArray();
+            }
+        }
+    }
+
+    public static class BoundedRegistrySubKeyEnumerator
+    {
+        private const int ErrorNoMoreItems = 259;
+        private const int MaximumRegistryKeyNameCharacters = 256;
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        private static extern int RegEnumKeyEx(
+            SafeRegistryHandle key,
+            uint index,
+            StringBuilder name,
+            ref uint nameLength,
+            IntPtr reserved,
+            IntPtr keyClass,
+            IntPtr keyClassLength,
+            IntPtr lastWriteTime);
+
+        public static string[] Read(RegistryKey key, int maximumNames)
+        {
+            if (key == null) throw new ArgumentNullException("key");
+            if (maximumNames < 0) throw new ArgumentOutOfRangeException("maximumNames");
+
+            var names = new List<string>(Math.Min(maximumNames, 64));
+            var handle = key.Handle;
+            for (uint index = 0; ; index++)
+            {
+                var name = new StringBuilder(MaximumRegistryKeyNameCharacters);
+                uint nameLength = MaximumRegistryKeyNameCharacters;
+                var result = RegEnumKeyEx(
+                    handle,
+                    index,
+                    name,
+                    ref nameLength,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    IntPtr.Zero);
+                if (result == ErrorNoMoreItems) return names.ToArray();
+                if (result != 0) throw new Win32Exception(result);
+                if (names.Count >= maximumNames)
+                {
+                    throw new InvalidDataException("The registry subkey enumeration exceeds the inspection limit.");
+                }
+                names.Add(name.ToString());
+            }
+        }
+    }
+}
+'@
+}
 
 $script:MaxOutputBytes = 262144
 $script:MaxTrustedLocations = 64
+$script:MaxZoneIdentifierBytes = 65536
 $script:MaxWorkbookBytes = 536870912
 $script:MaxSensitivityLabels = 32
 $script:MaxCompoundDirectoryEntries = 16384
@@ -88,7 +214,11 @@ function Get-ZoneInformation {
     param([string]$Path)
 
     try {
-        $streamInfo = Get-Item -LiteralPath $Path -Stream 'Zone.Identifier' -ErrorAction Stop
+        $streamPath = '{0}:Zone.Identifier' -f $Path
+        $zoneBytes = [ExcelAiVbaStudio.Security.BoundedAlternateDataStreamReader]::Read(
+            $streamPath,
+            $script:MaxZoneIdentifierBytes
+        )
     }
     catch [System.NotSupportedException] {
         return [ordered]@{ status = 'unsupported'; zoneId = $null }
@@ -107,15 +237,11 @@ function Get-ZoneInformation {
     }
 
     try {
-        if ([int64]$streamInfo.Length -gt 65536) {
-            return [ordered]@{ status = 'unreadable'; zoneId = $null }
+        $strictUtf8 = New-Object Text.UTF8Encoding($false, $true)
+        $zoneText = $strictUtf8.GetString($zoneBytes)
+        if ($zoneText.Length -gt 0 -and $zoneText[0] -eq [char]0xFEFF) {
+            $zoneText = $zoneText.Substring(1)
         }
-        $zoneText = Get-Content `
-            -LiteralPath $Path `
-            -Stream 'Zone.Identifier' `
-            -Raw `
-            -Encoding UTF8 `
-            -ErrorAction Stop
         $currentSection = ''
         $zoneTransferSeen = $false
         $zoneIdSeen = $false
@@ -154,6 +280,19 @@ function Get-ZoneInformation {
     catch {
         return [ordered]@{ status = 'unreadable'; zoneId = $null }
     }
+}
+
+function Get-BoundedRegistrySubKeyNames {
+    param(
+        [Microsoft.Win32.RegistryKey]$Key,
+        [int]$MaximumNames
+    )
+
+    if ($null -eq $Key) { return [string[]]@() }
+    return [ExcelAiVbaStudio.Security.BoundedRegistrySubKeyEnumerator]::Read(
+        $Key,
+        $MaximumNames
+    )
 }
 
 function Get-Sha256 {
@@ -982,7 +1121,7 @@ function Read-SensitivityLabelInfoPart {
                     $null -eq $removed -or
                     $null -eq $methodAttribute -or
                     $method.Length -gt 128 -or
-                    ([bool]$enabled -and -not [bool]$removed -and $method -cnotin @('Standard', 'Privileged')) -or
+                    (-not [bool]$removed -and $method -cnotin @('Standard', 'Privileged')) -or
                     ([bool]$removed -and $method.Length -ne 0) -or
                     -not $labelIds.Add($id) -or
                     -not $coveredSiteIds.Add($siteId)
@@ -1533,27 +1672,21 @@ function Get-MdmEnrollmentEvidence {
     $root = $null
     $enrollmentsKey = $null
     $accountsKey = $null
+    [string[]]$enrollmentNames = @()
+    [string[]]$accountNames = @()
     try {
         $root = Open-RegistryRoot 'HKLM' $View
         $enrollmentsKey = $root.OpenSubKey('Software\Microsoft\Enrollments', $false)
         $accountsKey = $root.OpenSubKey('Software\Microsoft\Provisioning\OMADM\Accounts', $false)
-        if (
-            ($null -ne $enrollmentsKey -and $enrollmentsKey.SubKeyCount -gt 64) -or
-            ($null -ne $accountsKey -and $accountsKey.SubKeyCount -gt 64)
-        ) {
-            return [ordered]@{ status = 'unreadable'; provider = 'unknown' }
+        if ($null -ne $enrollmentsKey) {
+            $enrollmentNames = @(
+                Get-BoundedRegistrySubKeyNames $enrollmentsKey 64
+            )
         }
-        $enrollmentNames = @(
-            if ($null -ne $enrollmentsKey) { $enrollmentsKey.GetSubKeyNames() }
-        )
-        $accountNames = @(
-            if ($null -ne $accountsKey) { $accountsKey.GetSubKeyNames() }
-        )
-        if ($enrollmentNames.Count -gt 64) {
-            return [ordered]@{ status = 'unreadable'; provider = 'unknown' }
-        }
-        if ($accountNames.Count -gt 64) {
-            return [ordered]@{ status = 'unreadable'; provider = 'unknown' }
+        if ($null -ne $accountsKey) {
+            $accountNames = @(
+                Get-BoundedRegistrySubKeyNames $accountsKey 64
+            )
         }
         $enrollmentIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
         $strongEnrollmentIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -1660,12 +1793,8 @@ function Add-TrustedLocations {
         $root = Open-RegistryRoot $Hive $View
         $locationsKey = $root.OpenSubKey($KeyPath, $false)
         if ($null -eq $locationsKey) { return }
-        if ($locationsKey.SubKeyCount -gt 256) {
-            $Unreadable.Value = $true
-            return
-        }
         $locationNames = @(
-            $locationsKey.GetSubKeyNames() |
+            (Get-BoundedRegistrySubKeyNames $locationsKey 256) |
                 Where-Object { $_ -match '^Location(?:0|[1-9][0-9]{0,8})$' } |
                 Sort-Object { [int64]$_.Substring(8) }
         )

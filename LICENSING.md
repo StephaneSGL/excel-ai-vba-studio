@@ -46,7 +46,7 @@ Certains fichiers combinent du code historique d’Office Viewer et des modifica
 
 ## 4. Dépendances et actifs tiers
 
-Les bibliothèques, polices, icônes et autres composants tiers conservent leurs propres licences. Cela inclut notamment le code `x-data-spreadsheet` embarqué dans le webview et le fork Vditor conservé dans l’arbre source. Consultez [LICENSES](LICENSES), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) et [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
+Les bibliothèques, polices, icônes et autres composants tiers conservent leurs propres licences. Cela inclut notamment le code `x-data-spreadsheet` embarqué dans le webview. Le texte MIT de Vditor reste conservé à titre de provenance historique, même si son ancien arbre source autonome n’est plus présent ni construit. Consultez [LICENSES](LICENSES), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) et [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
 
 ## 5. Versions antérieures
 
