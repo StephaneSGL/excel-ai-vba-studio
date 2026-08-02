@@ -1797,7 +1797,7 @@
     "test:vba-atomic": "python test/atomic-writeback-regression.py",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
     "test:native-diff": "node test/native-edit-regression.mjs",
-    "test:workbook-objects": "node test/native-security-preflight.mjs && node test/chart-catalog.mjs && node test/chart-designer-model.mjs && node test/ooxml-zip-preflight.mjs && node test/office-file-open-bounds.mjs && node test/chart-ooxml-reader.mjs && node test/workbook-object-tool-input.mjs && node test/table-roundtrip.mjs && node test/office-payload-transport.mjs && node test/native-bridge-object-validation.mjs && powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File test/native-series-formula-parser.ps1 && node test/workbook-object-security-regression.mjs",
+    "test:workbook-objects": "node test/native-security-preflight.mjs && node test/chart-catalog.mjs && node test/chart-designer-model.mjs && node test/ooxml-zip-preflight.mjs && node test/office-file-open-bounds.mjs && node test/chart-ooxml-reader.mjs && node test/workbook-object-tool-input.mjs && node test/table-roundtrip.mjs && node test/office-payload-transport.mjs && node test/native-bridge-object-validation.mjs && node test/native-series-formula-parser.mjs && node test/workbook-object-security-regression.mjs",
     "test:native-xlsm": "node test/native-xlsm-integration.mjs",
     "validate:theme-sync": "node tools/validate-theme-sync.mjs",
     "validate:integrated-features": "node tools/validate-integrated-features.mjs",

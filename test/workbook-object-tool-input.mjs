@@ -8,6 +8,11 @@ import { pathToFileURL } from 'node:url';
 const root = resolve(import.meta.dirname, '..');
 const buildDirectory = await mkdtemp(join(tmpdir(), 'excel-object-tool-test-'));
 const outputPath = join(buildDirectory, 'workbook-object-tool.mjs');
+const absoluteWorkbookPath = resolve(
+  tmpdir(),
+  'excel-object-tool-fixtures',
+  'contacts.xlsx',
+);
 
 try {
   await build({
@@ -39,7 +44,7 @@ try {
     `${pathToFileURL(outputPath).href}?cache=${Date.now()}`
   );
   const parseWorkbookObjectToolInput = value => toolModule.parseWorkbookObjectToolInput({
-    workbookPath: 'C:\\work\\contacts.xlsx',
+    workbookPath: absoluteWorkbookPath,
     ...value,
   });
 
@@ -60,7 +65,7 @@ try {
   );
 
   const threeTables = parseWorkbookObjectToolInput({
-    workbookPath: 'C:\\work\\contacts.xlsx',
+    workbookPath: absoluteWorkbookPath,
     operations: [
       ['PeopleTop', 'A1:C5'],
       ['PeopleMiddle', 'A20:C30'],
@@ -123,7 +128,7 @@ try {
 	);
 
   const chart = parseWorkbookObjectToolInput({
-    workbookPath: 'C:\\work\\contacts.xlsx',
+    workbookPath: absoluteWorkbookPath,
     operations: [{
       kind: 'createWorksheetChart',
       sheetName: 'People',
@@ -354,7 +359,7 @@ try {
   );
 
   const sourceOnlyChart = parseWorkbookObjectToolInput({
-    workbookPath: 'C:\\work\\contacts.xlsx',
+    workbookPath: absoluteWorkbookPath,
     operations: [{
       kind: 'createWorksheetChart',
       sheetName: 'People',
