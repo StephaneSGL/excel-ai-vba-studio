@@ -290,6 +290,13 @@ function Get-BoundedNamedStreamBytes {
 function Get-NamedStreamState {
     param([string]$Path)
 
+    # PowerShell exposes the FileSystem provider's -Stream parameter only on
+    # Windows/NTFS. Other platforms have no NTFS ADS state to preserve, so keep
+    # package-only CI and validation deterministic without weakening Windows.
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        return @()
+    }
+
     $streamItems = @(Get-Item -LiteralPath $Path -Stream * -Force -ErrorAction Stop)
     if ($streamItems.Count -gt $MaxNamedStreams) {
         throw "Workbook has more than $MaxNamedStreams alternate data streams."
@@ -503,6 +510,13 @@ function Copy-NamedStreamsFromSource {
         [string]$TargetPath,
         [object[]]$ExpectedState
     )
+
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        if (@($ExpectedState).Count -ne 0) {
+            throw 'NTFS alternate data streams cannot be restored on this platform.'
+        }
+        return
+    }
 
     foreach ($existing in @(Get-NamedStreamState $TargetPath)) {
         Remove-Item `
