@@ -26,7 +26,11 @@ function runPowerShell(script, args = []) {
       cwd: root,
       encoding: 'utf8',
       shell: false,
-      timeout: 180_000,
+      // Each native edit is deliberately isolated in its own Excel COM
+      // transaction. The expanded workbook-object suite can exceed three
+      // minutes on otherwise healthy machines, so retain a bounded but
+      // realistic integration-test deadline.
+      timeout: 600_000,
     },
   );
 

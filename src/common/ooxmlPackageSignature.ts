@@ -24,6 +24,21 @@ const ORIGIN_CONTENT_TYPE =
     'application/vnd.openxmlformats-package.digital-signature-origin';
 const SIGNATURE_CONTENT_TYPE =
     'application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml';
+const XLM_MACRO_SHEET_CONTENT_TYPES = new Set([
+    'application/vnd.ms-excel.macrosheet+xml',
+    'application/vnd.ms-excel.intlmacrosheet+xml',
+    'application/vnd.ms-excel.macrosheet',
+    'application/vnd.ms-excel.intlmacrosheet',
+]);
+const XLM_MACRO_SHEET_RELATIONSHIP_TYPES = new Set([
+    'http://schemas.microsoft.com/office/2006/relationships/xlMacrosheet',
+    'http://schemas.microsoft.com/office/2006/relationships/xlIntlMacrosheet',
+]);
+
+export const OOXML_XLM_AUTOMATION_BLOCKED_MESSAGE =
+    'Ouverture automatisée refusée : ce classeur contient une feuille macro Excel 4.0 (XLM), que le mode AutomationSecurity ne désactive pas.';
+export const OOXML_XLM_VERIFICATION_BLOCKED_MESSAGE =
+    'Ouverture automatisée refusée : l’absence de feuilles macro Excel 4.0 (XLM) n’a pas pu être vérifiée de façon sûre.';
 
 export const OOXML_PACKAGE_SIGNATURE_WRITE_BLOCKED_MESSAGE =
     'Écriture refusée : ce classeur porte une signature numérique de package Office. Toute modification invaliderait cette signature.';
@@ -711,6 +726,51 @@ function isInternalRelationship(relationship: OpcRelationship): boolean {
     return false;
 }
 
+async function inspectZipPackageForXlmMacroSheets(zip: ZipPackage): Promise<boolean> {
+    const contentTypes = await parseContentTypes(zip);
+    for (const overriddenPartName of contentTypes.overrides.keys()) {
+        if (!zip.entries.has(overriddenPartName)) {
+            return fail(`content-type override targets a missing part: ${overriddenPartName}`);
+        }
+    }
+
+    let found = false;
+    for (const entry of zip.entries.values()) {
+        const partName = lowerAscii(entry.partName);
+        if (
+            partName.startsWith('/xl/macrosheets/') ||
+            XLM_MACRO_SHEET_CONTENT_TYPES.has(effectiveContentType(contentTypes, entry.partName) ?? '')
+        ) {
+            found = true;
+        }
+    }
+
+    const relationshipParts = [...zip.entries.values()].filter((entry) =>
+        lowerAscii(entry.partName).endsWith('.rels') &&
+        lowerAscii(posix.basename(posix.dirname(entry.partName))) === '_rels',
+    );
+    if (relationshipParts.length > MAX_RELATIONSHIP_PARTS) {
+        return fail('package contains too many relationship parts');
+    }
+    let relationshipBytes = 0;
+    let hasRootRelationships = false;
+    for (const entry of relationshipParts) {
+        relationshipBytes += entry.uncompressedSize;
+        if (relationshipBytes > MAX_RELATIONSHIP_XML_BYTES) {
+            return fail('relationship metadata exceeds the inspection limit');
+        }
+        if (lowerAscii(entry.partName) === lowerAscii(ROOT_RELATIONSHIPS_PART)) {
+            hasRootRelationships = true;
+        }
+        const relationships = await parseRelationships(zip, entry.partName);
+        if (relationships.some(relationship => XLM_MACRO_SHEET_RELATIONSHIP_TYPES.has(relationship.type))) {
+            found = true;
+        }
+    }
+    if (!hasRootRelationships) return fail('root relationship part is missing');
+    return found;
+}
+
 async function inspectZipPackageSignature(zip: ZipPackage): Promise<boolean> {
     const contentTypes = await parseContentTypes(zip);
     for (const overriddenPartName of contentTypes.overrides.keys()) {
@@ -882,6 +942,46 @@ export async function hasOoxmlPackageSignature(filePath: string): Promise<boolea
         );
     } finally {
         await handle.close();
+    }
+}
+
+export async function hasOoxmlXlmMacroSheetsBytes(
+    bytes: Uint8Array,
+    fileName = 'workbook.xlsx',
+): Promise<boolean> {
+    if (!isOoxmlPackagePath(fileName)) return false;
+    return inspectZipPackageForXlmMacroSheets(await openZipPackage(createBufferReader(bytes)));
+}
+
+export async function hasOoxmlXlmMacroSheets(filePath: string): Promise<boolean> {
+    if (!isOoxmlPackagePath(filePath)) return false;
+    const handle = await open(filePath, 'r');
+    try {
+        const stats = await handle.stat();
+        if (!stats.isFile()) return fail('source is not a regular file');
+        return await inspectZipPackageForXlmMacroSheets(
+            await openZipPackage(createFileReader(handle, stats.size)),
+        );
+    } finally {
+        await handle.close();
+    }
+}
+
+export async function assertOoxmlHasNoXlmMacroSheetsForAutomation(
+    filePath: string,
+): Promise<void> {
+    try {
+        if (await hasOoxmlXlmMacroSheets(filePath)) {
+            throw new Error(OOXML_XLM_AUTOMATION_BLOCKED_MESSAGE);
+        }
+    } catch (error) {
+        if (
+            error instanceof Error &&
+            error.message === OOXML_XLM_AUTOMATION_BLOCKED_MESSAGE
+        ) {
+            throw error;
+        }
+        throw new Error(OOXML_XLM_VERIFICATION_BLOCKED_MESSAGE, { cause: error });
     }
 }
 

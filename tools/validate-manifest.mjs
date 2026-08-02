@@ -98,15 +98,22 @@ expect(
 );
 
 const tools = manifest.contributes?.languageModelTools ?? [];
-expect(tools.length === 3, 'exactly three language-model tools must be declared');
+expect(tools.length === 4, 'exactly four language-model tools must be declared');
 const readTool = tools.find(({ name }) => name === 'excel_ai_vba_readWorkbook');
 const writeTool = tools.find(({ name }) => name === 'excel_ai_vba_writeModule');
 const designTool = tools.find(({ name }) => name === 'excel_ai_vba_designWorkbook');
+const workbookDesignTool = tools.find(
+  ({ name }) => name === 'excel_ai_workbook_designObjects',
+);
 expect(readTool?.toolReferenceName === 'excelVbaWorkbook', 'unexpected workbook read tool reference');
 expect(writeTool?.toolReferenceName === 'excelVbaWriteModule', 'unexpected VBA write tool reference');
 expect(
   designTool?.toolReferenceName === 'excelVbaDesignWorkbook',
   'unexpected VBA designer tool reference',
+);
+expect(
+  workbookDesignTool?.toolReferenceName === 'excelWorkbookDesign',
+  'unexpected workbook-object designer tool reference',
 );
 expect(
   tools.every(({ canBeReferencedInPrompt }) => canBeReferencedInPrompt === true),
@@ -125,6 +132,118 @@ expect(
     && designTool?.inputSchema?.properties?.operations?.maxItems === 100
     && designTool?.inputSchema?.properties?.operations?.items?.oneOf?.length === 7,
   'VBA designer operations schema must expose the seven bounded operation shapes',
+);
+expect(
+  workbookDesignTool?.inputSchema?.properties?.operations?.minItems === 1
+    && workbookDesignTool?.inputSchema?.properties?.operations?.maxItems === 100
+    && workbookDesignTool?.inputSchema?.properties?.operations?.items?.oneOf?.length === 4,
+  'workbook-object designer must expose four bounded conditional table/chart operation shapes',
+);
+expect(
+  workbookDesignTool?.inputSchema?.required?.includes('workbookPath')
+    && workbookDesignTool?.inputSchema?.properties?.workbookPath?.minLength >= 3,
+  'mutating workbook-object tool must require the explicitly confirmed workbookPath',
+);
+
+const workbookOperations =
+  workbookDesignTool?.inputSchema?.properties?.operations?.items?.oneOf ?? [];
+const tableWriteOperation = workbookOperations.find(operation =>
+  operation?.properties?.kind?.enum?.includes('createWorksheetTable')
+    && operation?.properties?.kind?.enum?.includes('updateWorksheetTable')
+);
+const chartWriteOperation = workbookOperations.find(operation =>
+  operation?.properties?.kind?.enum?.includes('createWorksheetChart')
+    && operation?.properties?.kind?.enum?.includes('updateWorksheetChart')
+);
+
+function operationCondition(operation, kind) {
+  return operation?.allOf?.[0]?.oneOf?.find(condition =>
+    condition?.properties?.kind?.enum?.includes(kind)
+  );
+}
+
+const createTableCondition = operationCondition(tableWriteOperation, 'createWorksheetTable');
+const updateTableCondition = operationCondition(tableWriteOperation, 'updateWorksheetTable');
+const createChartCondition = operationCondition(chartWriteOperation, 'createWorksheetChart');
+const updateChartCondition = operationCondition(chartWriteOperation, 'updateWorksheetChart');
+expect(
+  createTableCondition?.not?.required?.includes('name')
+    && updateTableCondition?.required?.includes('name'),
+  'table create must reject top-level name and table update must require it',
+);
+expect(
+  createChartCondition?.not?.required?.includes('name')
+    && updateChartCondition?.required?.includes('name'),
+  'chart create must reject top-level name and chart update must require it',
+);
+
+const chartSchema = chartWriteOperation?.properties?.chart;
+const chartSeriesSchema = chartSchema?.properties?.series;
+const a1Pattern = chartSchema?.properties?.sourceRangeRef?.pattern;
+expect(
+  chartSchema?.properties?.chartType?.enum?.length === 101
+    && new Set(chartSchema.properties.chartType.enum).size === 101
+    && !chartSchema.properties.chartType.enum.includes(-2)
+    && !chartSchema.properties.chartType.enum.includes(140)
+    && chartSeriesSchema?.items?.properties?.chartType?.enum?.length === 101
+    && !chartSeriesSchema.items.properties.chartType.enum.includes(-2)
+    && !chartSeriesSchema.items.properties.chartType.enum.includes(140),
+  'writable chartType schemas must expose 101 offline-safe values and reject suggested and network-backed maps',
+);
+expect(
+  typeof a1Pattern === 'string'
+    && tableWriteOperation?.properties?.table?.properties?.rangeRef?.pattern === a1Pattern
+    && ['categoryRange', 'valuesRange', 'xValuesRange', 'bubbleSizesRange']
+      .every(property => chartSeriesSchema?.items?.properties?.[property]?.pattern === a1Pattern),
+  'all table and chart ranges must use the same bounded local A1 pattern',
+);
+expect(
+  chartSeriesSchema?.items?.properties?.nameRange?.pattern
+    === '^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$',
+  'series nameRange must identify exactly one local A1 cell',
+);
+expect(
+  chartSeriesSchema?.minItems === 1
+    && chartSeriesSchema?.maxItems === 255
+    && chartSchema?.anyOf?.some(option => option?.required?.includes('sourceRangeRef'))
+    && chartSchema?.anyOf?.some(option => option?.required?.includes('series'))
+    && chartSchema?.allOf?.some(condition =>
+      condition?.not?.required?.includes('sourceRangeRef')
+      && condition?.not?.required?.includes('series')
+    ),
+  'chart schema must require a source range or at least one explicit series',
+);
+
+const expectedAxisProperties = [
+  'visible', 'title', 'minimumScale', 'maximumScale', 'majorUnit', 'minorUnit',
+  'logarithmic', 'reverseOrder', 'numberFormat', 'majorGridlines', 'minorGridlines',
+].sort();
+expect(
+  ['categoryAxis', 'valueAxis', 'secondaryCategoryAxis', 'secondaryValueAxis']
+    .every(axisName => {
+      const axis = chartSchema?.properties?.[axisName];
+      return axis?.additionalProperties === false
+        && JSON.stringify(Object.keys(axis?.properties ?? {}).sort())
+          === JSON.stringify(expectedAxisProperties);
+    }),
+  'all four chart axes must expose the complete closed option set',
+);
+
+const dataLabelsSchema = chartSeriesSchema?.items?.properties?.dataLabels;
+expect(
+  dataLabelsSchema?.additionalProperties === false
+    && JSON.stringify(Object.keys(dataLabelsSchema?.properties ?? {}).sort()) === JSON.stringify([
+      'position', 'showBubbleSize', 'showCategoryName', 'showPercentage',
+      'showSeriesName', 'showValue',
+    ])
+    && dataLabelsSchema?.properties?.position?.enum?.includes('outsideEnd'),
+  'chart data labels must expose the complete closed option set',
+);
+expect(
+  manifest.activationEvents.includes(
+    'onLanguageModelTool:excel_ai_workbook_designObjects',
+  ),
+  'workbook-object designer activation event is missing',
 );
 
 const settings = manifest.contributes?.configuration?.properties ?? {};

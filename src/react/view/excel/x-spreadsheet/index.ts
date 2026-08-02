@@ -17,6 +17,18 @@ import {
     type FindOptions,
 } from '../excel_find';
 import { parseSpreadsheetLink } from '../excel_hyperlink';
+import {
+    buildExcelTableStyleCatalog,
+    excelTableNameComparisonKey,
+    isValidExcelTableName,
+	minimumExcelTableRangeRows,
+    normalizeA1Range,
+    normalizeExcelTableName,
+    SIMPLE_A1_RANGE,
+    type SheetChartData,
+    type SheetTableData,
+    type SheetTableStyle,
+} from '../../../../common/excelWorkbookObjects';
 import { expr2xy, xy2expr } from './core/alphabet';
 import { getFontSizePxByPt } from './core/font';
 import CellRange from './core/cell_range';
@@ -173,10 +185,195 @@ export interface SheetConditionalFormatting {
     rules: SheetConditionalFormattingRule[];
 }
 
+export interface FormatTableOptions {
+    /** Excel table name. Invalid names are rejected and duplicates receive a stable suffix. */
+    name?: string;
+    /** Alias for name; Excel keeps Name and DisplayName aligned for newly created tables. */
+    displayName?: string;
+    /** Explicit A1 range; defaults to the current selection. */
+    rangeRef?: string;
+    headerRow?: boolean;
+    totalsRow?: boolean;
+    style?: Partial<SheetTableStyle>;
+}
+
+export interface SheetTableCreationContext {
+    /** Stable within the current workbook session, for example the worksheet index. */
+    idScope: string;
+    sheetName: string;
+    existingTables?: readonly SheetTableData[];
+    usedNames?: readonly string[];
+}
+
+const DEFAULT_TABLE_STYLE: SheetTableStyle = {
+    name: 'TableStyleMedium2',
+    showFirstColumn: false,
+    showLastColumn: false,
+    showRowStripes: true,
+    showColumnStripes: false,
+};
+const EXCEL_TABLE_STYLES = new Set(buildExcelTableStyleCatalog());
+
+type WorkbookObjectAwareDataProxy = DataProxy & {
+    tables?: SheetTableData[];
+    charts?: SheetChartData[];
+    hasNativeChartParts?: boolean;
+    unsupportedNativeChartCount?: number;
+};
+
+function cloneTables(tables: readonly SheetTableData[] | undefined): SheetTableData[] {
+    return (tables ?? []).map(table => ({
+        ...table,
+        style: { ...table.style },
+    }));
+}
+
+function cloneCharts(charts: readonly SheetChartData[] | undefined): SheetChartData[] {
+    return charts ? JSON.parse(JSON.stringify(charts)) as SheetChartData[] : [];
+}
+
+/**
+ * DataProxy deliberately serializes a fixed core schema. Enriching each instance here keeps
+ * workbook objects in normal change snapshots, so native undo/redo also restores tables/charts.
+ */
+function enableWorkbookObjectSnapshots(data: DataProxy): WorkbookObjectAwareDataProxy {
+    const target = data as WorkbookObjectAwareDataProxy;
+    const baseGetData = data.getData.bind(data);
+    data.getData = () => {
+        const result = baseGetData();
+        const tables = cloneTables(target.tables);
+        const charts = cloneCharts(target.charts);
+        return {
+            ...result,
+            // Keep empty arrays in history snapshots so undo can clear a newly created object.
+            tables,
+            charts,
+            ...(target.hasNativeChartParts ? { hasNativeChartParts: true } : {}),
+            ...(target.unsupportedNativeChartCount
+                ? { unsupportedNativeChartCount: target.unsupportedNativeChartCount }
+                : {}),
+        };
+    };
+    return target;
+}
+
+function tableNamesFromDataProxies(datas: readonly DataProxy[]): string[] {
+    return datas.flatMap(data => cloneTables((data as WorkbookObjectAwareDataProxy).tables)
+        .flatMap(table => [table.name, table.displayName]));
+}
+
+function parseTableRange(rangeRef: string): CellRange {
+    const normalized = normalizeA1Range(rangeRef);
+    if (!SIMPLE_A1_RANGE.test(normalized)) {
+        throw new Error(`Plage de tableau Excel invalide : ${rangeRef}`);
+    }
+    const range = CellRange.valueOf(normalized);
+    if (
+        range.sri < 0 || range.sci < 0
+        || range.eri < range.sri || range.eci < range.sci
+        || range.eri >= 1_048_576 || range.eci >= 16_384
+    ) {
+        throw new Error(`Plage de tableau Excel hors limites : ${rangeRef}`);
+    }
+    return range;
+}
+
+function assertValidTableName(value: string): string {
+    const normalized = normalizeExcelTableName(value);
+    if (!isValidExcelTableName(normalized)) {
+        throw new Error(
+            'Le nom du tableau doit commencer par une lettre ou un soulignement, '
+            + 'puis contenir uniquement des lettres, chiffres, points ou soulignements.'
+        );
+    }
+    return normalized;
+}
+
+function uniqueTableName(base: string, usedNames: Iterable<string>): string {
+    const used = new Set(Array.from(usedNames, excelTableNameComparisonKey));
+    if (!used.has(excelTableNameComparisonKey(base))) return base;
+    let suffix = 2;
+    while (true) {
+        const suffixText = `_${suffix}`;
+        const candidate = `${base.slice(0, 255 - suffixText.length)}${suffixText}`;
+        if (!used.has(excelTableNameComparisonKey(candidate))) return candidate;
+        suffix += 1;
+    }
+}
+
+function defaultTableName(sheetName: string, range: CellRange): string {
+    const safeSheetName = sheetName
+        .replace(/[^A-Za-z0-9_]/g, '_')
+        .replace(/^[^A-Za-z_]+/, '')
+        .slice(0, 120) || 'Sheet';
+    return `Table_${safeSheetName}_${xy2expr(range.sci, range.sri)}`;
+}
+
+/** Build one native Excel table definition without changing workbook data. */
+export function createSheetTableDefinition(
+    rangeRef: string,
+    context: SheetTableCreationContext,
+    options: FormatTableOptions = {},
+): SheetTableData {
+    const normalizedRange = normalizeA1Range(rangeRef);
+    const range = parseTableRange(normalizedRange);
+    const headerRow = options.headerRow !== false;
+    const totalsRow = options.totalsRow === true;
+    const rowCount = range.eri - range.sri + 1;
+    const minimumRows = minimumExcelTableRangeRows(totalsRow);
+    if (rowCount < minimumRows) {
+        throw new Error(
+            `La plage ${normalizedRange} ne contient pas assez de lignes pour les options du tableau.`
+        );
+    }
+
+    const existingTables = context.existingTables ?? [];
+    for (const existing of existingTables) {
+        const existingRange = parseTableRange(existing.rangeRef);
+        if (range.intersects(existingRange)) {
+            throw new Error(
+                `La plage ${normalizedRange} chevauche le tableau ${existing.name} (${existing.rangeRef}).`
+            );
+        }
+    }
+
+    const style: SheetTableStyle = {
+        ...DEFAULT_TABLE_STYLE,
+        ...(options.style ?? {}),
+    };
+    if (!EXCEL_TABLE_STYLES.has(style.name)) {
+        throw new Error(`Style de tableau Excel non pris en charge : ${style.name}`);
+    }
+
+    const requestedName = assertValidTableName(
+        options.name ?? options.displayName ?? defaultTableName(context.sheetName, range)
+    );
+    const usedNames = [
+        ...(context.usedNames ?? []),
+        ...existingTables.flatMap(table => [table.name, table.displayName]),
+    ];
+    const name = uniqueTableName(requestedName, usedNames);
+    return {
+        id: `table:${context.idScope}:${normalizedRange}`,
+        name,
+        displayName: name,
+        rangeRef: normalizedRange,
+        headerRow,
+        totalsRow,
+        style,
+    };
+}
+
 export interface SheetData {
     name?: string;
     freeze?: string;
     autofilter?: SheetAutofilterData;
+    tables?: SheetTableData[];
+    charts?: SheetChartData[];
+    /** Native chart parts exist and must be preserved through Excel itself. */
+    hasNativeChartParts?: boolean;
+    /** Native chart/chartEx objects detected but not safely editable here. */
+    unsupportedNativeChartCount?: number;
     hyperlinks?: Record<string, SheetHyperlinkData>;
     validations?: SheetValidationData[];
     /** Excel 工作表保护配置（不含密码） */
@@ -193,6 +390,26 @@ export interface SheetData {
         [key: number]: ColProperties | number | undefined;
     };
     rows?: RowsData;
+}
+
+export function isWorkbookTableNameAvailableInSheets(
+    sheets: readonly Pick<SheetData, 'tables'>[],
+    activeSheetIndex: number,
+    requestedName: string,
+    currentTableId?: string,
+): boolean {
+    const normalizedName = excelTableNameComparisonKey(requestedName);
+    if (!normalizedName) return true;
+    return !sheets.some((sheet, sheetIndex) => (
+        (sheet.tables ?? []).some(table => {
+            if (sheetIndex === activeSheetIndex && currentTableId && table.id === currentTableId) {
+                return false;
+            }
+            return [table.name, table.displayName].some(
+                name => excelTableNameComparisonKey(name) === normalizedName,
+            );
+        })
+    ));
 }
 
 export interface SpreadsheetData {
@@ -298,7 +515,7 @@ export class Spreadsheet {
 
     addSheet(name?: string, active = true): DataProxy {
         const n = name || `sheet${this.sheetIndex}`;
-        const d = new DataProxy(n, this.options);
+        const d = enableWorkbookObjectSnapshots(new DataProxy(n, this.options));
         d.change = (...args: any[]) => {
             this.sheet.trigger('change', ...args);
         };
@@ -375,8 +592,24 @@ export class Spreadsheet {
         const copyName = this.uniqueSheetName(source.name);
         const sheetData = JSON.parse(JSON.stringify(source.getData())) as SheetData;
         sheetData.name = copyName;
+        const usedNames = tableNamesFromDataProxies(this.datas);
+        sheetData.tables = cloneTables((source as WorkbookObjectAwareDataProxy).tables).map((table, tableIndex) => {
+            const name = uniqueTableName(assertValidTableName(table.name), usedNames);
+            usedNames.push(name);
+            return {
+                ...table,
+                id: `table:copy-${sourceIndex + 1}-${tableIndex + 1}:${normalizeA1Range(table.rangeRef)}`,
+                name,
+                displayName: name,
+                style: { ...table.style },
+            };
+        });
+        sheetData.charts = cloneCharts((source as WorkbookObjectAwareDataProxy).charts).map((chart, chartIndex) => ({
+            ...chart,
+            id: `chart:copy-${sourceIndex + 1}-${chartIndex + 1}`,
+        }));
 
-        const nd = new DataProxy(copyName, this.options);
+        const nd = enableWorkbookObjectSnapshots(new DataProxy(copyName, this.options));
         nd.change = (...args: any[]) => {
             this.sheet.trigger('change', ...args);
         };
@@ -404,7 +637,11 @@ export class Spreadsheet {
             for (let i = 0; i < ds.length; i += 1) {
                 const it = ds[i];
                 const nd = this.addSheet(it.name, i === 0);
-                nd.setData(it);
+                nd.setData({
+                    ...it,
+                    ...(it.tables ? { tables: cloneTables(it.tables) } : {}),
+                    ...(it.charts ? { charts: cloneCharts(it.charts) } : {}),
+                });
                 if (i === 0) {
                     this.data = nd;
                     this.sheet.resetData(nd);
@@ -415,7 +652,17 @@ export class Spreadsheet {
     }
 
     getData(): SpreadsheetData[] {
-        return this.datas.map(it => it.getData());
+        return this.datas.map(it => {
+            const data = it.getData() as SheetData;
+            const tables = cloneTables((it as WorkbookObjectAwareDataProxy).tables);
+            const charts = cloneCharts((it as WorkbookObjectAwareDataProxy).charts);
+            const { tables: _tables, charts: _charts, ...coreData } = data;
+            return {
+                ...coreData,
+                ...(tables.length ? { tables } : {}),
+                ...(charts.length ? { charts } : {}),
+            };
+        });
     }
 
     cellText(ri: number, ci: number, text: string, sheetIndex = 0): this {
@@ -547,6 +794,50 @@ export class Spreadsheet {
         return { ri, ci, sheetIndex: this.getActiveSheetIndex() };
     }
 
+    getSelectionRangeRef(): string {
+        return this.data.selector.range.toString();
+    }
+
+    getActiveSheetCharts(): SheetChartData[] {
+        return cloneCharts((this.data as WorkbookObjectAwareDataProxy).charts);
+    }
+
+    hasNativeWorkbookObjects(): boolean {
+        return this.datas.some(data => {
+            const target = data as WorkbookObjectAwareDataProxy;
+            return (target.tables?.length ?? 0) > 0
+                || (target.charts?.length ?? 0) > 0
+                || target.hasNativeChartParts === true;
+        });
+    }
+
+    getActiveSheetUnsupportedNativeChartCount(): number {
+        const count = (this.data as WorkbookObjectAwareDataProxy).unsupportedNativeChartCount;
+        return typeof count === 'number' && Number.isInteger(count) && count > 0 ? count : 0;
+    }
+
+    addOrUpdateChart(chart: SheetChartData): this {
+        if (!chart.id?.trim()) throw new Error('Un graphique doit avoir un identifiant stable.');
+        const nextChart = cloneCharts([chart])[0];
+        this.data.changeData(() => {
+            const target = this.data as WorkbookObjectAwareDataProxy;
+            const charts = cloneCharts(target.charts);
+            const index = charts.findIndex(existing => existing.id === nextChart.id);
+            if (index >= 0) charts[index] = nextChart;
+            else charts.push(nextChart);
+            target.charts = charts;
+        });
+        return this;
+    }
+
+    removeChart(chartId: string): this {
+        this.data.changeData(() => {
+            const target = this.data as WorkbookObjectAwareDataProxy;
+            target.charts = cloneCharts(target.charts).filter(chart => chart.id !== chartId);
+        });
+        return this;
+    }
+
     getSelectedComment(): SheetCommentData | undefined {
         const { ri, ci } = this.getSelection();
         return this.data.getComment(ri, ci) ?? undefined;
@@ -653,7 +944,25 @@ export class Spreadsheet {
         for (const sheetData of sheets) {
             const name = this.uniqueSheetName(sheetData.name || 'Données importées');
             const target = this.addSheet(name, false);
-            target.setData({ ...sheetData, name });
+            const usedNames = tableNamesFromDataProxies(this.datas);
+            const tables = cloneTables(sheetData.tables).map((table, tableIndex) => {
+                const tableName = uniqueTableName(assertValidTableName(table.name), usedNames);
+                usedNames.push(tableName);
+                return {
+                    ...table,
+                    id: `table:append-${this.datas.length}-${tableIndex + 1}:${normalizeA1Range(table.rangeRef)}`,
+                    name: tableName,
+                    displayName: tableName,
+                    style: { ...table.style },
+                };
+            });
+            const charts = cloneCharts(sheetData.charts);
+            target.setData({
+                ...sheetData,
+                name,
+                ...(tables.length ? { tables } : {}),
+                ...(charts.length ? { charts } : {}),
+            });
         }
         if (sheets.length > 0) {
             this.activateSheet(this.datas.length - 1);
@@ -662,31 +971,80 @@ export class Spreadsheet {
         return this;
     }
 
-    formatSelectionAsTable(): this {
-        const range = this.data.selector.range;
-        this.data.changeData(() => {
-            range.each((ri: number, ci: number) => {
-                const cell = this.data.rows.getCellOrNew(ri, ci);
-                const previous = cell.style == null ? {} : this.data.styles[cell.style] ?? {};
-                const header = ri === range.sri;
-                cell.style = this.data.addStyle({
-                    ...previous,
-                    bgcolor: header ? '#1f4e78' : (ri - range.sri) % 2 === 0 ? '#ddebf7' : '#ffffff',
-                    color: header ? '#ffffff' : previous.color,
-                    font: {
-                        ...(previous.font ?? {}),
-                        bold: header || previous.font?.bold,
-                    },
-                    border: {
-                        top: ['thin', '#9eafbf'],
-                        right: ['thin', '#9eafbf'],
-                        bottom: ['thin', '#9eafbf'],
-                        left: ['thin', '#9eafbf'],
-                    },
-                });
-            });
+    getActiveSheetTables(): SheetTableData[] {
+        return cloneTables((this.data as WorkbookObjectAwareDataProxy).tables);
+    }
+
+    isWorkbookTableNameAvailable(name: string, currentTableId?: string): boolean {
+        return isWorkbookTableNameAvailableInSheets(
+            this.datas.map(data => ({
+                tables: cloneTables((data as WorkbookObjectAwareDataProxy).tables),
+            })),
+            this.getActiveSheetIndex(),
+            name,
+            currentTableId,
+        );
+    }
+
+    updateTable(table: SheetTableData): this {
+        const currentTables = this.getActiveSheetTables();
+        const tableIndex = currentTables.findIndex(existing => existing.id === table.id);
+        if (tableIndex < 0) throw new Error(`Tableau introuvable : ${table.id}`);
+        const existingTables = currentTables.filter((_, index) => index !== tableIndex);
+        const usedNames = this.datas.flatMap(data => cloneTables(
+            (data as WorkbookObjectAwareDataProxy).tables,
+        ).filter(existing => data !== this.data || existing.id !== table.id)
+            .flatMap(existing => [existing.name, existing.displayName]));
+        const normalized = createSheetTableDefinition(table.rangeRef, {
+            idScope: `sheet-${this.getActiveSheetIndex() + 1}`,
+            sheetName: this.data.name,
+            existingTables,
+            usedNames,
+        }, {
+            name: table.name,
+            displayName: table.displayName,
+            headerRow: table.headerRow,
+            totalsRow: table.totalsRow,
+            style: table.style,
         });
-        if (!this.data.autoFilter.active()) this.toggleCommand('autofilter');
+        normalized.id = currentTables[tableIndex].id;
+        this.data.changeData(() => {
+            currentTables[tableIndex] = normalized;
+            (this.data as WorkbookObjectAwareDataProxy).tables = currentTables;
+        });
+        this.reRender();
+        return this;
+    }
+
+    removeTable(tableId: string): this {
+        this.data.changeData(() => {
+            const target = this.data as WorkbookObjectAwareDataProxy;
+            // Match Excel's Unlist behavior: remove the native table but preserve cell formatting.
+            target.tables = cloneTables(target.tables).filter(table => table.id !== tableId);
+        });
+        this.reRender();
+        return this;
+    }
+
+    formatSelectionAsTable(options: FormatTableOptions = {}): this {
+		if (options.headerRow === false) {
+			throw new Error(
+				'La création d’un tableau sans en-tête est désactivée pour éviter que Microsoft Excel déplace les cellules.'
+			);
+		}
+        const range = options.rangeRef
+            ? parseTableRange(options.rangeRef)
+            : this.data.selector.range;
+        const existingTables = cloneTables((this.data as WorkbookObjectAwareDataProxy).tables);
+        const table = createSheetTableDefinition(range.toString(), {
+            idScope: `sheet-${this.getActiveSheetIndex() + 1}`,
+            sheetName: this.data.name,
+            existingTables,
+            usedNames: tableNamesFromDataProxies(this.datas),
+        }, options);
+        this.data.changeData(() => {
+            (this.data as WorkbookObjectAwareDataProxy).tables = [...existingTables, table];
+        });
         this.reRender();
         return this;
     }

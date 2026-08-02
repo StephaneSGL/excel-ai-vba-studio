@@ -210,6 +210,7 @@ if ([IO.Path]::GetExtension($sourcePath) -ine '.xlsx') {
     throw 'La preparation macro accepte uniquement un classeur source .xlsx.'
 }
 Assert-OoxmlPackageUnsigned $sourcePath
+Assert-OoxmlPackageHasNoXlmMacroSheets $sourcePath
 
 if (
     [IO.Path]::GetFileName($componentFile) -cne $componentFile -or

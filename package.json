@@ -65,6 +65,7 @@
     "onLanguageModelTool:excel_ai_vba_readWorkbook",
     "onLanguageModelTool:excel_ai_vba_writeModule",
     "onLanguageModelTool:excel_ai_vba_designWorkbook",
+    "onLanguageModelTool:excel_ai_workbook_designObjects",
     "workspaceContains:.excel-ai-vba-studio-project.json"
   ],
   "main": "./out/extension.js",
@@ -758,6 +759,858 @@
           ],
           "additionalProperties": false
         }
+      },
+      {
+        "name": "excel_ai_workbook_designObjects",
+        "displayName": "Créer des tableaux et graphiques Excel",
+        "toolReferenceName": "excelWorkbookDesign",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(graph)",
+        "userDescription": "Crée, modifie ou supprime transactionnellement de vrais tableaux et graphiques Excel éditables dans un classeur XLSX ou XLSM.",
+		"modelDescription": "Utilise cet outil pour créer, modifier ou supprimer de vrais ListObject et ChartObject Excel dans un classeur .xlsx ou .xlsm local. Plusieurs tableaux disjoints peuvent occuper les mêmes colonnes. Une table native doit être créée avec une ligne d’en-tête et sans ligne de totaux; les transitions d’en-tête et de totaux sont refusées. L’état des totaux existants est préservé et une table qui possède des totaux ne peut pas être redimensionnée car Excel déplacerait les cellules et réécrirait les références de formules. Les graphiques acceptent tous les codes XlChartType publiés, une plage source ou des séries explicites, les axes primaire/secondaire, couleurs, lignes, marqueurs, titres, légende, étiquettes, dimensions et styles. Les plages doivent être des références A1 locales simples sans feuille, fichier externe, formule ou DDE. Chaque transaction vérifie le hash source, crée une sauvegarde, travaille sur une copie, rouvre et valide les objets, puis remplace atomiquement le fichier ou effectue un rollback. Aucune macro n’est exécutée.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "workbookPath": {
+              "type": "string",
+              "minLength": 3,
+              "description": "Chemin absolu explicite vers un classeur .xlsx ou .xlsm local. Obligatoire afin que la cible affichée dans la confirmation soit exactement celle qui sera modifiée."
+            },
+            "operations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "createWorksheetTable",
+                          "updateWorksheetTable"
+                        ]
+                      },
+                      "sheetName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 31
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Nom actuel obligatoire pour updateWorksheetTable ; interdit pour createWorksheetTable.",
+                        "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                      },
+                      "table": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "maxLength": 255
+                          },
+                          "name": {
+                            "type": "string",
+                            "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                          },
+                          "rangeRef": {
+                            "type": "string",
+                            "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}(?::\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6})?$"
+                          },
+                          "headerRow": {
+                            "type": "boolean",
+                            "default": true
+                          },
+                          "totalsRow": {
+                            "type": "boolean",
+							"default": false,
+							"description": "Doit rester false à la création. Pour une table existante, conserver exactement l’état inventorié; une table avec totaux ne peut pas être redimensionnée."
+                          },
+                          "style": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "pattern": "^TableStyle(?:Light(?:[1-9]|1[0-9]|2[01])|Medium(?:[1-9]|1[0-9]|2[0-8])|Dark(?:[1-9]|1[01]))$",
+                                "default": "TableStyleMedium2"
+                              },
+                              "showFirstColumn": {
+                                "type": "boolean",
+                                "default": false
+                              },
+                              "showLastColumn": {
+                                "type": "boolean",
+                                "default": false
+                              },
+                              "showRowStripes": {
+                                "type": "boolean",
+                                "default": true
+                              },
+                              "showColumnStripes": {
+                                "type": "boolean",
+                                "default": false
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "rangeRef"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "allOf": [
+                      {
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "createWorksheetTable"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "name"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "updateWorksheetTable"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "name"
+                            ]
+                          }
+                        ]
+                      }
+                    ],
+                    "required": [
+                      "kind",
+                      "sheetName",
+                      "table"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "deleteWorksheetTable"
+                        ]
+                      },
+                      "sheetName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 31
+                      },
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sheetName",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "createWorksheetChart",
+                          "updateWorksheetChart"
+                        ]
+                      },
+                      "sheetName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 31
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Nom actuel obligatoire pour updateWorksheetChart ; interdit pour createWorksheetChart.",
+                        "minLength": 1,
+                        "maxLength": 255
+                      },
+                      "chart": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "maxLength": 255
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 255
+                          },
+                          "chartType": {
+                            "type": "integer",
+                            "enum": [1, 76, 77, -4098, 78, 79, 135, 136, 137, 57, 58, 59, 60, 61, 62, 132, 133, 134, 51, 52, 53, -4100, 54, 55, 56, 124, 125, 126, 4, 65, 63, 66, 64, 67, -4101, 127, 128, 129, 5, 69, -4102, 70, 68, 71, 130, -4120, 80, 131, -4169, 74, 75, 72, 73, 138, 15, 87, 139, -4151, 81, 82, 88, 89, 90, 91, 83, 84, 85, 86, -4152, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 102, 103, 104, 105, 99, 100, 101, 95, 96, 97, 98, 92, 93, 94, 109, 110, 111, 112, 106, 107, 108],
+                            "description": "Valeur numérique officielle XlChartType, par exemple 51 colonne groupée, 4 courbe, -4169 nuage XY, -4152 combiné."
+                          },
+                          "sourceRangeRef": {
+                            "type": "string",
+                            "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}(?::\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6})?$"
+                          },
+                          "plotBy": {
+                            "type": "string",
+                            "enum": [
+                              "columns",
+                              "rows"
+                            ],
+                            "default": "columns"
+                          },
+                          "anchor": {
+                            "type": "object",
+                            "properties": {
+                              "left": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 100000
+                              },
+                              "top": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 100000
+                              },
+                              "width": {
+                                "type": "number",
+                                "minimum": 20,
+                                "maximum": 100000
+                              },
+                              "height": {
+                                "type": "number",
+                                "minimum": 20,
+                                "maximum": 100000
+                              }
+                            },
+                            "required": [
+                              "left",
+                              "top",
+                              "width",
+                              "height"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "title": {
+                            "type": "object",
+                            "properties": {
+                              "visible": {
+                                "type": "boolean"
+                              },
+                              "text": {
+                                "type": "string",
+                                "maxLength": 1000
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "legend": {
+                            "type": "object",
+                            "properties": {
+                              "visible": {
+                                "type": "boolean"
+                              },
+                              "position": {
+                                "type": "string",
+                                "enum": [
+                                  "bottom",
+                                  "corner",
+                                  "custom",
+                                  "left",
+                                  "right",
+                                  "top"
+                                ]
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "categoryAxis": {
+                            "type": "object",
+                            "properties": {
+                              "visible": {
+                                "type": "boolean"
+                              },
+                              "title": {
+                                "type": "string",
+                                "maxLength": 1000
+                              },
+                              "minimumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "maximumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "majorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "minorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "logarithmic": {
+                                "type": "boolean"
+                              },
+                              "reverseOrder": {
+                                "type": "boolean"
+                              },
+                              "numberFormat": {
+                                "type": "string",
+								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "maxLength": 255
+                              },
+                              "majorGridlines": {
+                                "type": "boolean"
+                              },
+                              "minorGridlines": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "valueAxis": {
+                            "type": "object",
+                            "properties": {
+                              "visible": {
+                                "type": "boolean"
+                              },
+                              "title": {
+                                "type": "string",
+                                "maxLength": 1000
+                              },
+                              "minimumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "maximumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "majorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "minorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "logarithmic": {
+                                "type": "boolean"
+                              },
+                              "reverseOrder": {
+                                "type": "boolean"
+                              },
+                              "numberFormat": {
+                                "type": "string",
+								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "maxLength": 255
+                              },
+                              "majorGridlines": {
+                                "type": "boolean"
+                              },
+                              "minorGridlines": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "secondaryCategoryAxis": {
+                            "type": "object",
+                            "properties": {
+                              "visible": {
+                                "type": "boolean"
+                              },
+                              "title": {
+                                "type": "string",
+                                "maxLength": 1000
+                              },
+                              "minimumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "maximumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "majorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "minorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "logarithmic": {
+                                "type": "boolean"
+                              },
+                              "reverseOrder": {
+                                "type": "boolean"
+                              },
+                              "numberFormat": {
+                                "type": "string",
+								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "maxLength": 255
+                              },
+                              "majorGridlines": {
+                                "type": "boolean"
+                              },
+                              "minorGridlines": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "secondaryValueAxis": {
+                            "type": "object",
+                            "properties": {
+                              "visible": {
+                                "type": "boolean"
+                              },
+                              "title": {
+                                "type": "string",
+                                "maxLength": 1000
+                              },
+                              "minimumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "maximumScale": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "majorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "minorUnit": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              },
+                              "logarithmic": {
+                                "type": "boolean"
+                              },
+                              "reverseOrder": {
+                                "type": "boolean"
+                              },
+                              "numberFormat": {
+                                "type": "string",
+								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "maxLength": 255
+                              },
+                              "majorGridlines": {
+                                "type": "boolean"
+                              },
+                              "minorGridlines": {
+                                "type": "boolean"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "series": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 255,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "maxLength": 255
+                                },
+                                "name": {
+                                  "type": "string",
+                                  "maxLength": 255
+                                },
+                                "nameRange": {
+                                  "type": "string",
+                                  "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$"
+                                },
+                                "categoryRange": {
+                                  "type": "string",
+                                  "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}(?::\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6})?$"
+                                },
+                                "valuesRange": {
+                                  "type": "string",
+                                  "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}(?::\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6})?$"
+                                },
+                                "xValuesRange": {
+                                  "type": "string",
+                                  "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}(?::\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6})?$"
+                                },
+                                "bubbleSizesRange": {
+                                  "type": "string",
+                                  "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}(?::\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6})?$"
+                                },
+                                "chartType": {
+                                  "type": "integer",
+                                  "enum": [1, 76, 77, -4098, 78, 79, 135, 136, 137, 57, 58, 59, 60, 61, 62, 132, 133, 134, 51, 52, 53, -4100, 54, 55, 56, 124, 125, 126, 4, 65, 63, 66, 64, 67, -4101, 127, 128, 129, 5, 69, -4102, 70, 68, 71, 130, -4120, 80, 131, -4169, 74, 75, 72, 73, 138, 15, 87, 139, -4151, 81, 82, 88, 89, 90, 91, 83, 84, 85, 86, -4152, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 102, 103, 104, 105, 99, 100, 101, 95, 96, 97, 98, 92, 93, 94, 109, 110, 111, 112, 106, 107, 108]
+                                },
+                                "axisGroup": {
+                                  "type": "string",
+                                  "enum": [
+                                    "primary",
+                                    "secondary"
+                                  ]
+                                },
+                                "color": {
+                                  "type": "string",
+                                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                                },
+                                "lineColor": {
+                                  "type": "string",
+                                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                                },
+                                "lineWidth": {
+                                  "type": "number",
+                                  "minimum": 0.1,
+                                  "maximum": 20
+                                },
+                                "dashStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "solid",
+                                    "dash",
+                                    "dot",
+                                    "dashDot"
+                                  ]
+                                },
+                                "markerStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "automatic",
+                                    "circle",
+                                    "dash",
+                                    "diamond",
+                                    "dot",
+                                    "none",
+                                    "picture",
+                                    "plus",
+                                    "square",
+                                    "star",
+                                    "triangle",
+                                    "x"
+                                  ]
+                                },
+                                "markerSize": {
+                                  "type": "integer",
+                                  "minimum": 2,
+                                  "maximum": 72
+                                },
+                                "smooth": {
+                                  "type": "boolean"
+                                },
+                                "visible": {
+                                  "type": "boolean"
+                                },
+                                "dataLabels": {
+                                  "type": "object",
+								  "description": "Doit définir explicitement au moins un booléen show*. Si tous valent false, les étiquettes sont supprimées et position doit être omise. Sinon, les options show* compatibles omises sont enregistrées à false.",
+                                  "minProperties": 1,
+								  "anyOf": [
+									{ "required": ["showValue"] },
+									{ "required": ["showCategoryName"] },
+									{ "required": ["showSeriesName"] },
+									{ "required": ["showPercentage"] },
+									{ "required": ["showBubbleSize"] }
+								  ],
+								  "allOf": [
+									{
+									  "if": { "required": ["position"] },
+									  "then": {
+										"anyOf": [
+										  { "required": ["showValue"], "properties": { "showValue": { "const": true } } },
+										  { "required": ["showCategoryName"], "properties": { "showCategoryName": { "const": true } } },
+										  { "required": ["showSeriesName"], "properties": { "showSeriesName": { "const": true } } },
+										  { "required": ["showPercentage"], "properties": { "showPercentage": { "const": true } } },
+										  { "required": ["showBubbleSize"], "properties": { "showBubbleSize": { "const": true } } }
+										]
+									  }
+									}
+								  ],
+                                  "properties": {
+                                    "showValue": {
+                                      "type": "boolean"
+                                    },
+                                    "showCategoryName": {
+                                      "type": "boolean"
+                                    },
+                                    "showSeriesName": {
+                                      "type": "boolean"
+                                    },
+                                    "showPercentage": {
+                                      "type": "boolean"
+                                    },
+                                    "showBubbleSize": {
+                                      "type": "boolean"
+                                    },
+                                    "position": {
+                                      "type": "string",
+                                      "description": "Position explicite dépendante du type de série ; exige au moins une option show* à true. Omettre pour conserver le placement automatique d’Excel. Les gardes natives refusent les combinaisons non prises en charge.",
+                                      "enum": [
+                                        "above",
+                                        "below",
+                                        "bestFit",
+                                        "center",
+                                        "insideBase",
+                                        "insideEnd",
+                                        "left",
+                                        "outsideEnd",
+                                        "right"
+                                      ]
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              },
+                              "allOf": [
+                                {
+                                  "not": {
+                                    "required": [
+                                      "name",
+                                      "nameRange"
+                                    ]
+                                  }
+                                },
+                                {
+                                  "not": {
+                                    "required": [
+                                      "categoryRange",
+                                      "xValuesRange"
+                                    ]
+                                  }
+                                }
+                              ],
+                              "required": [
+                                "valuesRange"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "style": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 48
+                          },
+                          "roundedCorners": {
+                            "type": "boolean"
+                          },
+                          "gapWidth": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 500
+                          },
+                          "overlap": {
+                            "type": "integer",
+                            "minimum": -100,
+                            "maximum": 100
+                          },
+                          "alternativeText": {
+                            "type": "string",
+                            "maxLength": 1000
+                          }
+                        },
+                        "anyOf": [
+                          {
+                            "required": [
+                              "sourceRangeRef"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "series"
+                            ]
+                          }
+                        ],
+                        "allOf": [
+                          {
+                            "not": {
+                              "required": [
+                                "sourceRangeRef",
+                                "series"
+                              ]
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": {
+                                "chartType": {
+                                  "const": -4152
+                                }
+                              },
+                              "required": [
+                                "chartType"
+                              ]
+                            },
+                            "then": {
+                              "required": [
+                                "series"
+                              ],
+                              "properties": {
+                                "series": {
+                                  "items": {
+                                    "required": [
+                                      "chartType"
+                                    ],
+                                    "properties": {
+                                      "chartType": {
+                                        "not": {
+                                          "const": -4152
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "required": [
+                          "name",
+                          "chartType",
+                          "anchor"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "allOf": [
+                      {
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "createWorksheetChart"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "name"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "updateWorksheetChart"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "name"
+                            ]
+                          }
+                        ]
+                      }
+                    ],
+                    "required": [
+                      "kind",
+                      "sheetName",
+                      "chart"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "deleteWorksheetChart"
+                        ]
+                      },
+                      "sheetName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 31
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 255
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sheetName",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "workbookPath",
+            "operations"
+          ],
+          "additionalProperties": false
+        }
       }
     ],
     "keybindings": [
@@ -934,22 +1787,24 @@
     "validate:vba-designer": "node tools/validate-vba-designer.mjs",
     "validate:enterprise-security": "node tools/validate-enterprise-security.mjs",
     "test:package-signatures": "node test/package-signature-lock.mjs",
+    "test:xlm-preflight": "node test/xlm-automation-preflight.mjs",
     "test:codeql-security": "node test/codeql-http-security-regression.mjs && node test/codeql-ui-core-security-regression.mjs && node test/pretty-data-security-regression.mjs",
     "test:vba-bootstrap": "node test/vba-bootstrap-integration.mjs",
     "test:vba-writeback": "node test/vba-writeback-regression.mjs",
-    "test:vba-designer": "node test/vba-designer-integration.mjs",
+    "test:vba-designer": "node test/vba-designer-ads-security.mjs && node test/vba-designer-integration.mjs",
     "test:vba-inventory": "node test/vba-userform-inventory.mjs",
     "test:vba-interactions": "node test/vba-interaction-graph.mjs",
     "test:vba-atomic": "python test/atomic-writeback-regression.py",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
     "test:native-diff": "node test/native-edit-regression.mjs",
+    "test:workbook-objects": "node test/native-security-preflight.mjs && node test/chart-catalog.mjs && node test/chart-designer-model.mjs && node test/ooxml-zip-preflight.mjs && node test/office-file-open-bounds.mjs && node test/chart-ooxml-reader.mjs && node test/workbook-object-tool-input.mjs && node test/table-roundtrip.mjs && node test/office-payload-transport.mjs && node test/native-bridge-object-validation.mjs && powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File test/native-series-formula-parser.ps1 && node test/workbook-object-security-regression.mjs",
     "test:native-xlsm": "node test/native-xlsm-integration.mjs",
     "validate:theme-sync": "node tools/validate-theme-sync.mjs",
     "validate:integrated-features": "node tools/validate-integrated-features.mjs",
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:package-signatures && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:package-signatures && npm run test:xlm-preflight && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:workbook-objects && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

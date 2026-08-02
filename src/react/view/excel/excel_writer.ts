@@ -1,8 +1,18 @@
 import ExcelJS from '@cweijan/exceljs';
 import JSZip from 'jszip';
+import {
+    buildExcelTableStyleCatalog,
+    excelTableNameComparisonKey,
+    isValidExcelTableName,
+	minimumExcelTableRangeRows,
+    normalizeA1Range,
+    normalizeExcelTableName,
+    SIMPLE_A1_RANGE,
+    type SheetTableData,
+} from '../../../common/excelWorkbookObjects';
 import { handler } from "../../util/vscode";
 import * as XLSX from 'xlsx';
-import Spreadsheet from './x-spreadsheet/index';
+import type Spreadsheet from './x-spreadsheet/index';
 import type { CellData, RowData, SheetData } from './x-spreadsheet/index';
 import { CsvEncoding, encodeCsvText } from './csvEncoding';
 import { DEFAULT_ROW_HEIGHT_PX, freezeExprToExcelView, pxToExcelRowHeight } from './excel_meta';
@@ -14,6 +24,15 @@ import { writeWorksheetProtection } from './excel_protection';
 import { writeWorksheetImages } from './excel_images';
 
 const DEFAULT_COL_WIDTH = 100;
+const EXCEL_TABLE_STYLES = new Set(buildExcelTableStyleCatalog());
+
+interface ParsedTableRange {
+    ref: string;
+    startRow: number;
+    startCol: number;
+    endRow: number;
+    endCol: number;
+}
 
 export { buildFormattingSnapshot, hasFormattingChanged } from './excel_meta';
 
@@ -26,6 +45,183 @@ export interface ExportOptions {
 
 function isRowData(row: RowData | number | undefined): row is RowData {
     return row != null && typeof row === 'object';
+}
+
+function excelColumnNumber(letters: string): number {
+    let result = 0;
+    for (const letter of letters) {
+        result = result * 26 + letter.charCodeAt(0) - 64;
+    }
+    return result;
+}
+
+function parseTableRange(rangeRef: string): ParsedTableRange {
+    const ref = normalizeA1Range(rangeRef);
+    if (!SIMPLE_A1_RANGE.test(ref)) {
+        throw new Error(`Invalid Excel table range: ${rangeRef}`);
+    }
+    const [start, rawEnd = start] = ref.split(':');
+    const parseAddress = (address: string) => {
+        const match = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(address);
+        if (!match) throw new Error(`Invalid Excel table address: ${address}`);
+        return { row: Number(match[2]), col: excelColumnNumber(match[1]) };
+    };
+    const first = parseAddress(start);
+    const last = parseAddress(rawEnd);
+    if (
+        first.row > last.row || first.col > last.col
+        || last.row > 1_048_576 || last.col > 16_384
+    ) {
+        throw new Error(`Excel table range is outside worksheet limits: ${rangeRef}`);
+    }
+    return {
+        ref,
+        startRow: first.row,
+        startCol: first.col,
+        endRow: last.row,
+        endCol: last.col,
+    };
+}
+
+function rangesOverlap(left: ParsedTableRange, right: ParsedTableRange): boolean {
+    return left.startRow <= right.endRow
+        && left.startCol <= right.endCol
+        && right.startRow <= left.endRow
+        && right.startCol <= left.endCol;
+}
+
+function assertTableName(value: string, label: string): string {
+    const name = normalizeExcelTableName(value);
+    if (!isValidExcelTableName(name)) {
+        throw new Error(`Invalid Excel table ${label}: ${value}`);
+    }
+    return name;
+}
+
+function validateWorkbookTables(sheets: SheetData[]): void {
+    const workbookNames = new Set<string>();
+    sheets.forEach((sheet, sheetIndex) => {
+        const parsedTables: Array<{ table: SheetTableData; range: ParsedTableRange }> = [];
+        (sheet.tables ?? []).forEach(table => {
+            const range = parseTableRange(table.rangeRef);
+            const rowCount = range.endRow - range.startRow + 1;
+            const minimumRows = minimumExcelTableRangeRows(table.totalsRow);
+            if (rowCount < minimumRows) {
+                throw new Error(`Excel table ${table.name} does not contain a data row.`);
+            }
+            const names = [
+                assertTableName(table.name, 'name'),
+                assertTableName(table.displayName || table.name, 'display name'),
+            ];
+            for (const name of new Set(names.map(excelTableNameComparisonKey))) {
+                if (workbookNames.has(name)) {
+                    throw new Error(`Duplicate Excel table name: ${table.name}`);
+                }
+                workbookNames.add(name);
+            }
+            if (!EXCEL_TABLE_STYLES.has(table.style.name)) {
+                throw new Error(`Unsupported Excel table style: ${table.style.name}`);
+            }
+            for (const existing of parsedTables) {
+                if (rangesOverlap(range, existing.range)) {
+                    throw new Error(
+                        `Excel tables ${existing.table.name} and ${table.name} overlap on `
+                        + `${sheet.name || `Sheet${sheetIndex + 1}`}.`
+                    );
+                }
+            }
+            parsedTables.push({ table, range });
+        });
+    });
+}
+
+function uniqueColumnName(value: string, fallback: string, usedNames: Set<string>): string {
+    const base = value.trim() || fallback;
+    let candidate = base;
+    let suffix = 2;
+    while (usedNames.has(candidate.toLocaleLowerCase())) {
+        candidate = `${base}_${suffix}`;
+        suffix += 1;
+    }
+    usedNames.add(candidate.toLocaleLowerCase());
+    return candidate;
+}
+
+function cellTextForTableColumn(cell: ExcelJS.Cell): string {
+    if (cell.text) return cell.text;
+    if (cell.value == null) return '';
+    if (cell.value instanceof Date) return cell.value.toISOString();
+    if (typeof cell.value === 'object' && 'formula' in cell.value) {
+        return String((cell.value as ExcelJS.CellFormulaValue).result ?? '');
+    }
+    return String(cell.value);
+}
+
+function writeWorksheetTables(worksheet: ExcelJS.Worksheet, tables: SheetTableData[] | undefined): void {
+    for (const table of tables ?? []) {
+        const name = assertTableName(table.name, 'name');
+        const displayName = assertTableName(table.displayName || table.name, 'display name');
+        const range = parseTableRange(table.rangeRef);
+        const columnCount = range.endCol - range.startCol + 1;
+        const headerOffset = table.headerRow ? 1 : 0;
+        const totalsOffset = table.totalsRow ? 1 : 0;
+        const dataStartRow = range.startRow + headerOffset;
+        const dataEndRow = range.endRow - totalsOffset;
+        const usedColumnNames = new Set<string>();
+        const columns: ExcelJS.TableColumnProperties[] = [];
+
+        for (let offset = 0; offset < columnCount; offset += 1) {
+            const col = range.startCol + offset;
+            const sourceName = table.headerRow
+                ? cellTextForTableColumn(worksheet.getCell(range.startRow, col))
+                : '';
+            const column: ExcelJS.TableColumnProperties = {
+                name: uniqueColumnName(sourceName, `Column${offset + 1}`, usedColumnNames),
+                filterButton: table.headerRow,
+            };
+            if (table.totalsRow) {
+                const totalsCell = worksheet.getCell(range.endRow, col);
+                if (offset === 0) {
+                    column.totalsRowLabel = cellTextForTableColumn(totalsCell) || 'Total';
+                } else if (
+                    totalsCell.value
+                    && typeof totalsCell.value === 'object'
+                    && 'formula' in totalsCell.value
+                ) {
+                    const formulaValue = totalsCell.value as ExcelJS.CellFormulaValue;
+                    column.totalsRowFunction = 'custom';
+                    column.totalsRowFormula = formulaValue.formula;
+                } else {
+                    column.totalsRowFunction = 'none';
+                }
+            }
+            columns.push(column);
+        }
+
+        const rows: ExcelJS.CellValue[][] = [];
+        for (let row = dataStartRow; row <= dataEndRow; row += 1) {
+            rows.push(Array.from({ length: columnCount }, (_, offset) => (
+                worksheet.getCell(row, range.startCol + offset).value
+            )));
+        }
+
+        worksheet.addTable({
+            name,
+            displayName,
+            ref: worksheet.getCell(range.startRow, range.startCol).address,
+            headerRow: table.headerRow,
+            totalsRow: table.totalsRow,
+            style: {
+                theme: table.style.name as ExcelJS.TableStyleProperties['theme'],
+                showFirstColumn: table.style.showFirstColumn,
+                showLastColumn: table.style.showLastColumn,
+                showRowStripes: table.style.showRowStripes,
+                showColumnStripes: table.style.showColumnStripes,
+            },
+            columns,
+            rows,
+        });
+    }
 }
 
 function getColWidth(cols: SheetData['cols'], ci: number) {
@@ -136,33 +332,30 @@ async function writeSheetToExcelJs(worksheet: ExcelJS.Worksheet, workbook: Excel
     writeConditionalFormattings(worksheet, sheetData.conditionalFormattings);
     writeComments(worksheet, sheetData.comments);
 
-    if (!rows) {
-        writeWorksheetImages(worksheet, workbook, sheetData.images, sheetData.backgroundImage);
-        await writeWorksheetProtection(worksheet, sheetData);
-        return;
-    }
-
-    const rowLen = rows.len ?? 0;
-    for (let ri = 0; ri < rowLen; ri += 1) {
-        const row = rows[ri];
-        if (!isRowData(row) || !row.cells) continue;
-        for (const ciKey of Object.keys(row.cells)) {
-            const ci = Number(ciKey);
-            if (Number.isNaN(ci)) continue;
-            const cellData = row.cells[ci];
-            const excelCell = worksheet.getCell(ri + 1, ci + 1);
-            const hl = hyperlinks[hyperlinkKey(ri, ci)] as SpreadsheetHyperlink | undefined;
-            if (hl?.link) {
-                writeCellHyperlink(excelCell, cellData.text ?? '', hl);
-            } else {
-                setCellValue(excelCell, cellData.text ?? '', cellData.formulaResult);
-            }
-            if (cellData.style != null && styles[cellData.style]) {
-                applySpreadsheetStyle(excelCell, styles[cellData.style]);
+    if (rows) {
+        const rowLen = rows.len ?? 0;
+        for (let ri = 0; ri < rowLen; ri += 1) {
+            const row = rows[ri];
+            if (!isRowData(row) || !row.cells) continue;
+            for (const ciKey of Object.keys(row.cells)) {
+                const ci = Number(ciKey);
+                if (Number.isNaN(ci)) continue;
+                const cellData = row.cells[ci];
+                const excelCell = worksheet.getCell(ri + 1, ci + 1);
+                const hl = hyperlinks[hyperlinkKey(ri, ci)] as SpreadsheetHyperlink | undefined;
+                if (hl?.link) {
+                    writeCellHyperlink(excelCell, cellData.text ?? '', hl);
+                } else {
+                    setCellValue(excelCell, cellData.text ?? '', cellData.formulaResult);
+                }
+                if (cellData.style != null && styles[cellData.style]) {
+                    applySpreadsheetStyle(excelCell, styles[cellData.style]);
+                }
             }
         }
     }
 
+    writeWorksheetTables(worksheet, sheetData.tables);
     writeWorksheetImages(worksheet, workbook, sheetData.images, sheetData.backgroundImage);
     await writeWorksheetProtection(worksheet, sheetData);
 }
@@ -187,7 +380,8 @@ async function patchWorkbookSortStates(buffer: Uint8Array, sheets: SheetData[]) 
     return new Uint8Array(await zip.generateAsync({ type: 'uint8array' }));
 }
 
-async function exportWithExcelJs(sheets: SheetData[], options?: ExportOptions) {
+export async function buildExcelWorkbookBuffer(sheets: SheetData[]): Promise<Uint8Array> {
+    validateWorkbookTables(sheets);
     const workbook = new ExcelJS.Workbook();
     for (let i = 0; i < sheets.length; i += 1) {
         const sheetData = sheets[i];
@@ -195,8 +389,12 @@ async function exportWithExcelJs(sheets: SheetData[], options?: ExportOptions) {
         await writeSheetToExcelJs(worksheet, workbook, sheetData);
     }
     const buffer = new Uint8Array(await workbook.xlsx.writeBuffer());
-    const patched = await patchWorkbookSortStates(buffer, sheets);
-    await emitSave(patched, options);
+    return patchWorkbookSortStates(buffer, sheets);
+}
+
+async function exportWithExcelJs(sheets: SheetData[], options?: ExportOptions) {
+    const buffer = await buildExcelWorkbookBuffer(sheets);
+    await emitSave(buffer, options);
 }
 
 function applyColWidths(ws: XLSX.WorkSheet, xws: SheetData) {

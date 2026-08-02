@@ -98,12 +98,27 @@ function isCsvLikeExt(ext: string): boolean {
     return /^(csv|tsv)$/i.test(ext.replace(/^\./, ''));
 }
 
+const WORKBOOK_OBJECT_OPERATION_KINDS = new Set([
+    'createTable', 'updateTable', 'deleteTable',
+    'createChart', 'updateChart', 'deleteChart',
+]);
+
 function isFindPanelTarget(target: EventTarget | null): boolean {
     return target instanceof Element && Boolean(target.closest('.frp-panel'));
 }
 
 function cloneSheets(sheets: SheetData[]): SheetData[] {
     return JSON.parse(JSON.stringify(sheets)) as SheetData[];
+}
+
+function isOoxmlSaveAsExt(ext: string): boolean {
+    return /^(xlsx|xlsm)$/i.test(ext.replace(/^\./, ''));
+}
+
+function sheetsContainUnsafeNativeOoxmlObjects(sheets: readonly SheetData[]): boolean {
+    return sheets.some(sheet => (sheet.tables?.length ?? 0) > 0
+        || (sheet.charts?.length ?? 0) > 0
+        || sheet.hasNativeChartParts === true);
 }
 
 async function sha256Buffer(buffer: ArrayBuffer): Promise<string> {
@@ -263,7 +278,24 @@ function ExcelViewer() {
         }
         const ext = extRef.current.replace(/^\./, '').toLowerCase();
         const sheets = spreadSheet.getData();
-        if (readOnlyReasonRef.current === 'native-excel-editing') {
+        const candidateNativePlan =
+            readOnlyReasonRef.current === 'native-excel-editing' || ext === 'xlsx'
+                ? buildNativeExcelEditPlan(initialSheetsRef.current, sheets)
+                : null;
+        const hasWorkbookObjectChanges = Boolean(
+            candidateNativePlan?.operations.some(operation =>
+                WORKBOOK_OBJECT_OPERATION_KINDS.has(operation.kind ?? 'cell')
+            )
+        );
+        const hasExistingNativeObjects = initialSheetsRef.current.some(
+            sheet => (sheet.tables?.length ?? 0) > 0
+                || (sheet.charts?.length ?? 0) > 0
+                || sheet.hasNativeChartParts === true
+        );
+        if (
+            readOnlyReasonRef.current === 'native-excel-editing' ||
+            (ext === 'xlsx' && (hasWorkbookObjectChanges || hasExistingNativeObjects))
+        ) {
             const snapshot = nativeSnapshotRef.current;
             if (!snapshot) {
                 const reloadMessage = t('viewer.nativeReloadRequired');
@@ -276,10 +308,7 @@ function ExcelViewer() {
                 handler.emit('saveRejected', { message: reloadMessage });
                 return;
             }
-            const plan = buildNativeExcelEditPlan(
-                initialSheetsRef.current,
-                sheets
-            );
+            const plan = candidateNativePlan!;
             if (plan.unsupportedChanges.length > 0) {
                 const unsupportedMessage = t(
                     'viewer.nativeUnsupportedChange',
@@ -604,7 +633,9 @@ function ExcelViewer() {
                     loadedWorkbookSha256Ref.current = workbookSha256;
                     if (
                         openGeneration === openGenerationRef.current &&
-                        reason === 'native-excel-editing' &&
+                        ['xlsx', 'xlsm'].includes(
+                            String(payload.ext ?? '').replace(/^\./, '').toLowerCase()
+                        ) &&
                         typeof payload.nativeLoadGeneration === 'string'
                     ) {
                         nativeSnapshotRef.current = {
@@ -682,6 +713,15 @@ function ExcelViewer() {
                             : t('viewer.macroWriteBlocked')
                     );
                 }
+                if (
+                    isOoxmlSaveAsExt(ext)
+                    && sheetsContainUnsafeNativeOoxmlObjects(spreadSheet.getData())
+                ) {
+                    throw new Error(
+                        'Enregistrer sous au format XLSX/XLSM est désactivé pour préserver les tableaux et graphiques Excel natifs. '
+                        + 'Choisissez CSV, TSV, ODS ou XLS pour un export aplati, ou créez la copie depuis Microsoft Excel ou l’Explorateur de fichiers.'
+                    );
+                }
                 if (editorBusyRef.current) {
                     throw new Error(
                         'Spreadsheet is busy. Wait for the current operation to finish.'
@@ -756,9 +796,7 @@ function ExcelViewer() {
             <ExcelRibbon
                 spreadsheet={activeSpreadsheet}
                 readOnly={readOnly || editorBusy}
-                allowSaveAs={
-                    !blocksSaveAs(readOnlyReason)
-                }
+                allowSaveAs={!blocksSaveAs(readOnlyReason)}
                 showEditInVscode={isCsvLikeExt(extRef.current)}
                 onAutoFitColumns={handleAutoFitColumns}
                 onOpenExcel={() => handler.emit('openExcel')}

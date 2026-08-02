@@ -9,6 +9,7 @@ import {
 	type OfficeDocumentLifecycle,
 	type OfficeEditorSession,
 } from './compress/commonHandler';
+import { readUriBytes, readUriBytesWithLimit } from './handlers/officeContent';
 
 const SUPPORTED_SPREADSHEET_SUFFIXES = new Set([
 	'.xlsx',
@@ -102,11 +103,12 @@ implements vscode.CustomEditorProvider<OfficeCustomDocument> {
 		let restoredSourceSha256: string | undefined;
 		if (openContext.backupId) {
 			const backupUri = vscode.Uri.parse(openContext.backupId, true);
-			const stat = await vscode.workspace.fs.stat(backupUri);
-			if (stat.size <= 0 || stat.size > MAX_BACKUP_BYTES) {
-				throw new Error('Spreadsheet recovery backup has an invalid size.');
-			}
-			const bytes = await vscode.workspace.fs.readFile(backupUri);
+			const bytes = await readUriBytesWithLimit(
+				backupUri,
+				MAX_BACKUP_BYTES,
+				'Spreadsheet recovery backup',
+				false,
+			);
 			if (token.isCancellationRequested) {
 				throw new vscode.CancellationError();
 			}
@@ -121,7 +123,7 @@ implements vscode.CustomEditorProvider<OfficeCustomDocument> {
 			) {
 				throw new Error('Spreadsheet recovery backup is invalid.');
 			}
-			const currentBytes = await vscode.workspace.fs.readFile(uri);
+			const currentBytes = await readUriBytes(uri);
 			if (token.isCancellationRequested) {
 				throw new vscode.CancellationError();
 			}

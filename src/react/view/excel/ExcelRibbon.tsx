@@ -51,8 +51,11 @@ import {
 } from '@ant-design/icons';
 import { Button, Input, Modal, Select } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
+import type { SheetChartData, SheetTableData } from '../../../common/excelWorkbookObjects';
 import type Spreadsheet from './x-spreadsheet/index';
 import type { SheetConditionalFormattingRule } from './x-spreadsheet/index';
+import ChartDesigner from './chart-designer';
+import TableDesigner, { type TableDesignerValues } from './table-designer';
 import './ExcelRibbon.less';
 
 type RibbonTab =
@@ -101,6 +104,23 @@ type ExcelRibbonProps = {
     onAskCopilotAboutWorkbook: (request?: string) => void;
 };
 
+type ChartSpreadsheet = Spreadsheet & {
+    addOrUpdateChart: (chart: SheetChartData) => Spreadsheet;
+    getActiveSheetCharts: () => SheetChartData[];
+    getActiveSheetUnsupportedNativeChartCount: () => number;
+    getSelectionRangeRef: () => string;
+    removeChart: (chartId: string) => Spreadsheet;
+};
+
+type TableSpreadsheet = Spreadsheet & {
+    formatSelectionAsTable: (options: TableDesignerValues) => Spreadsheet;
+    getActiveSheetTables?: () => SheetTableData[];
+    isWorkbookTableNameAvailable?: (name: string, currentTableId?: string) => boolean;
+    getSelectionRangeRef?: () => string;
+    removeTable?: (tableId: string) => Spreadsheet;
+    updateTable?: (table: SheetTableData) => Spreadsheet;
+};
+
 const INTEGRATED_FEATURE_EVENT = 'excel-integrated-feature';
 
 function chooseLocalFile(accept: string): Promise<File | null> {
@@ -141,7 +161,7 @@ async function imagePayload(file: File): Promise<{
     };
 }
 
-function generatedVisual(feature: string, matrix: string[][]): string {
+function generatedIllustration(feature: 'Shapes' | 'SmartArt', matrix: string[][]): string {
     const canvas = document.createElement('canvas');
     canvas.width = 720;
     canvas.height = 420;
@@ -165,7 +185,7 @@ function generatedVisual(feature: string, matrix: string[][]): string {
         context.textAlign = 'center';
         context.font = '700 30px Segoe UI';
         context.fillText('Forme Excel', 360, 220);
-    } else if (feature.includes('SmartArt')) {
+    } else {
         const labels = matrix.flat().filter(Boolean).slice(0, 3);
         ['Étape 1', 'Étape 2', 'Étape 3'].forEach((fallback, index) => {
             const x = 50 + index * 225;
@@ -185,42 +205,6 @@ function generatedVisual(feature: string, matrix: string[][]): string {
                 context.fill();
             }
         });
-    } else {
-        const values = matrix.flat()
-            .map(value => Number(String(value).replace(',', '.')))
-            .filter(Number.isFinite)
-            .slice(0, 12);
-        const series = values.length ? values : [10, 24, 18, 36, 28];
-        const max = Math.max(...series.map(value => Math.abs(value)), 1);
-        const chartLeft = 60;
-        const chartTop = 80;
-        const chartWidth = 620;
-        const chartHeight = 280;
-        context.strokeStyle = '#aeb7c2';
-        context.beginPath();
-        context.moveTo(chartLeft, chartTop);
-        context.lineTo(chartLeft, chartTop + chartHeight);
-        context.lineTo(chartLeft + chartWidth, chartTop + chartHeight);
-        context.stroke();
-        if (feature.includes('Line')) {
-            context.strokeStyle = '#4472c4';
-            context.lineWidth = 4;
-            context.beginPath();
-            series.forEach((value, index) => {
-                const x = chartLeft + (index * chartWidth / Math.max(1, series.length - 1));
-                const y = chartTop + chartHeight - (Math.max(0, value) / max * chartHeight);
-                if (index === 0) context.moveTo(x, y);
-                else context.lineTo(x, y);
-            });
-            context.stroke();
-        } else {
-            const slot = chartWidth / series.length;
-            series.forEach((value, index) => {
-                const height = Math.max(3, Math.abs(value) / max * chartHeight);
-                context.fillStyle = ['#4472c4', '#70ad47', '#ed7d31'][index % 3];
-                context.fillRect(chartLeft + index * slot + 8, chartTop + chartHeight - height, Math.max(8, slot - 16), height);
-            });
-        }
     }
     return canvas.toDataURL('image/png').split(',')[1];
 }
@@ -394,8 +378,22 @@ export default function ExcelRibbon({
     const [featureResult, setFeatureResult] = useState('');
     const [headingsVisible, setHeadingsVisible] = useState(true);
     const [formulaBarVisible, setFormulaBarVisible] = useState(true);
+    const [chartDesignerOpen, setChartDesignerOpen] = useState(false);
+    const [chartInitialType, setChartInitialType] = useState(51);
+    const [, setChartRevision] = useState(0);
+    const [tableDesignerOpen, setTableDesignerOpen] = useState(false);
+    const [, setTableRevision] = useState(0);
     const ready = spreadsheet !== null;
     const editingDisabled = !ready || readOnly;
+    const chartSpreadsheet = spreadsheet as ChartSpreadsheet | null;
+    const tableSpreadsheet = spreadsheet as TableSpreadsheet | null;
+    const activeCharts = chartSpreadsheet?.getActiveSheetCharts?.() ?? [];
+    const unsupportedNativeChartCount = chartSpreadsheet?.getActiveSheetUnsupportedNativeChartCount?.() ?? 0;
+    const activeTables = tableSpreadsheet?.getActiveSheetTables?.() ?? [];
+    const tableInventoryAvailable = typeof tableSpreadsheet?.getActiveSheetTables === 'function';
+    const selectionRangeRef = chartSpreadsheet?.getSelectionRangeRef?.()
+        ?? tableSpreadsheet?.getSelectionRangeRef?.()
+        ?? '';
 
     useEffect(() => {
         setGridVisibleState(true);
@@ -428,6 +426,38 @@ export default function ExcelRibbon({
         spreadsheet?.setGridVisible(next);
     };
     const openNativeFeature = () => {};
+    const openChartDesigner = (chartType: number) => {
+        if (!chartSpreadsheet) return;
+        setChartInitialType(chartType);
+        setChartDesignerOpen(true);
+    };
+    const saveChart = (chart: SheetChartData) => {
+        if (!chartSpreadsheet) throw new Error('Aucune feuille active pour enregistrer le graphique.');
+        chartSpreadsheet.addOrUpdateChart(chart);
+        setChartRevision(revision => revision + 1);
+    };
+    const removeChart = (chartId: string) => {
+        if (!chartSpreadsheet) return;
+        chartSpreadsheet.removeChart(chartId);
+        setChartRevision(revision => revision + 1);
+    };
+    const createTable = (values: TableDesignerValues) => {
+        if (!tableSpreadsheet) throw new Error('Aucune feuille active pour créer la table.');
+        tableSpreadsheet.formatSelectionAsTable(values);
+        setTableRevision(revision => revision + 1);
+    };
+    const updateTable = tableSpreadsheet?.updateTable
+        ? (table: SheetTableData) => {
+            tableSpreadsheet.updateTable?.(table);
+            setTableRevision(revision => revision + 1);
+        }
+        : undefined;
+    const removeTable = tableSpreadsheet?.removeTable
+        ? (tableId: string) => {
+            tableSpreadsheet.removeTable?.(tableId);
+            setTableRevision(revision => revision + 1);
+        }
+        : undefined;
 
     const importLocalWorkbook = async (file: File) => {
         if (!spreadsheet) return;
@@ -454,11 +484,6 @@ export default function ExcelRibbon({
                     setFeatureResult('Les options d’affichage ont été appliquées.');
                     break;
                 }
-                case 'Format as Table':
-                case 'Table':
-                    spreadsheet.formatSelectionAsTable();
-                    setFeatureResult('La sélection est maintenant un tableau stylé et filtrable.');
-                    break;
                 case 'PivotTable':
                     spreadsheet.copySelectionToNewSheet('Tableau croisé').addSubtotal();
                     setFeatureResult('Une synthèse de la sélection a été créée dans une nouvelle feuille.');
@@ -475,11 +500,8 @@ export default function ExcelRibbon({
                     break;
                 }
                 case 'Shapes':
-                case 'SmartArt':
-                case 'Recommended Charts':
-                case 'Column Chart':
-                case 'Line Chart': {
-                    const base64 = generatedVisual(feature, spreadsheet.getSelectionMatrix());
+                case 'SmartArt': {
+                    const base64 = generatedIllustration(feature, spreadsheet.getSelectionMatrix());
                     spreadsheet.insertImage(base64, 'png');
                     setFeatureResult(`${feature} a été généré dans la feuille et sera conservé dans le fichier XLSX.`);
                     break;
@@ -839,7 +861,7 @@ export default function ExcelRibbon({
             </RibbonGroup>
             <RibbonGroup label="Styles">
                 <RibbonButton icon={<ClearOutlined />} label="Clear Formatting" onClick={() => command('clearformat')} disabled={editingDisabled} />
-                <RibbonButton icon={<TableOutlined />} label="Format as Table" onClick={openNativeFeature} native />
+                <RibbonButton icon={<TableOutlined />} label="Format as Table" onClick={() => setTableDesignerOpen(true)} disabled={!ready} />
                 <RibbonButton icon={<BarChartOutlined />} label="Conditional Formatting" onClick={() => setConditionalOpen(true)} disabled={editingDisabled} />
             </RibbonGroup>
             <RibbonGroup label="Cells">
@@ -863,7 +885,7 @@ export default function ExcelRibbon({
         <>
             <RibbonGroup label="Tables">
                 <RibbonButton large icon={<TableOutlined />} label="PivotTable" onClick={openNativeFeature} native />
-                <RibbonButton large icon={<TableOutlined />} label="Table" onClick={openNativeFeature} native />
+                <RibbonButton large icon={<TableOutlined />} label="Table" onClick={() => setTableDesignerOpen(true)} disabled={!ready} />
             </RibbonGroup>
             <RibbonGroup label="Cells">
                 <RibbonButton large icon={<InsertRowAboveOutlined />} label="Insert Row" onClick={() => context('insert-row')} disabled={editingDisabled} />
@@ -876,9 +898,9 @@ export default function ExcelRibbon({
                 <RibbonButton large icon={<ApartmentOutlined />} label="SmartArt" onClick={openNativeFeature} native />
             </RibbonGroup>
             <RibbonGroup label="Charts">
-                <RibbonButton large icon={<BarChartOutlined />} label="Recommended Charts" onClick={openNativeFeature} native />
-                <RibbonButton large icon={<BarChartOutlined />} label="Column Chart" onClick={openNativeFeature} native />
-                <RibbonButton large icon={<BarChartOutlined />} label="Line Chart" onClick={openNativeFeature} native />
+				<RibbonButton large icon={<BarChartOutlined />} label="All Charts" onClick={() => openChartDesigner(51)} disabled={!ready} />
+                <RibbonButton large icon={<BarChartOutlined />} label="Column Chart" onClick={() => openChartDesigner(51)} disabled={!ready} />
+                <RibbonButton large icon={<BarChartOutlined />} label="Line Chart" onClick={() => openChartDesigner(4)} disabled={!ready} />
             </RibbonGroup>
             <RibbonGroup label="Links">
                 <RibbonButton large icon={<LinkOutlined />} label="Link" onClick={() => context('hyperlink')} disabled={editingDisabled} />
@@ -1169,6 +1191,29 @@ export default function ExcelRibbon({
                 </p>
             </div>
         </Modal>
+        <TableDesigner
+            open={tableDesignerOpen}
+            tables={activeTables}
+            selectionRangeRef={selectionRangeRef}
+            inventoryAvailable={tableInventoryAvailable}
+            isWorkbookTableNameAvailable={tableSpreadsheet?.isWorkbookTableNameAvailable?.bind(tableSpreadsheet)}
+            readOnly={readOnly}
+            onCancel={() => setTableDesignerOpen(false)}
+            onCreate={createTable}
+            onUpdate={updateTable}
+            onDelete={removeTable}
+        />
+        <ChartDesigner
+            open={chartDesignerOpen}
+            charts={activeCharts}
+            unsupportedChartCount={unsupportedNativeChartCount}
+            selectionRangeRef={selectionRangeRef}
+            initialChartType={chartInitialType}
+            readOnly={readOnly}
+            onCancel={() => setChartDesignerOpen(false)}
+            onSave={saveChart}
+            onDelete={removeChart}
+        />
         <Modal
             open={integratedFeature !== null}
             title={integratedFeature ?? 'Outil Excel intégré'}

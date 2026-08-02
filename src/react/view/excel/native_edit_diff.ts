@@ -6,6 +6,10 @@ import type {
     NativeExcelStylePatch,
 } from '@/common/nativeExcelEdits';
 import type {
+    SheetChartData,
+    SheetTableData,
+} from '@/common/excelWorkbookObjects';
+import type {
     CellData,
     CellStyle,
     RowData,
@@ -17,6 +21,14 @@ import type {
 type CellPosition = { row: number; column: number };
 
 const MAX_CONDITIONAL_FORMATTING_ADDS_PER_SHEET = 64;
+
+type WorkbookObjectSheetData = SheetData & {
+    tables?: SheetTableData[];
+    charts?: SheetChartData[];
+    hasNativeCharts?: boolean;
+    hasNativeChartParts?: boolean;
+    unsupportedNativeChartCount?: number;
+};
 
 export interface NativeExcelEditPlan {
     operations: NativeExcelEditOperation[];
@@ -96,9 +108,110 @@ function sheetFeatureSnapshot(sheet: SheetData): Record<string, unknown> {
         rows: _rows,
         cols: _cols,
         conditionalFormattings: _conditionalFormattings,
+        tables: _tables,
+        charts: _charts,
+        hasNativeCharts: _hasNativeCharts,
+        hasNativeChartParts: _hasNativeChartParts,
+        unsupportedNativeChartCount: _unsupportedNativeChartCount,
         ...features
-    } = sheet;
+    } = sheet as WorkbookObjectSheetData;
     return features;
+}
+
+function buildObjectOperations<T extends { id: string; name: string }>(
+    sheetName: string,
+    objectLabel: 'table' | 'chart',
+    beforeObjects: T[] | undefined,
+    afterObjects: T[] | undefined
+): { operations: NativeExcelEditOperation[]; unsupported: boolean } {
+    const before = beforeObjects ?? [];
+    const after = afterObjects ?? [];
+    const beforeById = new Map(before.map(item => [item.id, item] as const));
+    const afterById = new Map(after.map(item => [item.id, item] as const));
+    if (
+        beforeById.size !== before.length ||
+        afterById.size !== after.length ||
+        before.some(item => !item.id || !item.name) ||
+        after.some(item => !item.id || !item.name)
+    ) {
+        return { operations: [], unsupported: true };
+    }
+
+    const operations: NativeExcelEditOperation[] = [];
+    for (const item of before) {
+        if (!afterById.has(item.id)) {
+            operations.push(objectLabel === 'table'
+                ? { kind: 'deleteTable', sheetName, name: item.name }
+                : { kind: 'deleteChart', sheetName, name: item.name });
+        }
+    }
+    for (const item of before) {
+        const target = afterById.get(item.id);
+        if (target && !sameValue(item, target)) {
+            operations.push(objectLabel === 'table'
+                ? {
+                    kind: 'updateTable',
+                    sheetName,
+                    name: item.name,
+                    table: target as SheetTableData,
+                }
+                : {
+                    kind: 'updateChart',
+                    sheetName,
+                    name: item.name,
+                    chart: target as SheetChartData,
+                    ...(sameValue(
+                        (item as SheetChartData).anchor,
+                        (target as SheetChartData).anchor,
+                    ) ? { preserveAnchor: true } : {}),
+                    ...(sameValue(
+                        (item as SheetChartData).series,
+                        (target as SheetChartData).series,
+                    ) && sameValue(
+                        (item as SheetChartData).sourceRangeRef,
+                        (target as SheetChartData).sourceRangeRef,
+                    ) && sameValue(
+                        (item as SheetChartData).plotBy,
+                        (target as SheetChartData).plotBy,
+                    ) && sameValue(
+                        (item as SheetChartData).chartType,
+                        (target as SheetChartData).chartType,
+                    ) ? { preserveSeries: true } : {}),
+					...((target as SheetChartData).style !== undefined && !sameValue(
+						(item as SheetChartData).style,
+						(target as SheetChartData).style,
+					) && sameValue(
+						(item as SheetChartData).series,
+						(target as SheetChartData).series,
+					) && sameValue(
+						(item as SheetChartData).sourceRangeRef,
+						(target as SheetChartData).sourceRangeRef,
+					) && sameValue(
+						(item as SheetChartData).plotBy,
+						(target as SheetChartData).plotBy,
+					) && sameValue(
+						(item as SheetChartData).chartType,
+						(target as SheetChartData).chartType,
+					) ? { allowSeriesFormattingChange: true } : {}),
+                });
+        }
+    }
+    for (const item of after) {
+        if (!beforeById.has(item.id)) {
+            operations.push(objectLabel === 'table'
+                ? {
+                    kind: 'createTable',
+                    sheetName,
+                    table: item as SheetTableData,
+                }
+                : {
+                    kind: 'createChart',
+                    sheetName,
+                    chart: item as SheetChartData,
+                });
+        }
+    }
+    return { operations, unsupported: false };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -476,6 +589,30 @@ export function buildNativeExcelEditPlan(
             )
         ) {
             unsupportedChanges.add(`${afterSheet.name}:worksheet-features`);
+        }
+        const beforeObjects = beforeSheet as WorkbookObjectSheetData;
+        const afterObjects = afterSheet as WorkbookObjectSheetData;
+        const tablePlan = buildObjectOperations(
+            afterSheet.name,
+            'table',
+            beforeObjects.tables,
+            afterObjects.tables
+        );
+        const chartPlan = buildObjectOperations(
+            afterSheet.name,
+            'chart',
+            beforeObjects.charts,
+            afterObjects.charts
+        );
+        if (tablePlan.unsupported) {
+            unsupportedChanges.add(`${afterSheet.name}:tables`);
+        } else {
+            operations.push(...tablePlan.operations);
+        }
+        if (chartPlan.unsupported) {
+            unsupportedChanges.add(`${afterSheet.name}:charts`);
+        } else {
+            operations.push(...chartPlan.operations);
         }
         const columns = columnIndexes(beforeSheet);
         for (const column of columnIndexes(afterSheet)) {

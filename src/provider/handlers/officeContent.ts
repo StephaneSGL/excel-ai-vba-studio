@@ -9,8 +9,9 @@ import {
     isOoxmlPackagePath,
     MAX_VIRTUAL_OOXML_PACKAGE_BYTES,
 } from '@/common/ooxmlPackageSignature';
+import { promises as fs } from 'fs';
 import { basename, extname } from 'path';
-import { Uri, workspace, type Webview } from 'vscode';
+import { Uri, workspace } from 'vscode';
 
 export type EmbeddedSpreadsheetReadOnlyReason =
     | 'macro-preservation'
@@ -26,6 +27,7 @@ export interface OfficeOpenSnapshot {
 }
 
 const MACRO_OR_LEGACY_EXTENSIONS = new Set(['.xlsm', '.xls']);
+const MAX_LOCAL_OFFICE_OPEN_BYTES = 128 * 1024 * 1024;
 
 /**
  * The embedded writer rebuilds a workbook and cannot guarantee preservation
@@ -157,8 +159,69 @@ export function buildDocumentCacheId(uri: Uri): string {
     return `${uri.scheme}:${uri.toString()}`;
 }
 
+async function readStableLocalFileBytes(
+    filePath: string,
+    maximumBytes: number,
+    label: string,
+    allowEmpty: boolean,
+): Promise<Uint8Array> {
+    const handle = await fs.open(filePath, 'r');
+    try {
+        const before = await handle.stat();
+        if ((!allowEmpty && before.size <= 0) || before.size > maximumBytes) {
+            throw new Error(`${label} has an invalid size (limit: ${maximumBytes} bytes).`);
+        }
+        const buffer = Buffer.allocUnsafe(before.size);
+        let offset = 0;
+        while (offset < buffer.byteLength) {
+            const { bytesRead } = await handle.read(
+                buffer,
+                offset,
+                buffer.byteLength - offset,
+                offset,
+            );
+            if (bytesRead === 0) break;
+            offset += bytesRead;
+        }
+        const after = await handle.stat();
+        if (offset !== before.size || after.size !== before.size) {
+            throw new Error(`${label} changed size while it was read.`);
+        }
+        return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    } finally {
+        await handle.close();
+    }
+}
+
+export async function readUriBytesWithLimit(
+    uri: Uri,
+    maximumBytes: number,
+    label: string,
+    allowEmpty = true,
+): Promise<Uint8Array> {
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+        throw new Error('Office read limit is invalid.');
+    }
+    if (uri.scheme === 'file') {
+        return readStableLocalFileBytes(uri.fsPath, maximumBytes, label, allowEmpty);
+    }
+    const stat = await workspace.fs.stat(uri);
+    if ((!allowEmpty && stat.size <= 0) || stat.size > maximumBytes) {
+        throw new Error(`${label} has an invalid size (limit: ${maximumBytes} bytes).`);
+    }
+    const bytes = await workspace.fs.readFile(uri);
+    if ((!allowEmpty && bytes.byteLength <= 0) || bytes.byteLength > maximumBytes) {
+        throw new Error(`${label} changed size while it was read.`);
+    }
+    return bytes;
+}
+
 export async function readUriBytes(uri: Uri): Promise<Uint8Array> {
-    return workspace.fs.readFile(uri);
+    return readUriBytesWithLimit(
+        uri,
+        MAX_LOCAL_OFFICE_OPEN_BYTES,
+        'Office file',
+    );
 }
 
 export async function readUriText(uri: Uri): Promise<string> {
@@ -167,6 +230,11 @@ export async function readUriText(uri: Uri): Promise<string> {
 
 export function bytesToPayloadBuffer(data: Uint8Array): number[] {
     return Array.from(data);
+}
+
+/** Compact transport for virtual Office files; avoids expanding each byte to a JS number. */
+export function bytesToPayloadBase64(data: Uint8Array): string {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64');
 }
 
 export async function emitVirtualOfficeOpen(
@@ -191,7 +259,7 @@ export async function emitVirtualOfficeOpen(
         handler.emit('open', {
             ...basePayload,
             ...snapshot,
-            buffer: bytesToPayloadBuffer(data),
+            bufferBase64: bytesToPayloadBase64(data),
         });
     } catch (error) {
         handler.emit('open', {
@@ -205,16 +273,31 @@ export async function emitVirtualOfficeOpen(
 export async function emitFileOfficeOpen(
     handler: Handler,
     uri: Uri,
-    webview: Webview,
     snapshot?: OfficeOpenSnapshot
 ): Promise<void> {
     const readOnlyState = await getEmbeddedSpreadsheetReadOnlyState(uri);
-    handler.emit('open', {
+    const basePayload = {
         ext: extname(uri.fsPath),
-        path: webview.asWebviewUri(uri).toString(),
+        path: uri.toString(),
         fileName: basename(uri.fsPath),
+        scheme: uri.scheme,
         documentCacheId: buildDocumentCacheId(uri),
         ...readOnlyState,
-        ...snapshot,
-    });
+        nonce: Date.now(),
+    };
+
+    try {
+        const data = await readUriBytes(uri);
+        handler.emit('open', {
+            ...basePayload,
+            ...snapshot,
+            bufferBase64: bytesToPayloadBase64(data),
+        });
+    } catch (error) {
+        handler.emit('open', {
+            ...basePayload,
+            ...snapshot,
+            error: error instanceof Error ? error.message : 'Failed to read file',
+        });
+    }
 }

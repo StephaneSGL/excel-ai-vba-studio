@@ -8,6 +8,9 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ### Added
 
+- Added real Excel `ListObject` support to the integrated grid, including multiple disjoint tables in the same worksheet columns, unique names, preserved header/totals state, stripe options, and all 60 built-in table styles. Native creation requires headers and no totals; header/totals transitions are deliberately refused to prevent Excel from moving cells or rewriting formula references.
+- Added a native chart designer backed by real Excel `ChartObject` instances instead of static PNGs. It inventories the complete published `XlChartType` catalog and exposes source, series, combination/secondary-axis, colours, lines, markers, titles, axes, legends, labels, styles, and geometry.
+- Added the prompt-referenceable `#excelWorkbookDesign` tool so GitHub Copilot can create, update, and delete native worksheet tables and charts in local `.xlsx` and `.xlsm` workbooks.
 - Added a read-only Enterprise Security Center for `.xlsx`, `.xlsm`, `.xls`, and `.xlsb`. It reports file origin/MOTW, VBA and package signatures, EFS and OOXML package encryption, sensitivity-label metadata, macro/VBA settings, ActiveX, Protected View, application-wide and Excel Trusted Locations, the policy controlling user-defined locations, and the detected source of Office 16 policy or preference values.
 - Added a per-capability view for the integrated grid, VBA inspection/write-back, UserForm designer, ActiveX creation, and macro execution, with restricted, managed, standard, and unknown workbook levels.
 - Added an effective-policy table that keeps Cloud Policy, Windows policy-registry values, and local preferences separate, shows shadowed evidence, and uses the detected Office architecture for registry-view decisions.
@@ -17,6 +20,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ### Changed
 
+- Workbook opening remains package-only; Excel COM is now started on demand for native table/chart transactions and explicit native handoff, keeping the normal editor startup path fast.
 - Clarified the noncommercial community-use rights and the separate commercial-license boundary without changing the PolyForm Noncommercial 1.0.0 terms.
 - Removed obsolete upstream translations that described a different extension, unsupported features, and telemetry that this project does not collect.
 - Removed the dormant Vditor and PDF asset trees plus inactive Markdown, Java-decompiler, and web-extension provider/service entry points that were neither built nor included in the Excel-only VSIX.
@@ -24,8 +28,17 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Replaced the unsupported Marketplace `--oidc` invocation with a verified VSIX artifact; automatic publication remains intentionally disabled until a Microsoft Entra workload identity is configured for the publisher.
 - Moved bounded OOXML metadata inflation off the extension-host event loop. Virtual writes intentionally retain a final snapshot read because `workspace.fs` does not expose a conditional compare-and-swap write.
 
+### Fixed
+
+- Replaced the legacy table AutoFilter and chart-image paths that caused supported XLSM saves to be rejected as `worksheet-features`; real tables and charts now produce targeted native operations while existing filters, sorting, images, and page setup remain unchanged.
+- Filtered and validated explicit data-label positions per native series type so unsupported COM assignments fail before Excel opens; compatible charts retain automatic placement or expose only the positions Excel accepts.
+- Made data-label creation deterministic by rejecting position-only definitions, clearing every omitted compatible `show*` flag after Excel applies its defaults, and treating an all-false definition as explicit label removal.
+- Made an empty axis number-format field restore Excel's source-linked automatic format, with linked-state verification after reopening the working copy.
+
 ### Security
 
+- Table/chart mutations use the existing hash-bound working-copy transaction, persistent backup, macro-disabled Excel instance, semantic post-open verification, atomic replacement, and rollback. Local A1 ranges, object names, sizes, chart types, series counts, and styling inputs are bounded before Excel receives them.
+- Region-map creation is fail-closed because Excel can contact Bing Maps with workbook geography data; the type remains inventoried and existing map charts remain preserved.
 - The enterprise probe is bounded, local, and read-only: it never opens Excel, runs VBA, removes Mark of the Web, writes the registry, changes Trust Center, or attempts to bypass managed policy.
 - The audit now holds a read-only file lock across the complete inspection, parses only one valid `ZoneTransfer` section with `ZoneId` 0–4, expands bounded Trusted Location environment variables, and includes Excel's documented built-in Trusted Locations.
 - Macro-capable containers whose VBA or XLM inventory cannot be proven now remain `unknown`; they are never presented as safely macro-free merely because a conventional part path was absent.
@@ -43,6 +56,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ### Tests
 
+- Added regressions for three independent tables at `A1:C5`, `A20:C30`, and `A40:C50`, overlap rejection, table round-trips, the 103 chart types, 60 table styles, classic-chart OOXML inventory, chartEx preservation signalling, Copilot tool validation, native object diffs, stale hashes, and rollback.
 - Added static guards against registry/file/network writes and Excel automation plus synthetic workbook probes for bounded JSON, modern and legacy Purview metadata, `EnabledV2` precedence, orphan rejection, Intune non-attribution, policy precedence, registry bitness, source typing, and Trusted Location limits.
 - Added regressions for invalid and ambiguous Mark-of-the-Web streams, macro-capable containers with inconclusive inventories, built-in Excel Trusted Locations, deep compound-file hierarchies, and Linux-safe package-signature validation.
 - Added an executable signed-package regression covering XLSX/XLSM grid writes, Save As, VBA bootstrap/write-back, UserForms, worksheet buttons, and ActiveX without running a macro.

@@ -13,6 +13,11 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 . (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
 
+$MaxNamedStreams = 64
+$MaxNamedStreamBytes = 8MB
+$MaxTotalNamedStreamBytes = 32MB
+$MaxZoneIdentifierBytes = 64KB
+
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
@@ -231,6 +236,284 @@ function Get-Sha256 {
     } finally { $stream.Dispose() }
 }
 
+function Get-BoundedNamedStreamBytes {
+    param(
+        [string]$Path,
+        [string]$StreamName,
+        [long]$MaximumBytes,
+        [string]$Label
+    )
+
+    $memory = $null
+    try {
+        $memory = New-Object IO.MemoryStream
+        Get-Content `
+            -LiteralPath $Path `
+            -Stream $StreamName `
+            -Encoding Byte `
+            -ReadCount 8192 `
+            -ErrorAction Stop |
+            ForEach-Object {
+                $chunk = [byte[]]$_
+                if ($memory.Length + $chunk.Length -gt $MaximumBytes) {
+                    throw "$Label exceeds the $MaximumBytes-byte safety limit."
+                }
+                $memory.Write($chunk, 0, $chunk.Length)
+            }
+        return $memory.ToArray()
+    }
+    finally {
+        if ($null -ne $memory) { $memory.Dispose() }
+    }
+}
+
+function Get-NamedStreamState {
+    param([string]$Path)
+
+    $streamItems = @(Get-Item -LiteralPath $Path -Stream * -Force -ErrorAction Stop)
+    if ($streamItems.Count -gt $MaxNamedStreams) {
+        throw "Workbook has more than $MaxNamedStreams alternate data streams."
+    }
+
+    [long]$totalBytes = 0
+    $seenNames = New-Object 'System.Collections.Generic.HashSet[string]' `
+        ([StringComparer]::OrdinalIgnoreCase)
+    $result = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($streamItem in $streamItems) {
+        $streamName = [string]$streamItem.Stream
+        if ($streamName -in @('$DATA', ':$DATA')) {
+            continue
+        }
+        if ($streamName.EndsWith(':$DATA', [StringComparison]::OrdinalIgnoreCase)) {
+            $streamName = $streamName.Substring(0, $streamName.Length - 6)
+        }
+        if (
+            [string]::IsNullOrWhiteSpace($streamName) -or
+            $streamName.Length -gt 255 -or
+            $streamName -match '[:\\/*?"<>|\x00-\x1f\x7f]' -or
+            -not $seenNames.Add($streamName)
+        ) {
+            throw 'Workbook contains an invalid or ambiguous alternate data stream name.'
+        }
+        [long]$length = $streamItem.Length
+        if ($length -lt 0 -or $length -gt $MaxNamedStreamBytes) {
+            throw (
+                "Alternate data stream $streamName exceeds the " +
+                "$MaxNamedStreamBytes-byte safety limit."
+            )
+        }
+        $totalBytes += $length
+        if ($totalBytes -gt $MaxTotalNamedStreamBytes) {
+            throw (
+                'Workbook alternate data streams exceed the ' +
+                "$MaxTotalNamedStreamBytes-byte aggregate safety limit."
+            )
+        }
+        $streamBytes = [byte[]]@(Get-BoundedNamedStreamBytes `
+            $Path `
+            $streamName `
+            $MaxNamedStreamBytes `
+            "Alternate data stream $streamName")
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $streamSha256 = [BitConverter]::ToString(
+                $sha256.ComputeHash($streamBytes)
+            ).Replace('-', '').ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+        $verifiedLength = [long](
+            Get-Item -LiteralPath $Path -Stream $streamName -Force -ErrorAction Stop
+        ).Length
+        if ($verifiedLength -ne $length) {
+            throw "Alternate data stream changed during inspection: $streamName"
+        }
+        [void]$result.Add([PSCustomObject]@{
+            Name = $streamName
+            Length = $length
+            Sha256 = $streamSha256
+        })
+    }
+    return @($result.ToArray() | Sort-Object Name)
+}
+
+function Test-NamedStreamStateEqual {
+    param(
+        [object[]]$Left,
+        [object[]]$Right
+    )
+
+    $leftItems = @($Left | Sort-Object Name)
+    $rightItems = @($Right | Sort-Object Name)
+    if ($leftItems.Count -ne $rightItems.Count) { return $false }
+    for ($index = 0; $index -lt $leftItems.Count; $index++) {
+        if (
+            -not [string]::Equals(
+                [string]$leftItems[$index].Name,
+                [string]$rightItems[$index].Name,
+                [StringComparison]::OrdinalIgnoreCase
+            ) -or
+            [long]$leftItems[$index].Length -ne [long]$rightItems[$index].Length -or
+            [string]$leftItems[$index].Sha256 -cne [string]$rightItems[$index].Sha256
+        ) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Assert-SafeZoneIdentifierState {
+    param(
+        [string]$Path,
+        [object[]]$NamedStreamState
+    )
+
+    $zoneEntries = @(
+        $NamedStreamState | Where-Object {
+            [string]::Equals(
+                [string]$_.Name,
+                'Zone.Identifier',
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        }
+    )
+    if ($zoneEntries.Count -eq 0) { return }
+    if ($zoneEntries.Count -ne 1) {
+        throw 'VBA designer refused: Zone.Identifier is ambiguous.'
+    }
+    if ([long]$zoneEntries[0].Length -gt $MaxZoneIdentifierBytes) {
+        throw (
+            'VBA designer refused: Zone.Identifier exceeds the ' +
+            "$MaxZoneIdentifierBytes-byte safety limit."
+        )
+    }
+
+    $bytes = @(Get-BoundedNamedStreamBytes `
+        $Path `
+        ([string]$zoneEntries[0].Name) `
+        $MaxZoneIdentifierBytes `
+        'Zone.Identifier')
+    $byteArray = [byte[]]$bytes
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $actualSha256 = [BitConverter]::ToString(
+            $sha256.ComputeHash($byteArray)
+        ).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+    if ($actualSha256 -cne [string]$zoneEntries[0].Sha256) {
+        throw 'VBA designer refused: Zone.Identifier changed during inspection.'
+    }
+
+    $utf8 = New-Object Text.UTF8Encoding($false, $true)
+    try {
+        $text = $utf8.GetString($byteArray)
+    }
+    catch {
+        throw 'VBA designer refused: Zone.Identifier is not valid UTF-8.'
+    }
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+        $text = $text.Substring(1)
+    }
+    if (
+        [string]::IsNullOrEmpty($text) -or
+        $text.Contains([char]0) -or
+        [regex]::IsMatch($text, '\r(?!\n)')
+    ) {
+        throw 'VBA designer refused: Zone.Identifier is malformed.'
+    }
+
+    $section = ''
+    $zoneTransferSections = 0
+    $zoneIds = New-Object 'System.Collections.Generic.List[int]'
+    foreach ($rawLine in [regex]::Split($text, '\r?\n')) {
+        $line = $rawLine.Trim()
+        if (
+            [string]::IsNullOrEmpty($line) -or
+            $line.StartsWith(';') -or
+            $line.StartsWith('#')
+        ) {
+            continue
+        }
+        $sectionMatch = [regex]::Match($line, '^\[([^\[\]\r\n]+)\]$')
+        if ($sectionMatch.Success) {
+            $section = $sectionMatch.Groups[1].Value.Trim().ToLowerInvariant()
+            if ([string]::IsNullOrEmpty($section)) {
+                throw 'VBA designer refused: Zone.Identifier is malformed.'
+            }
+            if ($section -ceq 'zonetransfer') { $zoneTransferSections++ }
+            continue
+        }
+        $assignment = [regex]::Match(
+            $line,
+            '^([A-Za-z][A-Za-z0-9._-]*)\s*=\s*(.*)$'
+        )
+        if (-not $assignment.Success -or [string]::IsNullOrEmpty($section)) {
+            throw 'VBA designer refused: Zone.Identifier is malformed.'
+        }
+        if (
+            $section -ceq 'zonetransfer' -and
+            $assignment.Groups[1].Value -ieq 'ZoneId'
+        ) {
+            $zoneIdText = $assignment.Groups[2].Value.Trim()
+            if ($zoneIdText -cnotmatch '^[0-4]$') {
+                throw 'VBA designer refused: Zone.Identifier has an invalid ZoneId.'
+            }
+            [void]$zoneIds.Add([int]$zoneIdText)
+        }
+    }
+    if ($zoneTransferSections -ne 1 -or $zoneIds.Count -ne 1) {
+        throw 'VBA designer refused: Zone.Identifier is missing or ambiguous.'
+    }
+    if ($zoneIds[0] -in @(3, 4)) {
+        throw (
+            'VBA designer refused: the workbook is marked as Internet or ' +
+            "Restricted Zone (ZoneId=$($zoneIds[0])). Trust and unblock it " +
+            'explicitly before editing.'
+        )
+    }
+}
+
+function Copy-NamedStreamsFromSource {
+    param(
+        [string]$SourcePath,
+        [string]$TargetPath,
+        [object[]]$ExpectedState
+    )
+
+    $existingState = @(Get-NamedStreamState $TargetPath)
+    # Never erase a newly applied or malformed Mark-of-the-Web while bringing a
+    # work file back to the inspected source state. Unsafe state fails closed.
+    Assert-SafeZoneIdentifierState $TargetPath $existingState
+    foreach ($existing in $existingState) {
+        Remove-Item `
+            -LiteralPath $TargetPath `
+            -Stream ([string]$existing.Name) `
+            -Force `
+            -ErrorAction Stop
+    }
+    foreach ($entry in @($ExpectedState)) {
+        $streamBytes = [byte[]]@(Get-BoundedNamedStreamBytes `
+            $SourcePath `
+            ([string]$entry.Name) `
+            $MaxNamedStreamBytes `
+            "Alternate data stream $($entry.Name)")
+        Set-Content `
+            -LiteralPath $TargetPath `
+            -Stream ([string]$entry.Name) `
+            -Encoding Byte `
+            -Value $streamBytes `
+            -ErrorAction Stop
+    }
+    $actualState = @(Get-NamedStreamState $TargetPath)
+    if (-not (Test-NamedStreamStateEqual $ExpectedState $actualState)) {
+        throw 'Alternate data streams could not be preserved on the VBA designer work file.'
+    }
+}
+
 function Get-GuidString { [Guid]::NewGuid().ToString('N') }
 
 function New-InspectRequest {
@@ -270,7 +553,7 @@ function Invoke-Helper {
     } catch { throw "Invalid JSON from helper: $_" }
 }
 
-function Get-ExcelPid {
+function Get-ExcelProcessIdentity {
     param([object]$ExcelApp)
     if (-not ('BudgetArtifact.NativeProcess' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -286,41 +569,134 @@ namespace BudgetArtifact {
     }
     [uint32]$ownedProcessId = 0
     [void][BudgetArtifact.NativeProcess]::GetWindowThreadProcessId([IntPtr][int64]$ExcelApp.Hwnd, [ref]$ownedProcessId)
-    return $ownedProcessId
+    if ($ownedProcessId -eq 0) {
+        throw 'Excel process ID could not be determined.'
+    }
+
+    $ownedProcess = $null
+    try {
+        $ownedProcess = [Diagnostics.Process]::GetProcessById([int]$ownedProcessId)
+        if (
+            -not [string]::Equals(
+                $ownedProcess.ProcessName,
+                'EXCEL',
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            throw 'The owned automation process is not EXCEL.EXE.'
+        }
+        return [PSCustomObject]@{
+            ProcessId = [int]$ownedProcessId
+            StartTimeUtcTicks = $ownedProcess.StartTime.ToUniversalTime().Ticks.ToString(
+                [Globalization.CultureInfo]::InvariantCulture
+            )
+        }
+    }
+    finally {
+        if ($null -ne $ownedProcess) { $ownedProcess.Dispose() }
+    }
+}
+
+function Stop-OwnedExcelProcess {
+    param(
+        [AllowNull()][object]$Identity,
+        [int]$GracePeriodMilliseconds = 5000
+    )
+
+    if (
+        $null -eq $Identity -or
+        $GracePeriodMilliseconds -lt 0 -or
+        $null -eq $Identity.PSObject.Properties['ProcessId'] -or
+        $null -eq $Identity.PSObject.Properties['StartTimeUtcTicks']
+    ) {
+        return
+    }
+
+    $ownedProcessId = [int]$Identity.ProcessId
+    [long]$expectedStartTimeUtcTicks = 0
+    if (
+        $ownedProcessId -le 0 -or
+        -not [long]::TryParse(
+            [string]$Identity.StartTimeUtcTicks,
+            [Globalization.NumberStyles]::Integer,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref]$expectedStartTimeUtcTicks
+        )
+    ) {
+        return
+    }
+
+    $ownedProcess = $null
+    try {
+        $ownedProcess = [Diagnostics.Process]::GetProcessById($ownedProcessId)
+        if (
+            -not [string]::Equals(
+                $ownedProcess.ProcessName,
+                'EXCEL',
+                [StringComparison]::OrdinalIgnoreCase
+            ) -or
+            $ownedProcess.StartTime.ToUniversalTime().Ticks -ne
+                $expectedStartTimeUtcTicks
+        ) {
+            return
+        }
+        if ($ownedProcess.WaitForExit($GracePeriodMilliseconds)) {
+            return
+        }
+
+        # Kill through the already verified Process object. Resolving the PID a
+        # second time here could target an unrelated process after PID reuse.
+        $ownedProcess.Kill()
+        [void]$ownedProcess.WaitForExit(5000)
+    }
+    catch {
+        # Cleanup is best-effort. Identity mismatch or an already-exited process
+        # must fail closed and must never fall back to a PID-only termination.
+    }
+    finally {
+        if ($null -ne $ownedProcess) { $ownedProcess.Dispose() }
+    }
 }
 
 function Ensure-ExcelSession {
     param()
-    $excel = New-Object -ComObject Excel.Application
-    $excel.AutomationSecurity = 3
-    $excel.DisplayAlerts = $false
-    $excel.EnableEvents = $false
-    $excel.AskToUpdateLinks = $false
-    $excel.ScreenUpdating = $false
-    $excel.Visible = $false
-    $ownedProcessId = Get-ExcelPid $excel
-    [Console]::Out.WriteLine("OWNED_EXCEL_PID|$ownedProcessId")
-    return $excel, $ownedProcessId
+    $excel = $null
+    $ownedProcessIdentity = $null
+    try {
+        $excel = New-Object -ComObject Excel.Application
+        $excel.AutomationSecurity = 3
+        $excel.DisplayAlerts = $false
+        $excel.EnableEvents = $false
+        $excel.AskToUpdateLinks = $false
+        $excel.ScreenUpdating = $false
+        $excel.Visible = $false
+        $ownedProcessIdentity = Get-ExcelProcessIdentity $excel
+        [Console]::Out.WriteLine(
+            'OWNED_EXCEL_PID|' + $ownedProcessIdentity.ProcessId + '|' +
+            $ownedProcessIdentity.StartTimeUtcTicks
+        )
+        return $excel, $ownedProcessIdentity
+    }
+    catch {
+        if ($null -ne $excel) {
+            try { $excel.Quit() } catch { }
+            Release-ComObject $excel
+        }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+        Stop-OwnedExcelProcess $ownedProcessIdentity 0
+        throw
+    }
 }
 
 function Cleanup-Excel {
-    param([object]$Excel, [int]$OwnedProcessId)
+    param([object]$Excel, [AllowNull()][object]$OwnedProcessIdentity)
     if ($null -ne $Excel) {
         try { $Excel.Quit() } catch { }
         Release-ComObject $Excel
     }
     [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-    if ($OwnedProcessId -gt 0) {
-        $end = (Get-Date).AddSeconds(5)
-        while ((Get-Date) -lt $end) {
-            try {
-                $p = Get-Process -Id $OwnedProcessId -ErrorAction SilentlyContinue
-                if (-not $p) { break }
-                Start-Sleep -Milliseconds 200
-            } catch { break }
-        }
-        try { Stop-Process -Id $OwnedProcessId -Force -ErrorAction SilentlyContinue } catch { }
-    }
+    Stop-OwnedExcelProcess $OwnedProcessIdentity
 }
 
 function Open-WorkbookReadOnly {
@@ -391,7 +767,10 @@ Assert-NoReparsePointChain $workbookPath
 $originalHash = Get-Sha256 $workbookPath
 if (-not $originalHash) { throw "Cannot compute SHA256 of original workbook" }
 if ($originalHash -cne $expectedSha256) { throw "Workbook SHA256 does not match expected: $originalHash vs $expectedSha256" }
+$sourceNamedStreamState = @(Get-NamedStreamState $workbookPath)
+Assert-SafeZoneIdentifierState $workbookPath $sourceNamedStreamState
 Assert-OoxmlPackageUnsigned $workbookPath
+Assert-OoxmlPackageHasNoXlmMacroSheets $workbookPath
 
 # Pre-validate operations and collect validation sets
 $seenFormNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -837,14 +1216,42 @@ $stagingGuid = Get-GuidString
 $stagingPath = [IO.Path]::Combine($workbookDir, "staging_$stagingGuid.xlsm")
 if (Test-Path -LiteralPath $stagingPath) { throw "Staging file already exists: $stagingPath" }
 try {
+    if ((Get-Sha256 $workbookPath) -cne $originalHash) {
+        throw "Original workbook changed before staging copy"
+    }
+    $currentSourceNamedStreamState = @(Get-NamedStreamState $workbookPath)
+    Assert-SafeZoneIdentifierState $workbookPath $currentSourceNamedStreamState
+    if (-not (Test-NamedStreamStateEqual `
+        $sourceNamedStreamState `
+        $currentSourceNamedStreamState)) {
+        throw "Workbook alternate data streams changed before staging copy"
+    }
     Copy-Item -LiteralPath $workbookPath -Destination $stagingPath
-} catch { throw "Failed to copy to staging: $_" }
-Assert-OoxmlPackageUnsigned $stagingPath
+    Assert-NoReparsePointChain $stagingPath
+    if ((Get-Sha256 $stagingPath) -cne $originalHash) {
+        throw "Staging copy does not match the original workbook"
+    }
+    Copy-NamedStreamsFromSource `
+        $workbookPath `
+        $stagingPath `
+        $sourceNamedStreamState
+    Assert-SafeZoneIdentifierState `
+        $stagingPath `
+        @(Get-NamedStreamState $stagingPath)
+    Assert-OoxmlPackageUnsigned $stagingPath
+    Assert-OoxmlPackageHasNoXlmMacroSheets $stagingPath
+}
+catch {
+    if (Test-Path -LiteralPath $stagingPath) {
+        Remove-Item -LiteralPath $stagingPath -Force -ErrorAction SilentlyContinue
+    }
+    throw "Failed to prepare staging workbook: $_"
+}
 
-$excel1 = $null; $excel1Pid = 0
+$excel1 = $null; $excel1Identity = $null
 $wbStaging = $null
 $vbaProject = $null; $components = $null
-$excel2 = $null; $excel2Pid = 0
+$excel2 = $null; $excel2Identity = $null
 $wbVerify = $null
 $operationError = $null
 $createdForms = [System.Collections.Generic.List[string]]::new()
@@ -856,6 +1263,7 @@ $assignedButtons = [System.Collections.Generic.List[string]]::new()
 $createdActiveXControls = [System.Collections.Generic.List[string]]::new()
 $boundActiveXControls = [System.Collections.Generic.List[string]]::new()
 $backupPath = $null
+$commitGuard = $null
 $commitCompleted = $false
 $rollbackCompleted = $false
 $rollbackError = $null
@@ -869,7 +1277,7 @@ $expectedActiveXBindings = [System.Collections.Generic.List[object]]::new()
 
 try {
     # First Excel instance for modifications
-    $excel1, $excel1Pid = Ensure-ExcelSession
+    $excel1, $excel1Identity = Ensure-ExcelSession
     $workbooks1 = $null
     try {
         $workbooks1 = $excel1.Workbooks
@@ -1419,11 +1827,28 @@ End Sub
     # Cleanup first Excel
     $workbooks1 = $excel1.Workbooks
     Release-ComObject $workbooks1
-    Cleanup-Excel $excel1 $excel1Pid
-    $excel1 = $null; $excel1Pid = 0
+    Cleanup-Excel $excel1 $excel1Identity
+    $excel1 = $null; $excel1Identity = $null
+
+    # Excel may rewrite or discard alternate data streams while saving. Restore
+    # the exact inspected source state before any second COM open, then verify it.
+    $currentSourceNamedStreamState = @(Get-NamedStreamState $workbookPath)
+    Assert-SafeZoneIdentifierState $workbookPath $currentSourceNamedStreamState
+    if (-not (Test-NamedStreamStateEqual `
+        $sourceNamedStreamState `
+        $currentSourceNamedStreamState)) {
+        throw "Workbook alternate data streams changed during VBA designer automation"
+    }
+    Copy-NamedStreamsFromSource `
+        $workbookPath `
+        $stagingPath `
+        $sourceNamedStreamState
+    Assert-SafeZoneIdentifierState `
+        $stagingPath `
+        @(Get-NamedStreamState $stagingPath)
 
     # Second Excel instance for read-only verification
-    $excel2, $excel2Pid = Ensure-ExcelSession
+    $excel2, $excel2Identity = Ensure-ExcelSession
     $wbVerify = Open-WorkbookReadOnly $excel2 $stagingPath
 
     # Verify created forms
@@ -1640,8 +2065,14 @@ End Sub
     $workbooks2 = $excel2.Workbooks
     Release-ComObject $workbooks2
     # Close second Excel
-    Cleanup-Excel $excel2 $excel2Pid
-    $excel2 = $null; $excel2Pid = 0
+    Cleanup-Excel $excel2 $excel2Identity
+    $excel2 = $null; $excel2Identity = $null
+
+    if (-not (Test-NamedStreamStateEqual `
+        $sourceNamedStreamState `
+        @(Get-NamedStreamState $stagingPath))) {
+        throw "Staging alternate data streams changed during VBA designer verification"
+    }
 
     # Post-verification with native helper on staging
     $inspectReqPath2 = New-InspectRequest $workbookDir $stagingPath
@@ -1693,10 +2124,34 @@ End Sub
         if (-not $entry -or $entry.Length -eq 0) { throw "xl/vbaProject.bin missing or empty in staging" }
     } finally { if ($zip) { $zip.Dispose() } }
 
-    # Recompute original hash again before commit
+    # Hold a read/delete-share guard across the final source check and atomic
+    # replacement. It allows File.Replace's rename semantics but refuses any
+    # existing or newly opened writer during the commit window.
+    $commitGuard = [IO.File]::Open(
+        $workbookPath,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        ([IO.FileShare]::Read -bor [IO.FileShare]::Delete)
+    )
+
+    # Recompute original hash again before commit while the writer guard is held.
     $originalHash2 = Get-Sha256 $workbookPath
     if ($originalHash2 -cne $originalHash) { throw "Original workbook changed before commit" }
     if (-not (Test-Path -LiteralPath $stagingPath)) { throw "Staging file disappeared before commit" }
+    $currentSourceNamedStreamState = @(Get-NamedStreamState $workbookPath)
+    Assert-SafeZoneIdentifierState $workbookPath $currentSourceNamedStreamState
+    if (-not (Test-NamedStreamStateEqual `
+        $sourceNamedStreamState `
+        $currentSourceNamedStreamState)) {
+        throw "Workbook alternate data streams changed before commit"
+    }
+    $stagingNamedStreamState = @(Get-NamedStreamState $stagingPath)
+    Assert-SafeZoneIdentifierState $stagingPath $stagingNamedStreamState
+    if (-not (Test-NamedStreamStateEqual `
+        $sourceNamedStreamState `
+        $stagingNamedStreamState)) {
+        throw "Staging alternate data streams do not match the original before commit"
+    }
 
     # Create backup directory only now
     if (-not (Test-Path -LiteralPath $backupDir)) {
@@ -1724,10 +2179,26 @@ End Sub
     if ($backupHash -cne $originalHash) {
         throw "Atomic replacement backup does not match the original workbook"
     }
+    $backupNamedStreamState = @(Get-NamedStreamState $backupPath)
+    Assert-SafeZoneIdentifierState $backupPath $backupNamedStreamState
+    if (-not (Test-NamedStreamStateEqual `
+        $sourceNamedStreamState `
+        $backupNamedStreamState)) {
+        throw "Atomic replacement backup alternate data streams do not match the original workbook"
+    }
     $finalHash = Get-Sha256 $workbookPath
     if ($finalHash -cne $postInspect.workbookSha256) {
         throw "Committed workbook hash does not match the verified staging workbook"
     }
+    $finalNamedStreamState = @(Get-NamedStreamState $workbookPath)
+    Assert-SafeZoneIdentifierState $workbookPath $finalNamedStreamState
+    if (-not (Test-NamedStreamStateEqual `
+        $sourceNamedStreamState `
+        $finalNamedStreamState)) {
+        throw "Committed workbook alternate data streams were not preserved"
+    }
+    $commitGuard.Dispose()
+    $commitGuard = $null
 
     # Build success output
     $result = [ordered]@{
@@ -1776,12 +2247,12 @@ End Sub
     }
     [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
 
-    # Kill Excel processes if still alive
-    if ($excel1Pid -gt 0) {
-        try { Stop-Process -Id $excel1Pid -Force -ErrorAction SilentlyContinue } catch { }
-    }
-    if ($excel2Pid -gt 0) {
-        try { Stop-Process -Id $excel2Pid -Force -ErrorAction SilentlyContinue } catch { }
+    Stop-OwnedExcelProcess $excel1Identity
+    Stop-OwnedExcelProcess $excel2Identity
+
+    if ($null -ne $commitGuard) {
+        try { $commitGuard.Dispose() } catch { }
+        $commitGuard = $null
     }
 
     # A failure after File.Replace must restore the verified displaced original.
@@ -1803,7 +2274,19 @@ End Sub
             if ((Get-Sha256 $backupPath) -cne $originalHash) {
                 throw "Recovery backup hash changed after commit failure"
             }
+            $recoveryNamedStreamState = @(Get-NamedStreamState $backupPath)
+            Assert-SafeZoneIdentifierState $backupPath $recoveryNamedStreamState
+            if (-not (Test-NamedStreamStateEqual `
+                $sourceNamedStreamState `
+                $recoveryNamedStreamState)) {
+                throw "Recovery backup alternate data streams are not a verified baseline"
+            }
             Copy-Item -LiteralPath $backupPath -Destination $rollbackStagingPath
+            Assert-NoReparsePointChain $rollbackStagingPath
+            Copy-NamedStreamsFromSource `
+                $backupPath `
+                $rollbackStagingPath `
+                $sourceNamedStreamState
             [IO.File]::Replace(
                 $rollbackStagingPath,
                 $workbookPath,
@@ -1811,6 +2294,13 @@ End Sub
             )
             if ((Get-Sha256 $workbookPath) -cne $originalHash) {
                 throw "Restored workbook does not match the original hash"
+            }
+            $restoredNamedStreamState = @(Get-NamedStreamState $workbookPath)
+            Assert-SafeZoneIdentifierState $workbookPath $restoredNamedStreamState
+            if (-not (Test-NamedStreamStateEqual `
+                $sourceNamedStreamState `
+                $restoredNamedStreamState)) {
+                throw "Restored workbook alternate data streams do not match the original"
             }
             $rollbackCompleted = $true
             if (Test-Path -LiteralPath $failedReplacementPath) {

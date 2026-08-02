@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'crypto';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { assertOoxmlPackageUnsignedForMutation } from '../common/ooxmlPackageSignature';
+import type { NativeExcelEditOperation } from '../common/nativeExcelEdits';
+import { applyNativeExcelEdits } from '../provider/nativeExcelBridge';
 import {
 	assertNoReparsePointChain,
 	assertNotManagedBackupPath,
@@ -28,7 +30,9 @@ import {
 	ToolInput,
 	VbaDesignToolInput,
 	VbaDesignToolResult,
-	VbaToolWriteResult
+	VbaToolWriteResult,
+	WorkbookObjectDesignToolInput,
+	WorkbookObjectDesignToolResult
 } from './types';
 import { showUserFormPreview } from './userFormPreview';
 import { VbaStudioPanel } from './vbaStudioPanel';
@@ -57,6 +61,11 @@ interface PowerShellRunOptions {
 	cancellationToken?: vscode.CancellationToken;
 	timeoutMs: number;
 	cleanupOwnedExcel: boolean;
+}
+
+interface OwnedExcelProcessIdentity {
+	processId: number;
+	startTimeUtcTicks: string;
 }
 
 interface MacroBootstrapResult {
@@ -273,29 +282,48 @@ function allowedCustomActiveXProgIds(resource: vscode.Uri): string[] {
 	return configured as string[];
 }
 
-async function terminateExactProcess(processId: number): Promise<void> {
+async function terminateExactExcelProcess(
+	identity: OwnedExcelProcessIdentity
+): Promise<void> {
+	const { processId, startTimeUtcTicks } = identity;
 	if (
 		process.platform !== 'win32' ||
 		!Number.isSafeInteger(processId) ||
-		processId <= 0
+		processId <= 0 ||
+		!/^\d{15,19}$/.test(startTimeUtcTicks)
 	) {
 		return;
 	}
+	const verifyAndStopScript = [
+		'$expectedPid = [int]$args[0]',
+		'$expectedTicks = [long]$args[1]',
+		'$candidate = Get-Process -Id $expectedPid -ErrorAction SilentlyContinue',
+		'if ($null -eq $candidate) { exit 0 }',
+		'try {',
+		"  if (-not [string]::Equals($candidate.ProcessName, 'EXCEL', [StringComparison]::OrdinalIgnoreCase)) { exit 0 }",
+		'  if ($candidate.StartTime.ToUniversalTime().Ticks -ne $expectedTicks) { exit 0 }',
+		'  $candidate.Kill()',
+		'  [void]$candidate.WaitForExit(5000)',
+		'} finally { $candidate.Dispose() }'
+	].join('; ');
 	await new Promise<void>(resolve => {
-		const taskkillPath = process.env.SystemRoot
-			? path.join(process.env.SystemRoot, 'System32', 'taskkill.exe')
-			: 'taskkill.exe';
-		const killer = spawn(
-			taskkillPath,
-			['/PID', String(processId), '/F'],
+		execFile(
+			getPowerShellPath(),
+			[
+				'-NoLogo',
+				'-NoProfile',
+				'-NonInteractive',
+				'-Command',
+				verifyAndStopScript,
+				String(processId),
+				startTimeUtcTicks
+			],
 			{
 				windowsHide: true,
-				shell: false,
-				stdio: 'ignore'
-			}
+				maxBuffer: 64 * 1024
+			},
+			() => resolve()
 		);
-		killer.once('error', () => resolve());
-		killer.once('close', () => resolve());
 	});
 }
 
@@ -678,6 +706,106 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 		}
 	}
 
+	async designWorkbookObjectsFromTool(
+		workbookUri: vscode.Uri,
+		operations: WorkbookObjectDesignToolInput['operations'],
+		cancellationToken?: vscode.CancellationToken
+	): Promise<WorkbookObjectDesignToolResult> {
+		if (cancellationToken?.isCancellationRequested) {
+			throw new vscode.CancellationError();
+		}
+		const canonicalUri = await canonicalizeWorkbookUri(workbookUri);
+		assertNotManagedBackupPath(canonicalUri.fsPath);
+		const workbookExtension = path
+			.extname(canonicalUri.fsPath)
+			.toLocaleLowerCase('en-US');
+		if (workbookExtension !== '.xlsx' && workbookExtension !== '.xlsm') {
+			throw new Error(
+				'La conception de tableaux et graphiques natifs accepte uniquement les classeurs .xlsx et .xlsm.'
+			);
+		}
+		await assertOoxmlPackageUnsignedForMutation(canonicalUri.fsPath);
+		if (!(await this.ensureActiveWorkbookIsSaved(canonicalUri))) {
+			throw new Error(
+				'Le classeur contient des modifications non enregistrées et ne peut pas recevoir de tableaux ou graphiques natifs.'
+			);
+		}
+
+		const expectedWorkbookSha256 = await hashFileSha256(canonicalUri.fsPath);
+		const nativeOperations = operations.map(operation => {
+			switch (operation.kind) {
+				case 'createWorksheetTable':
+					return {
+						kind: 'createTable',
+						sheetName: operation.sheetName,
+						table: operation.table
+					};
+				case 'updateWorksheetTable':
+					return {
+						kind: 'updateTable',
+						sheetName: operation.sheetName,
+						name: operation.name,
+						table: operation.table
+					};
+				case 'deleteWorksheetTable':
+					return {
+						kind: 'deleteTable',
+						sheetName: operation.sheetName,
+						name: operation.name
+					};
+				case 'createWorksheetChart':
+					return {
+						kind: 'createChart',
+						sheetName: operation.sheetName,
+						chart: operation.chart
+					};
+				case 'updateWorksheetChart':
+					return {
+						kind: 'updateChart',
+						sheetName: operation.sheetName,
+						name: operation.name,
+						chart: operation.chart
+					};
+				case 'deleteWorksheetChart':
+					return {
+						kind: 'deleteChart',
+						sheetName: operation.sheetName,
+						name: operation.name
+					};
+			}
+		}) as NativeExcelEditOperation[];
+
+		const result = await applyNativeExcelEdits(
+			canonicalUri.fsPath,
+			nativeOperations,
+			expectedWorkbookSha256
+		);
+
+		const names = (kind: WorkbookObjectDesignToolInput['operations'][number]['kind']) =>
+			operations
+				.filter(operation => operation.kind === kind)
+				.map(operation => {
+					if ('table' in operation) return operation.table.name;
+					if ('chart' in operation) return operation.chart.name;
+					return operation.name;
+				});
+		return {
+			targetWorkbookPath: canonicalUri.fsPath,
+			sourceWorkbookPath: canonicalUri.fsPath,
+			changed: true,
+			createdTables: names('createWorksheetTable'),
+			updatedTables: names('updateWorksheetTable'),
+			deletedTables: names('deleteWorksheetTable'),
+			createdCharts: names('createWorksheetChart'),
+			updatedCharts: names('updateWorksheetChart'),
+			deletedCharts: names('deleteWorksheetChart'),
+			workbookSha256: result.workbookSha256,
+			backupPath: result.backupPath,
+			macrosExecuted: false,
+			objectsVerified: true
+		};
+	}
+
 	private async bootstrapMacroWorkbook(
 		sourceUri: vscode.Uri,
 		file: string,
@@ -1019,8 +1147,9 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			'Pour écrire un module .bas ou une classe .cls, appeler #excelVbaWriteModule. Si le classeur est .xlsx, la première écriture crée une nouvelle copie .xlsm voisine ; utiliser ensuite uniquement le targetWorkbookPath renvoyé.',
 			'Un .frm existant peut recevoir du code via #excelVbaWriteModule. Pour créer un vrai UserForm, ajouter ou repositionner ses contrôles, affecter une procédure événementielle complète, créer un bouton de feuille ou un ActiveX autorisé, utiliser #excelVbaDesignWorkbook ; ne jamais fabriquer un faux .frm/.frx.',
 			'Dans #excelVbaDesignWorkbook, setUserFormEventHandler accepte une unique procédure Private Sub objectName_eventName(...). Les signatures complexes avec paramètres sont autorisées ; replaceExisting doit être explicitement vrai pour remplacer un gestionnaire existant.',
+			'Pour créer, modifier ou supprimer de vrais tableaux ListObject et graphiques ChartObject éditables dans un XLSX ou XLSM, utiliser #excelWorkbookDesign avec des plages A1 locales simples. Plusieurs tableaux disjoints peuvent utiliser les mêmes colonnes.',
 			'Un customActiveX exige un ProgID déjà présent dans excelAiVbaStudio.allowedCustomActiveXProgIds. Ne jamais proposer de modifier cette liste sans demande explicite de l’utilisateur.',
-			'Ne déclarer une écriture réussie qu’après le résultat de #excelVbaWriteModule ou #excelVbaDesignWorkbook, puis indiquer exactement targetWorkbookPath.',
+			'Ne déclarer une écriture réussie qu’après le résultat de #excelVbaWriteModule, #excelVbaDesignWorkbook ou #excelWorkbookDesign, puis indiquer exactement targetWorkbookPath.',
 			'Les fichiers de ce dossier restent une copie de travail tant qu’aucun outil d’écriture ou enregistrement synchronisé n’a confirmé la modification du classeur.'
 		];
 		await fs.promises.writeFile(
@@ -1037,7 +1166,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				'',
 				`- Classeur source : \`${context.workbookUri.fsPath}\``,
 				'- Macros exécutées pendant l’extraction : **non**',
-				'- Outils Copilot : `#excelVbaWorkbook` pour lire, `#excelVbaWriteModule` pour le code et `#excelVbaDesignWorkbook` pour les UserForms/contrôles/boutons',
+				'- Outils Copilot : `#excelVbaWorkbook` pour lire, `#excelVbaWriteModule` pour le code, `#excelVbaDesignWorkbook` pour les UserForms/contrôles/boutons et `#excelWorkbookDesign` pour les vrais tableaux/graphiques Excel',
 				'',
 				'## Composants',
 				'',
@@ -1198,7 +1327,7 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			let stdout = '';
 			let stderr = '';
 			let settled = false;
-			let ownedExcelProcessId: number | undefined;
+			let ownedExcelProcessIdentity: OwnedExcelProcessIdentity | undefined;
 			let timeout: NodeJS.Timeout | undefined;
 			let cancellationSubscription: vscode.Disposable | undefined;
 
@@ -1212,11 +1341,13 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			};
 			const stopOwnedProcesses = async () => {
 				const terminations: Promise<void>[] = [];
-				if (typeof child.pid === 'number') {
-					terminations.push(terminateExactProcess(child.pid));
+				if (child.exitCode === null && child.signalCode === null) {
+					child.kill();
 				}
-				if (options.cleanupOwnedExcel && ownedExcelProcessId) {
-					terminations.push(terminateExactProcess(ownedExcelProcessId));
+				if (options.cleanupOwnedExcel && ownedExcelProcessIdentity) {
+					terminations.push(
+						terminateExactExcelProcess(ownedExcelProcessIdentity)
+					);
 				}
 				await Promise.all(terminations);
 			};
@@ -1236,7 +1367,9 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				const chunkText = String(chunk);
 				stdout = (stdout + chunkText).slice(-32_000);
 				const ownedProcessMatches = [
-					...stdout.matchAll(/OWNED_EXCEL_PID\|(\d+)/g)
+					...stdout.matchAll(
+						/OWNED_EXCEL_PID\|(\d+)\|(\d{15,19})(?:\r?\n|$)/g
+					)
 				];
 				const latestOwnedProcessMatch = ownedProcessMatches.at(-1);
 				if (latestOwnedProcessMatch) {
@@ -1245,7 +1378,10 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 						10
 					);
 					if (Number.isSafeInteger(parsedProcessId) && parsedProcessId > 0) {
-						ownedExcelProcessId = parsedProcessId;
+						ownedExcelProcessIdentity = {
+							processId: parsedProcessId,
+							startTimeUtcTicks: latestOwnedProcessMatch[2]
+						};
 					}
 				}
 				const message = chunkText
@@ -1972,8 +2108,9 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 			'Ne cible jamais un chemin contenant le composant exact .excel-ai-vba-backups.',
 			'Pour appliquer un .bas ou .cls, utilise #excelVbaWriteModule. Sur un .xlsx, reprends ensuite le targetWorkbookPath .xlsm renvoyé pour toutes les écritures suivantes.',
 			'Ne crée jamais de faux UserForm .frm ou .frx. Pour un nouveau UserForm réel, ajouter ou repositionner ses contrôles, affecter ses événements, créer ses boutons ou ActiveX autorisés, utilise #excelVbaDesignWorkbook ; MsgBox et InputBox ne sont pas des UserForms.',
+			'Pour créer, modifier ou supprimer un vrai tableau ListObject ou un vrai graphique ChartObject éditable, utilise #excelWorkbookDesign. Les plages doivent rester locales au classeur et plusieurs tableaux disjoints peuvent utiliser les mêmes colonnes.',
 			'Pour un événement complexe, utilise setUserFormEventHandler avec une unique procédure Private Sub complète et replaceExisting=true uniquement si le remplacement est explicitement voulu.',
-			'Ne confirme une modification du classeur qu’après le succès de #excelVbaWriteModule et donne le targetWorkbookPath exact.',
+			'Ne confirme une modification du classeur qu’après le succès de l’outil d’écriture concerné et donne le targetWorkbookPath exact.',
 			...(requestedTask ? [`Tâche demandée depuis le ruban : ${requestedTask}`] : []),
 			'N’exécute aucune macro : analyse uniquement le code et les données.'
 		].join('\n');
