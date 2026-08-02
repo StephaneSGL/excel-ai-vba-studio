@@ -220,6 +220,7 @@ Microsoft references: [Cloud Policy for Microsoft 365 Apps](https://learn.micros
 
 | Version | Summary |
 | --- | --- |
+| `0.6.0` | Adds native editable Excel tables and charts, including multiple disjoint same-column tables and the complete published `XlChartType` catalog. It also adds a read-only Enterprise Security Center with explicit policy provenance and fail-closed workbook capability levels. |
 | `0.5.1` | Fixes worksheet button verification after Excel normalizes `OnAction` casing and keeps raw export JSON out of progress notifications. |
 | `0.5.0` | Adds the visual UserForm canvas, native form/control inventory, control positioning and property updates, plus bounded complex VBA event assignment for Copilot and the visual editor. |
 | `0.4.0` | Adds the worksheet Controls view, static button-to-macro-to-UserForm graph, Form Control reassignment, permitted ActiveX creation/binding, and a separate VS Code Developer window. It also fixes false `.xlsm` `worksheet-features` save refusals caused by grid hydration. |

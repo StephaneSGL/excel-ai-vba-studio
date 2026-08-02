@@ -11,23 +11,51 @@ if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
 const root = resolve(import.meta.dirname, '..');
 const manifestPath = resolve(root, 'package.json');
 const lockPath = resolve(root, 'package-lock.json');
-const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+const manifestSource = readFileSync(manifestPath, 'utf8');
+const manifest = JSON.parse(manifestSource);
+
+function replaceFirstVersion(source, currentVersion, nextVersion, label) {
+  const escapedVersion = currentVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`(^\\s*"version"\\s*:\\s*")${escapedVersion}("\\s*[,}])`, 'm');
+  if (!pattern.test(source)) {
+    throw new Error(`Could not locate ${label} version ${currentVersion}.`);
+  }
+  return source.replace(pattern, `$1${nextVersion}$2`);
+}
 
 if (manifest.version === version) {
   console.error(`package.json is already at version ${version}.`);
   process.exit(1);
 }
 
-manifest.version = version;
-writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+const updatedManifestSource = replaceFirstVersion(
+  manifestSource,
+  manifest.version,
+  version,
+  'package.json',
+);
+writeFileSync(manifestPath, updatedManifestSource, 'utf8');
 
 if (existsSync(lockPath)) {
-  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-  lock.version = version;
-  if (lock.packages?.['']) {
-    lock.packages[''].version = version;
+  const lockSource = readFileSync(lockPath, 'utf8');
+  const lock = JSON.parse(lockSource);
+  if (lock.version !== manifest.version || lock.packages?.['']?.version !== manifest.version) {
+    throw new Error('package-lock.json root versions do not match package.json.');
   }
-  writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, 'utf8');
+
+  let updatedLockSource = replaceFirstVersion(
+    lockSource,
+    manifest.version,
+    version,
+    'package-lock.json top-level',
+  );
+  updatedLockSource = replaceFirstVersion(
+    updatedLockSource,
+    manifest.version,
+    version,
+    'package-lock.json root package',
+  );
+  writeFileSync(lockPath, updatedLockSource, 'utf8');
 }
 
 console.log(`Prepared version ${version}.`);
