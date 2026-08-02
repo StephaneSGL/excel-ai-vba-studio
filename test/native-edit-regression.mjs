@@ -19,6 +19,40 @@ function sheet(name, cells, styles = [], extra = {}) {
   return { name, rows, styles, ...extra };
 }
 
+function table(id, name, rangeRef) {
+  return {
+    id,
+    name,
+    displayName: name,
+    rangeRef,
+    headerRow: true,
+    totalsRow: false,
+    style: {
+      name: 'TableStyleMedium2',
+      showFirstColumn: false,
+      showLastColumn: false,
+      showRowStripes: true,
+      showColumnStripes: false,
+    },
+  };
+}
+
+function chart(id, name, overrides = {}) {
+  return {
+    id,
+    name,
+    chartType: 51,
+    sourceRangeRef: 'A1:C5',
+    plotBy: 'columns',
+    anchor: { left: 500, top: 20, width: 420, height: 260 },
+    title: { visible: true, text: 'Revenue' },
+    legend: { visible: true, position: 'right' },
+    style: 10,
+    roundedCorners: false,
+    ...overrides,
+  };
+}
+
 const highlightStyle = {
   style: {
     fill: {
@@ -161,6 +195,46 @@ try {
     'reader-only worksheet features must not become false edits after hydration',
   );
 
+  let restoredFeatureSheets = [];
+  const preservingSpreadsheet = {
+    loadData(inputSheets) {
+      restoredFeatureSheets = structuredClone(inputSheets);
+    },
+    getData() {
+      return restoredFeatureSheets;
+    },
+  };
+  const legacyFeatureSource = [
+    sheet('Instructions', {}, [], {
+      autofilter: {
+        ref: 'C8:C13',
+        filters: [{ ci: 2, operator: 'in', value: ['Named Excel Tables'] }],
+        sort: { ci: 2, order: 'asc' },
+      },
+      images: [{ id: 'existing-instruction-image' }],
+    }),
+    sheet('SalesOrders', {}, [], {
+      autofilter: { ref: 'A1:G44', filters: [], sort: null },
+    }),
+  ];
+  const legacyFeatureBaseline = initializeNativeEditSheets(
+    preservingSpreadsheet,
+    legacyFeatureSource,
+  );
+  const nativeObjectEdit = structuredClone(restoredFeatureSheets);
+  nativeObjectEdit[0].tables = [table('table:instructions:A20:C30', 'HelpTable', 'A20:C30')];
+  nativeObjectEdit[1].charts = [chart('chart:sales:Revenue', 'Revenue')];
+  const nativeObjectPlan = buildNativeExcelEditPlan(
+    legacyFeatureBaseline,
+    nativeObjectEdit,
+  );
+  assert.deepEqual(nativeObjectPlan.unsupportedChanges, []);
+  assert.deepEqual(
+    nativeObjectPlan.operations.map(operation => operation.kind),
+    ['createTable', 'createChart'],
+    'native tables/charts must not mutate filters, sorting, images, or other worksheet features',
+  );
+
   assert.deepEqual(
     buildNativeCellEditOperations(
       [sheet('Home', { '0:0': { text: 'Old' } })],
@@ -243,6 +317,19 @@ try {
     ).unsupportedChanges,
     [],
     'ordinary value and style edits must remain natively saveable',
+  );
+
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], {
+        hasNativeCharts: true,
+        hasNativeChartParts: true,
+        unsupportedNativeChartCount: 2,
+      })],
+      [sheet('Home', {})],
+    ),
+    { operations: [], unsupportedChanges: [] },
+    'native chart reader metadata must not become a worksheet feature edit',
   );
 
   assert.deepEqual(
@@ -508,6 +595,273 @@ try {
     ).unsupportedChanges,
     ['Home:conditional-formatting'],
     'deleting one rule must remain blocked',
+  );
+
+  const disjointTables = [
+    table('table:home:A1:C5', 'TableTop', 'A1:C5'),
+    table('table:home:A20:C30', 'TableMiddle', 'A20:C30'),
+    table('table:home:A40:C50', 'TableBottom', 'A40:C50'),
+  ];
+  const disjointTablePlan = buildNativeExcelEditPlan(
+    [sheet('Home', {})],
+    [sheet('Home', {}, [], { tables: disjointTables })],
+  );
+  assert.deepEqual(disjointTablePlan.unsupportedChanges, []);
+  assert.deepEqual(
+    disjointTablePlan.operations,
+    disjointTables.map(item => ({
+      kind: 'createTable',
+      sheetName: 'Home',
+      table: item,
+    })),
+    'every disjoint range must become its own ListObject operation',
+  );
+
+  const renamedTable = {
+    ...disjointTables[1],
+    name: 'TableMiddleRenamed',
+    displayName: 'TableMiddleRenamed',
+    totalsRow: true,
+  };
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], { tables: disjointTables })],
+      [sheet('Home', {}, [], {
+        tables: [disjointTables[0], renamedTable, disjointTables[2]],
+      })],
+    ).operations,
+    [{
+      kind: 'updateTable',
+      sheetName: 'Home',
+      name: 'TableMiddle',
+      table: renamedTable,
+    }],
+    'a table rename must use its stable id and current Excel name',
+  );
+
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], { tables: disjointTables })],
+      [sheet('Home', {}, [], { tables: disjointTables.slice(1) })],
+    ).operations,
+    [{ kind: 'deleteTable', sheetName: 'Home', name: 'TableTop' }],
+  );
+
+  const largeTable = table('table:large', 'LargeNativeTable', 'A1:Z10000');
+  const largeTablePlan = buildNativeExcelEditPlan(
+    [sheet('Large', {}, [{ bgcolor: '#ff0000' }])],
+    [sheet('Large', {}, [{ bgcolor: '#ff0000' }], { tables: [largeTable] })],
+  );
+  assert.deepEqual(
+    largeTablePlan.operations,
+    [{ kind: 'createTable', sheetName: 'Large', table: largeTable }],
+    'a large native table must remain one object operation and must not synthesize cell-style edits',
+  );
+
+  const originalChart = chart('chart:home:SalesChart', 'SalesChart');
+  const updatedChart = chart('chart:home:SalesChart', 'SalesChartRenamed', {
+    chartType: 65,
+    plotBy: 'rows',
+    title: { visible: true, text: 'Revenue trend' },
+    legend: { visible: true, position: 'bottom' },
+    series: [{
+      id: 'series:revenue',
+      name: 'Revenue',
+      categoryRange: 'A2:A5',
+      valuesRange: 'B2:B5',
+      chartType: 65,
+      axisGroup: 'primary',
+      lineColor: '#3366cc',
+      markerStyle: 'circle',
+      markerSize: 7,
+      smooth: true,
+    }],
+  });
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], { charts: [originalChart] })],
+      [sheet('Home', {}, [], { charts: [updatedChart] })],
+    ).operations,
+    [{
+      kind: 'updateChart',
+      sheetName: 'Home',
+      name: 'SalesChart',
+      chart: updatedChart,
+      preserveAnchor: true,
+    }],
+    'a chart type, series and rename update must remain one stable-id operation',
+  );
+
+  const titleOnlyChart = structuredClone(originalChart);
+  titleOnlyChart.title = { visible: true, text: 'Title only' };
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], { charts: [originalChart] })],
+      [sheet('Home', {}, [], { charts: [titleOnlyChart] })],
+    ).operations,
+    [{
+      kind: 'updateChart',
+      sheetName: 'Home',
+      name: 'SalesChart',
+      chart: titleOnlyChart,
+      preserveAnchor: true,
+      preserveSeries: true,
+    }],
+    'a title-only update must preserve native geometry and unmodelled series features',
+  );
+
+	const describedChart = { ...structuredClone(originalChart), alternativeText: 'Sales chart' };
+	const clearedDescriptionChart = { ...structuredClone(describedChart), alternativeText: '' };
+	const [clearDescriptionOperation] = buildNativeExcelEditPlan(
+		[sheet('Home', {}, [], { charts: [describedChart] })],
+		[sheet('Home', {}, [], { charts: [clearedDescriptionChart] })],
+	).operations;
+	assert.equal(clearDescriptionOperation.kind, 'updateChart');
+	assert.equal(clearDescriptionOperation.chart.alternativeText, '');
+	assert.equal(clearDescriptionOperation.preserveAnchor, true);
+	assert.equal(clearDescriptionOperation.preserveSeries, true);
+
+	const titledAxisChart = {
+		...structuredClone(originalChart),
+		valueAxis: { visible: true, title: 'Revenue' },
+	};
+	const clearedAxisTitleChart = {
+		...structuredClone(originalChart),
+		valueAxis: { visible: true, title: '' },
+	};
+	const [clearAxisTitleOperation] = buildNativeExcelEditPlan(
+		[sheet('Home', {}, [], { charts: [titledAxisChart] })],
+		[sheet('Home', {}, [], { charts: [clearedAxisTitleChart] })],
+	).operations;
+	assert.equal(clearAxisTitleOperation.kind, 'updateChart');
+	assert.equal(clearAxisTitleOperation.chart.valueAxis.title, '');
+	assert.equal(clearAxisTitleOperation.preserveSeries, true);
+
+	const formattedAxisChart = {
+		...structuredClone(originalChart),
+		valueAxis: { visible: true, numberFormat: '0.00' },
+	};
+	const sourceLinkedAxisChart = {
+		...structuredClone(originalChart),
+		valueAxis: { visible: true, numberFormat: '' },
+	};
+	const [resetAxisFormatOperation] = buildNativeExcelEditPlan(
+		[sheet('Home', {}, [], { charts: [formattedAxisChart] })],
+		[sheet('Home', {}, [], { charts: [sourceLinkedAxisChart] })],
+	).operations;
+	assert.equal(resetAxisFormatOperation.kind, 'updateChart');
+	assert.equal(resetAxisFormatOperation.chart.valueAxis.numberFormat, '');
+	assert.equal(resetAxisFormatOperation.preserveSeries, true);
+
+  const importedSeriesChartWithSource = chart('chart:home:ImportedChart', 'ImportedChart', {
+    series: [{
+      id: 'series:imported',
+      nameRange: 'B1',
+      categoryRange: 'A2:A5',
+      valuesRange: 'B2:B5',
+      chartType: 51,
+      axisGroup: 'primary',
+    }],
+  });
+  const { sourceRangeRef: _discardedSourceRange, ...importedSeriesChart } = importedSeriesChartWithSource;
+  const importedTitleOnlyChart = structuredClone(importedSeriesChart);
+  importedTitleOnlyChart.title = { visible: true, text: 'Imported title only' };
+  const [importedTitleOperation] = buildNativeExcelEditPlan(
+    [sheet('Home', {}, [], { charts: [importedSeriesChart] })],
+    [sheet('Home', {}, [], { charts: [importedTitleOnlyChart] })],
+  ).operations;
+  assert.equal('sourceRangeRef' in importedTitleOperation.chart, false);
+  assert.equal(importedTitleOperation.preserveSeries, true);
+  assert.equal(importedTitleOperation.preserveAnchor, true);
+
+  const plotByOnlyChart = structuredClone(originalChart);
+  plotByOnlyChart.plotBy = 'rows';
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], { charts: [originalChart] })],
+      [sheet('Home', {}, [], { charts: [plotByOnlyChart] })],
+    ).operations,
+    [{
+      kind: 'updateChart',
+      sheetName: 'Home',
+      name: 'SalesChart',
+      chart: plotByOnlyChart,
+      preserveAnchor: true,
+    }],
+    'a plotBy change must rebuild the source-derived series instead of preserving them',
+  );
+
+	const chartTypeChanged = { ...structuredClone(originalChart), chartType: 65 };
+	const [chartTypeOperation] = buildNativeExcelEditPlan(
+		[sheet('Home', {}, [], { charts: [originalChart] })],
+		[sheet('Home', {}, [], { charts: [chartTypeChanged] })],
+	).operations;
+	assert.equal(chartTypeOperation.kind, 'updateChart');
+	assert.equal(chartTypeOperation.preserveAnchor, true);
+	assert.equal(chartTypeOperation.preserveSeries, undefined);
+
+	const styleChanged = { ...structuredClone(originalChart), style: 12 };
+	const [chartStyleOperation] = buildNativeExcelEditPlan(
+		[sheet('Home', {}, [], { charts: [originalChart] })],
+		[sheet('Home', {}, [], { charts: [styleChanged] })],
+	).operations;
+	assert.equal(chartStyleOperation.kind, 'updateChart');
+	assert.equal(chartStyleOperation.preserveAnchor, true);
+	assert.equal(chartStyleOperation.preserveSeries, true);
+	assert.equal(chartStyleOperation.allowSeriesFormattingChange, true);
+	assert.equal(chartStyleOperation.chart.style, 12);
+
+	const presentationOverrides = {
+		...structuredClone(originalChart),
+		style: 12,
+		gapWidth: 220,
+		overlap: 25,
+	};
+	const resetPresentationChart = {
+		...structuredClone(originalChart),
+		style: 2,
+		gapWidth: 150,
+		overlap: 0,
+	};
+	const [resetPresentationOperation] = buildNativeExcelEditPlan(
+		[sheet('Home', {}, [], { charts: [presentationOverrides] })],
+		[sheet('Home', {}, [], { charts: [resetPresentationChart] })],
+	).operations;
+	assert.equal(resetPresentationOperation.kind, 'updateChart');
+	assert.equal(resetPresentationOperation.chart.style, 2);
+	assert.equal(resetPresentationOperation.chart.gapWidth, 150);
+	assert.equal(resetPresentationOperation.chart.overlap, 0);
+	assert.equal(resetPresentationOperation.preserveSeries, true);
+	assert.equal(resetPresentationOperation.allowSeriesFormattingChange, true);
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], { charts: [originalChart] })],
+      [sheet('Home', {}, [], { charts: [] })],
+    ).operations,
+    [{ kind: 'deleteChart', sheetName: 'Home', name: 'SalesChart' }],
+  );
+
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {}, [], { tables: disjointTables, charts: [originalChart] })],
+      [sheet('Home', {}, [], { tables: disjointTables, charts: [originalChart] })],
+    ),
+    { operations: [], unsupportedChanges: [] },
+    'unchanged workbook objects must not become worksheet-feature changes',
+  );
+
+  assert.deepEqual(
+    buildNativeExcelEditPlan(
+      [sheet('Home', {})],
+      [sheet('Home', {}, [], {
+        tables: [
+          table('duplicate-id', 'TableOne', 'A1:C5'),
+          table('duplicate-id', 'TableTwo', 'A20:C30'),
+        ],
+      })],
+    ).unsupportedChanges,
+    ['Home:tables'],
+    'duplicate stable ids must be refused instead of dropping an object',
   );
 
   console.log('Native edit diff regression tests passed.');

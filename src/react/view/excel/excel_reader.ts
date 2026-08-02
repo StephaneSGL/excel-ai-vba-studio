@@ -1,5 +1,10 @@
 import type ExcelJS from '@cweijan/exceljs';
 import type * as XLSX from 'xlsx';
+import {
+    normalizeA1Range,
+    SIMPLE_A1_RANGE,
+    type SheetTableData,
+} from '../../../common/excelWorkbookObjects';
 import { decodeCsvBuffer } from './csvEncoding';
 import { DEFAULT_ROW_HEIGHT_PX, excelFreezeToExpr, excelRowHeightToPx, readAutofilterRef } from './excel_meta';
 import {
@@ -7,6 +12,14 @@ import {
     normalizeSpreadsheetMlElementPrefixes,
 } from './ooxml_namespace';
 import { readWorksheetSortStateXml } from './excel_sort_state';
+import {
+    readOoxmlChartInventory,
+    type OoxmlChartInventoryResult,
+} from './chart-ooxml-reader';
+import {
+    inspectOoxmlZipCentralDirectory,
+    validateOoxmlZipInflationBounds,
+} from './ooxml-zip-preflight';
 import {
     createExcelColorResolver,
     excelJsCellToStyle,
@@ -42,6 +55,27 @@ type ExcelJsWorksheetWithMerges = ExcelJS.Worksheet & {
 
 type ExcelJsWorksheetExtras = ExcelJS.Worksheet & {
     conditionalFormattings?: ExcelJS.ConditionalFormattingOptions[];
+};
+
+type ExcelJsTableModel = {
+    name?: string;
+    displayName?: string;
+    ref?: string;
+    tableRef?: string;
+    autoFilterRef?: string;
+    headerRow?: boolean;
+    totalsRow?: boolean;
+    style?: {
+        theme?: string;
+        showFirstColumn?: boolean;
+        showLastColumn?: boolean;
+        showRowStripes?: boolean;
+        showColumnStripes?: boolean;
+    };
+};
+
+type ExcelJsTableRuntime = Partial<ExcelJS.Table> & {
+    model?: ExcelJsTableModel;
 };
 
 function cloneJson<T>(value: T): T {
@@ -176,6 +210,38 @@ const readWorksheetMerges = (worksheet: ExcelJS.Worksheet): string[] => {
     return Array.from(new Set(merges));
 };
 
+const readWorksheetTables = (worksheet: ExcelJS.Worksheet): SheetTableData[] => {
+    const rawTables = (worksheet as unknown as { getTables?: () => unknown[] }).getTables?.() ?? [];
+    return rawTables.flatMap((raw, index) => {
+        const candidate = (Array.isArray(raw) ? raw[0] : raw) as ExcelJsTableRuntime | undefined;
+        if (!candidate) return [];
+        const model = candidate.model ?? {};
+        const rangeRef = normalizeA1Range(
+            model.tableRef ?? model.autoFilterRef ?? model.ref ?? candidate.ref ?? '',
+        );
+        if (!SIMPLE_A1_RANGE.test(rangeRef)) return [];
+        const fallbackName = `Table_${worksheet.id}_${index + 1}`;
+        const name = String(model.name ?? candidate.name ?? fallbackName);
+        const displayName = String(model.displayName ?? candidate.displayName ?? name);
+        const style = model.style ?? candidate.style ?? {};
+        return [{
+            id: `table:${worksheet.id}:${rangeRef}`,
+            name,
+            displayName,
+            rangeRef,
+            headerRow: (model.headerRow ?? candidate.headerRow) !== false,
+            totalsRow: (model.totalsRow ?? candidate.totalsRow) === true,
+            style: {
+                name: String(style.theme ?? 'TableStyleMedium2'),
+                showFirstColumn: style.showFirstColumn === true,
+                showLastColumn: style.showLastColumn === true,
+                showRowStripes: style.showRowStripes === true,
+                showColumnStripes: style.showColumnStripes === true,
+            },
+        } satisfies SheetTableData];
+    });
+};
+
 const expandSizeForMerge = (merge: string, size: { maxRow: number; maxCols: number }) => {
     const endAddress = merge.split(':').at(-1)?.replace(/\$/g, '');
     const match = /^([A-Z]+)(\d+)$/i.exec(endAddress ?? '');
@@ -274,11 +340,15 @@ const applyRowHeight = (rows: RowMap, ri: number, excelRow: ExcelJS.Row) => {
 };
 
 const prepareExcelJsWorkbook = async (buffer: ArrayBuffer) => {
+    const zipMetadata = inspectOoxmlZipCentralDirectory(buffer);
+    await validateOoxmlZipInflationBounds(buffer, zipMetadata);
     const { default: JSZip } = await import('jszip');
     const zip = await JSZip.loadAsync(buffer);
     const sortStateXmlMap =
         new Map<number, ReturnType<typeof readWorksheetSortStateXml>>();
     let changed = false;
+    const packageHasChartParts = Object.keys(zip.files)
+        .some(name => /^xl\/charts\//i.test(name) && !zip.files[name].dir);
 
     for (const [name, entry] of Object.entries(zip.files)) {
         if (
@@ -287,6 +357,10 @@ const prepareExcelJsWorkbook = async (buffer: ArrayBuffer) => {
                 && !name.toLowerCase().endsWith('.rels'))
         ) {
             continue;
+        }
+        const metadata = zipMetadata.entries.get(name.toLowerCase());
+        if (!metadata || metadata.directory) {
+            throw new Error(`Partie OOXML absente du préflight ZIP : ${name}`);
         }
         const xml = await entry.async('string');
         const prefixed = normalizeSpreadsheetMlElementPrefixes(xml);
@@ -307,6 +381,16 @@ const prepareExcelJsWorkbook = async (buffer: ArrayBuffer) => {
         }
     }
 
+    let chartInventory: OoxmlChartInventoryResult = { sheets: [], warnings: [] };
+    try {
+        chartInventory = await readOoxmlChartInventory(zip);
+    } catch {
+        chartInventory = {
+            sheets: [],
+            warnings: ['L’inventaire OOXML des graphiques a échoué; leur conservation native reste obligatoire.'],
+        };
+    }
+
     const excelJsBuffer = changed
         ? await zip.generateAsync({
             type: 'arraybuffer',
@@ -314,7 +398,7 @@ const prepareExcelJsWorkbook = async (buffer: ArrayBuffer) => {
             compressionOptions: { level: 6 },
         })
         : buffer;
-    return { excelJsBuffer, sortStateXmlMap };
+    return { excelJsBuffer, sortStateXmlMap, chartInventory, packageHasChartParts };
 };
 
 const convertExcelJsWorksheet = (
@@ -322,7 +406,7 @@ const convertExcelJsWorksheet = (
     workbook: ExcelJS.Workbook,
 ): Pick<
     SheetData,
-    'rows' | 'cols' | 'styles' | 'merges' | 'freeze' | 'autofilter' | 'hyperlinks'
+    'rows' | 'cols' | 'styles' | 'merges' | 'freeze' | 'autofilter' | 'tables' | 'hyperlinks'
     | 'validations' | 'sheetProtection' | 'images' | 'backgroundImage' | 'comments'
     | 'conditionalFormattings' | 'pageSetup'
 > => {
@@ -376,6 +460,7 @@ const convertExcelJsWorksheet = (
     });
 
     const merges = readWorksheetMerges(worksheet);
+    const tables = readWorksheetTables(worksheet);
     const sheetSize = { maxRow, maxCols };
     merges.forEach(merge => expandSizeForMerge(merge, sheetSize));
     maxRow = sheetSize.maxRow;
@@ -397,6 +482,7 @@ const convertExcelJsWorksheet = (
         cols: { len: colCount, ...cols },
         styles: styles.length > 0 ? styles : undefined,
         merges: merges.length > 0 ? merges : undefined,
+        ...(tables.length ? { tables } : {}),
         ...(Object.keys(hyperlinks).length ? { hyperlinks } : {}),
         ...(validations.length ? { validations } : {}),
         ...(sheetProtection ? { sheetProtection } : {}),
@@ -412,13 +498,22 @@ const convertExcelJsWorksheet = (
 const convertExcelJsWorkbook = (
     workbook: ExcelJS.Workbook,
     sortStateXmlMap?: Map<number, ReturnType<typeof readWorksheetSortStateXml>>,
+    chartInventory?: OoxmlChartInventoryResult,
+    packageHasChartParts = false,
 ): ExcelData => {
     const sheets: SheetData[] = [];
     let maxLength = 0;
     let maxCols = 26;
 
+    const chartsBySheetName = new Map(
+        (chartInventory?.sheets ?? []).map(item => [item.sheetName.toLocaleLowerCase(), item] as const),
+    );
+    const mappedChartParts = (chartInventory?.sheets ?? []).some(item => item.hasChartParts);
+
     workbook.worksheets.forEach((worksheet, index) => {
         const converted = convertExcelJsWorksheet(worksheet, workbook);
+        const chartState = chartsBySheetName.get(worksheet.name.toLocaleLowerCase());
+        const fallbackUnmappedChartParts = packageHasChartParts && !mappedChartParts && index === 0;
         const xmlAutofilter = sortStateXmlMap?.get(index);
         if (xmlAutofilter?.sort && converted.autofilter?.ref) {
             converted.autofilter.sort = xmlAutofilter.sort;
@@ -437,6 +532,14 @@ const convertExcelJsWorkbook = (
             ...(converted.merges ? { merges: converted.merges } : {}),
             ...(converted.freeze ? { freeze: converted.freeze } : {}),
             ...(converted.autofilter ? { autofilter: converted.autofilter } : {}),
+            ...(converted.tables ? { tables: converted.tables } : {}),
+            ...(chartState?.charts.length ? { charts: chartState.charts } : {}),
+            ...((chartState?.hasChartParts || fallbackUnmappedChartParts)
+                ? { hasNativeChartParts: true }
+                : {}),
+            ...((chartState?.unsupportedChartCount || fallbackUnmappedChartParts)
+                ? { unsupportedNativeChartCount: chartState?.unsupportedChartCount || 1 }
+                : {}),
             ...(converted.hyperlinks ? { hyperlinks: converted.hyperlinks } : {}),
             ...(converted.validations ? { validations: converted.validations } : {}),
             ...(converted.sheetProtection ? { sheetProtection: converted.sheetProtection } : {}),
@@ -460,7 +563,12 @@ const loadWithExcelJs = async (buffer: ArrayBuffer): Promise<ExcelData> => {
     ]);
     const workbook = new ExcelJSRuntime.Workbook();
     await workbook.xlsx.load(prepared.excelJsBuffer);
-    return convertExcelJsWorkbook(workbook, prepared.sortStateXmlMap);
+    return convertExcelJsWorkbook(
+        workbook,
+        prepared.sortStateXmlMap,
+        prepared.chartInventory,
+        prepared.packageHasChartParts,
+    );
 };
 
 const sheetJsColWidthToPx = (col?: XLSX.ColInfo) => {

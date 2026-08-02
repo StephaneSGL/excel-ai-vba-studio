@@ -77,7 +77,85 @@ assert.match(script, /ActiveX event handler[\s\S]+?refusing to overwrite/);
 assert.match(script, /expectedActiveXControls/);
 assert.match(script, /expectedActiveXBindings/);
 assert.match(script, /OWNED_EXCEL_PID\|/);
+assert.match(
+  script,
+  /function Get-ExcelProcessIdentity[\s\S]+?StartTimeUtcTicks/,
+  'designer must bind owned Excel cleanup to PID and start time',
+);
+assert.match(
+  script,
+  /function Stop-OwnedExcelProcess[\s\S]+?ProcessName[\s\S]+?'EXCEL'[\s\S]+?StartTime[\s\S]+?\.Kill\(\)/,
+  'designer must kill only the verified EXCEL Process object',
+);
+assert.match(
+  script,
+  /OWNED_EXCEL_PID\|'\s*\+\s*\$ownedProcessIdentity\.ProcessId\s*\+\s*'\|'\s*\+\s*\$ownedProcessIdentity\.StartTimeUtcTicks/,
+  'designer process marker must include PID and start time',
+);
+assert.doesNotMatch(
+  script,
+  /\bStop-Process\b/i,
+  'designer must never terminate by PID alone',
+);
 assert.match(script, /requestSize\s+-gt\s+1MB/);
+assert.match(script, /\$MaxNamedStreams\s*=\s*64/);
+assert.match(script, /\$MaxNamedStreamBytes\s*=\s*8MB/);
+assert.match(script, /\$MaxTotalNamedStreamBytes\s*=\s*32MB/);
+assert.match(script, /\$MaxZoneIdentifierBytes\s*=\s*64KB/);
+assert.match(
+  script,
+  /function Get-NamedStreamState[\s\S]+?Length[\s\S]+?Sha256/,
+  'designer must inventory bounded ADS names, lengths and hashes',
+);
+assert.match(
+  script,
+  /function Assert-SafeZoneIdentifierState[\s\S]+?ZoneId=\$\(\$zoneIds\[0\]\)[\s\S]+?Trust and unblock it/,
+  'designer must strictly reject Internet and Restricted Zone workbooks',
+);
+assert.match(
+  script,
+  /function Copy-NamedStreamsFromSource[\s\S]+?Assert-SafeZoneIdentifierState[\s\S]+?Remove-Item[\s\S]+?Get-BoundedNamedStreamBytes[\s\S]+?Test-NamedStreamStateEqual/,
+  'designer must explicitly copy and verify alternate data streams',
+);
+const adsPreflightIndex = script.indexOf(
+  '$sourceNamedStreamState = @(Get-NamedStreamState $workbookPath)',
+);
+const zonePreflightIndex = script.indexOf(
+  'Assert-SafeZoneIdentifierState $workbookPath $sourceNamedStreamState',
+);
+const firstComIndex = script.indexOf(
+  '$excel1, $excel1Identity = Ensure-ExcelSession',
+);
+assert.ok(
+  adsPreflightIndex >= 0 &&
+    zonePreflightIndex > adsPreflightIndex &&
+    firstComIndex > zonePreflightIndex,
+  'designer must inventory and validate Zone.Identifier before any Excel COM session',
+);
+assert.ok(
+  (script.match(/Copy-NamedStreamsFromSource/g) ?? []).length >= 4,
+  'designer must propagate ADS to staging after copy/save and during rollback',
+);
+assert.match(
+  script,
+  /Cleanup-Excel \$excel1 \$excel1Identity[\s\S]+?Copy-NamedStreamsFromSource[\s\S]+?\$excel2, \$excel2Identity = Ensure-ExcelSession/,
+  'designer must restore and verify staging ADS after Excel saves and before reopening',
+);
+assert.match(
+  script,
+  /\$backupNamedStreamState\s*=\s*@\(Get-NamedStreamState \$backupPath\)[\s\S]+?Atomic replacement backup alternate data streams[\s\S]+?\$finalNamedStreamState\s*=\s*@\(Get-NamedStreamState \$workbookPath\)[\s\S]+?Committed workbook alternate data streams were not preserved/,
+  'designer must verify ADS on both sides of the atomic replacement',
+);
+assert.match(
+  script,
+  /\$recoveryNamedStreamState\s*=\s*@\(Get-NamedStreamState \$backupPath\)[\s\S]+?Recovery backup alternate data streams are not a verified baseline[\s\S]+?Copy-NamedStreamsFromSource[\s\S]+?\$restoredNamedStreamState\s*=\s*@\(Get-NamedStreamState \$workbookPath\)/,
+  'designer rollback must validate backup ADS before restore and verify restored ADS',
+);
+assert.doesNotMatch(
+  script,
+  /Remove-Item[\s\S]{0,180}-Stream\s+['"]Zone\.Identifier['"]/i,
+  'designer must never silently delete Mark-of-the-Web',
+);
 assert.doesNotMatch(script, /\.Run\s*\(/i, 'designer must never run a macro');
 assert.doesNotMatch(script, /RunAutoMacros/i, 'designer must never run auto macros');
 assert.doesNotMatch(
@@ -186,7 +264,21 @@ assert.match(service, /cleanupOwnedExcel:\s*true/);
 assert.match(service, /hashFileSha256\(backupPath\)/);
 assert.match(service, /includeVba:\s*true/);
 assert.match(service, /allowedCustomActiveXProgIds/);
-assert.match(service, /stdout\.matchAll\(\/OWNED_EXCEL_PID/);
+assert.match(
+  service,
+  /OWNED_EXCEL_PID\\\|\(\\d\+\)\\\|\(\\d\{15,19\}\)/,
+  'designer runner must parse the complete PID and start-time identity',
+);
+assert.match(
+  service,
+  /function terminateExactExcelProcess[\s\S]+?ProcessName[\s\S]+?'EXCEL'[\s\S]+?StartTime[\s\S]+?\.Kill\(\)/,
+  'designer timeout cleanup must revalidate and kill the exact Excel process',
+);
+assert.doesNotMatch(
+  service,
+  /taskkill\.exe|\['\/PID',\s*String\(processId\)/,
+  'designer runner must never terminate an owned process by PID alone',
+);
 
 assert.equal(
   manifest.scripts?.['validate:vba-designer'],
@@ -194,7 +286,7 @@ assert.equal(
 );
 assert.equal(
   manifest.scripts?.['test:vba-designer'],
-  'node test/vba-designer-integration.mjs',
+  'node test/vba-designer-ads-security.mjs && node test/vba-designer-integration.mjs',
 );
 assert.match(manifest.scripts?.validate ?? '', /validate:vba-designer/);
 assert.match(manifest.scripts?.validate ?? '', /test:vba-designer/);

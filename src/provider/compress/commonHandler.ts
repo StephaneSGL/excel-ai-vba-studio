@@ -82,6 +82,12 @@ function toBytes(content: unknown): Uint8Array {
     throw new Error('Invalid spreadsheet save payload.');
 }
 
+function supportsNativeWorkbookObjectEditing(uri: Uri): boolean {
+    return uri.scheme === 'file' && ['.xlsx', '.xlsm'].includes(
+        extname(uri.fsPath).toLowerCase()
+    );
+}
+
 function notifyMacroWriteBlocked(handler: Handler): void {
     handler.emit('writeBlocked', {
         reason: 'macro-preservation',
@@ -192,10 +198,10 @@ export function handleCommonEvent(
                 restoredSourceSha256 = undefined;
                 return;
             }
-            nativeLoadGeneration = supportsNativeMacroEditing(uri)
+            nativeLoadGeneration = supportsNativeWorkbookObjectEditing(uri)
                 ? randomUUID()
                 : undefined;
-            await emitFileOfficeOpen(handler, uri, handler.panel.webview, {
+            await emitFileOfficeOpen(handler, uri, {
                 nativeLoadGeneration,
                 backupSheets: restoredSheets,
                 backupSourceSha256: restoredSourceSha256,
@@ -563,8 +569,12 @@ export function handleCommonEvent(
                 }
                 if (
                     state.readOnly ||
-                    state.readOnlyReason !== 'native-excel-editing' ||
-                    uri.scheme !== 'file'
+                    uri.scheme !== 'file' ||
+                    !supportsNativeWorkbookObjectEditing(uri) ||
+                    (
+                        state.readOnlyReason !== 'native-excel-editing' &&
+                        extname(uri.fsPath).toLowerCase() !== '.xlsx'
+                    )
                 ) {
                     notifyNativeBinaryWriteBlocked(handler);
                     throw new Error(NATIVE_BINARY_WRITE_BLOCKED_MESSAGE);
@@ -575,7 +585,7 @@ export function handleCommonEvent(
                     payload?.nativeLoadGeneration !== nativeLoadGeneration
                 ) {
                     throw new Error(
-                        'La sauvegarde XLSM est refusée : une version plus récente est en cours de chargement.'
+                        'La sauvegarde native est refusée : une version plus récente est en cours de chargement.'
                     );
                 }
 
@@ -596,7 +606,7 @@ export function handleCommonEvent(
                 const message =
                     error instanceof Error
                         ? error.message
-                        : 'La sauvegarde native XLSM a échoué.';
+                        : 'La sauvegarde native Excel a échoué.';
                 handler.emit('writeBlocked', {
                     reason: 'native-excel-editing',
                     message,

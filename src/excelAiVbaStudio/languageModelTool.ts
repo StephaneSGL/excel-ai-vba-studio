@@ -14,6 +14,7 @@ import {
 	VbaWriteToolInput
 } from './types';
 import { ExcelAiVbaWorkbookService } from './workbookService';
+import { registerWorkbookObjectLanguageModelTool } from './workbookObjectTool';
 
 const MAX_TOOL_CONTEXT_BYTES = 4 * 1024 * 1024;
 const MAX_VBA_SOURCE_CHARACTERS = 2_000_000;
@@ -1022,6 +1023,7 @@ export function registerExcelAiVbaLanguageModelTool(
 			.appendLine(
 				`[outil IA] ${EXCEL_AI_VBA_DESIGN_TOOL} enregistré pour les UserForms et boutons transactionnels.`
 			);
+		registerWorkbookObjectLanguageModelTool(context, service);
 	} catch (error) {
 		service
 			.getOutputChannel()

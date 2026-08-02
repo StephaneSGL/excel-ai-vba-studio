@@ -1,3 +1,8 @@
+import type {
+    SheetChartData,
+    SheetTableData,
+} from './excelWorkbookObjects';
+
 export interface NativeExcelCellValue {
     kind: 'blank' | 'formula' | 'number' | 'text';
     value?: string | number;
@@ -91,12 +96,64 @@ export interface NativeExcelClearConditionalFormattingEdit {
     sheetName: string;
 }
 
+export interface NativeExcelCreateTableEdit {
+    kind: 'createTable';
+    sheetName: string;
+    table: SheetTableData;
+}
+
+export interface NativeExcelUpdateTableEdit {
+    kind: 'updateTable';
+    sheetName: string;
+    /** Current ListObject name. The complete target state may rename it. */
+    name: string;
+    table: SheetTableData;
+}
+
+export interface NativeExcelDeleteTableEdit {
+    kind: 'deleteTable';
+    sheetName: string;
+    name: string;
+}
+
+export interface NativeExcelCreateChartEdit {
+    kind: 'createChart';
+    sheetName: string;
+    chart: SheetChartData;
+}
+
+export interface NativeExcelUpdateChartEdit {
+    kind: 'updateChart';
+    sheetName: string;
+    /** Current ChartObject name. The complete target state may rename it. */
+    name: string;
+    chart: SheetChartData;
+    /** Keep the native ChartObject geometry when the UI model did not change it. */
+    preserveAnchor?: boolean;
+    /** Keep native series, including unsupported trendlines/error bars/point formats. */
+    preserveSeries?: boolean;
+	/** Apply an explicit ChartStyle without rebuilding series; style-controlled formatting may change. */
+	allowSeriesFormattingChange?: boolean;
+}
+
+export interface NativeExcelDeleteChartEdit {
+    kind: 'deleteChart';
+    sheetName: string;
+    name: string;
+}
+
 export type NativeExcelEditOperation =
     | NativeExcelCellEdit
     | NativeExcelColumnWidthEdit
     | NativeExcelRowHeightEdit
     | NativeExcelAddConditionalFormattingEdit
-    | NativeExcelClearConditionalFormattingEdit;
+    | NativeExcelClearConditionalFormattingEdit
+    | NativeExcelCreateTableEdit
+    | NativeExcelUpdateTableEdit
+    | NativeExcelDeleteTableEdit
+    | NativeExcelCreateChartEdit
+    | NativeExcelUpdateChartEdit
+    | NativeExcelDeleteChartEdit;
 
 export interface NativeExcelEditPayload {
     version: 2;

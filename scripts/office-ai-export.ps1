@@ -29,6 +29,8 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName Microsoft.VisualBasic
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+. (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
 
 $includeVbaNormalized = $IncludeVba.Trim().ToLowerInvariant()
 switch ($includeVbaNormalized) {
@@ -2983,6 +2985,16 @@ try {
     $sourceInfo = New-Object IO.FileInfo($sourceFullPath)
     if ($sourceInfo.Length -gt $MaxSourceBytes) {
         throw "Workbook size exceeds the 512 MiB safety limit: $($sourceInfo.Length) bytes."
+    }
+    $sourceExtension = [IO.Path]::GetExtension($sourceFullPath).ToLowerInvariant()
+    if ($sourceExtension -ceq '.xls') {
+        throw (
+            'Legacy .xls export is refused before automated Excel opening because the absence ' +
+            'of Excel 4.0 (XLM) macro sheets cannot be verified safely.'
+        )
+    }
+    if ($sourceExtension -in @('.xlsx', '.xlsm', '.xlsb')) {
+        Assert-OoxmlPackageHasNoXlmMacroSheets $sourceFullPath
     }
     $exportedAtUtc = [DateTime]::UtcNow.ToString('o')
     $excelVersion = $null

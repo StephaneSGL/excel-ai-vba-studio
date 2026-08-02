@@ -6,6 +6,16 @@ $script:OpcOriginRelationshipType = 'http://schemas.openxmlformats.org/package/2
 $script:OpcSignatureRelationshipType = 'http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/signature'
 $script:OpcOriginContentType = 'application/vnd.openxmlformats-package.digital-signature-origin'
 $script:OpcSignatureContentType = 'application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml'
+$script:OpcXlmContentTypes = @(
+    'application/vnd.ms-excel.macrosheet+xml',
+    'application/vnd.ms-excel.intlmacrosheet+xml',
+    'application/vnd.ms-excel.macrosheet',
+    'application/vnd.ms-excel.intlmacrosheet'
+)
+$script:OpcXlmRelationshipTypes = @(
+    'http://schemas.microsoft.com/office/2006/relationships/xlMacrosheet',
+    'http://schemas.microsoft.com/office/2006/relationships/xlIntlMacrosheet'
+)
 $script:OpcMaxEntries = 20000
 $script:OpcMaxMetadataBytes = 1MB
 $script:OpcMaxRelationshipParts = 4096
@@ -471,5 +481,79 @@ function Assert-OoxmlPackageUnsigned {
     }
     if ($status -cne 'Absent') {
         throw 'Package signature verification failed; write refused: unknown signature state.'
+    }
+}
+
+function Get-OpcXlmMacroSheetStatus {
+    param([Parameter(Mandatory = $true)][IO.Compression.ZipArchive]$Archive)
+
+    $entries = Get-OpcEntryMap $Archive
+    $contentTypes = Get-OpcContentTypes $entries
+    foreach ($overriddenPartName in $contentTypes.Overrides.Keys) {
+        if (-not $entries.ContainsKey($overriddenPartName)) {
+            throw "Content-type override targets a missing part: $overriddenPartName"
+        }
+    }
+
+    $found = $false
+    foreach ($partName in $entries.Keys) {
+        $contentType = Get-OpcEffectiveContentType $contentTypes $partName
+        if (
+            $partName -imatch '^/xl/macrosheets/' -or
+            $script:OpcXlmContentTypes -ccontains $contentType
+        ) {
+            $found = $true
+        }
+    }
+
+    $relationshipParts = @(
+        $entries.Keys | Where-Object {
+            $_ -ieq '/_rels/.rels' -or $_ -imatch '/_rels/[^/]+[.]rels$'
+        }
+    )
+    if ($relationshipParts.Count -gt $script:OpcMaxRelationshipParts) {
+        throw 'Package contains too many relationship parts.'
+    }
+    [long]$relationshipBytes = 0
+    $hasRootRelationships = $false
+    foreach ($partName in $relationshipParts) {
+        $relationshipBytes += $entries[$partName].Length
+        if ($relationshipBytes -gt $script:OpcMaxRelationshipBytes) {
+            throw 'Relationship metadata exceeds the inspection limit.'
+        }
+        if ($partName -ieq '/_rels/.rels') { $hasRootRelationships = $true }
+        foreach ($relationship in @(Read-OpcRelationships $entries[$partName])) {
+            if ($script:OpcXlmRelationshipTypes -ccontains [string]$relationship.Type) {
+                $found = $true
+            }
+        }
+    }
+    if (-not $hasRootRelationships) { throw 'Root relationship part is missing.' }
+    if ($found) { return 'Present' }
+    return 'Absent'
+}
+
+function Assert-OoxmlPackageHasNoXlmMacroSheets {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $archive = $null
+    try {
+        $archive = [IO.Compression.ZipFile]::OpenRead($Path)
+        $status = Get-OpcXlmMacroSheetStatus $archive
+    }
+    catch {
+        throw (
+            'Excel 4.0 macro-sheet verification failed; automated open refused: ' +
+            $_.Exception.Message
+        )
+    }
+    finally {
+        if ($null -ne $archive) { $archive.Dispose() }
+    }
+    if ($status -ceq 'Present') {
+        throw 'Excel 4.0 macro sheet detected; automated open refused because AutomationSecurity does not disable XLM macros.'
+    }
+    if ($status -cne 'Absent') {
+        throw 'Excel 4.0 macro-sheet verification failed; automated open refused: unknown XLM state.'
     }
 }

@@ -8,6 +8,7 @@ const read = (relativePath) => readFile(path.join(root, relativePath), 'utf8');
 
 const [
   nativeTypes,
+  workbookObjects,
   nativeDiff,
   bridge,
   commonHandler,
@@ -19,6 +20,7 @@ const [
   vbaCli,
 ] = await Promise.all([
   read('src/common/nativeExcelEdits.ts'),
+  read('src/common/excelWorkbookObjects.ts'),
   read('src/react/view/excel/native_edit_diff.ts'),
   read('src/provider/nativeExcelBridge.ts'),
   read('src/provider/compress/commonHandler.ts'),
@@ -36,7 +38,21 @@ assert.match(nativeTypes, /kind:\s*'rowHeight'/);
 assert.match(nativeTypes, /kind:\s*'addConditionalFormatting'/);
 assert.match(nativeTypes, /kind:\s*'clearConditionalFormatting'/);
 assert.match(nativeTypes, /NativeExcelConditionalFormattingRule/);
+for (const kind of [
+  'createTable', 'updateTable', 'deleteTable',
+  'createChart', 'updateChart', 'deleteChart',
+]) {
+  assert.match(nativeTypes, new RegExp(`kind:\\s*'${kind}'`));
+}
+assert.match(workbookObjects, /EXCEL_CHART_TYPES/);
+assert.match(workbookObjects, /buildExcelTableStyleCatalog/);
+assert.match(workbookObjects, /SheetChartSeriesData/);
 assert.match(nativeDiff, /buildConditionalFormattingOperations/);
+assert.match(nativeDiff, /buildObjectOperations/);
+assert.match(nativeDiff, /tables:\s*_tables/);
+assert.match(nativeDiff, /charts:\s*_charts/);
+assert.match(nativeDiff, /hasNativeChartParts:\s*_hasNativeChartParts/);
+assert.match(nativeDiff, /unsupportedNativeChartCount:\s*_unsupportedNativeChartCount/);
 assert.match(nativeDiff, /normalizeConditionalRule/);
 assert.match(nativeDiff, /conditionalFormattings:\s*_conditionalFormattings/);
 assert.match(nativeDiff, /conditional-formatting/);
@@ -48,11 +64,20 @@ assert.match(
   /MAX_CONDITIONAL_FORMATTING_ADDS_PER_SHEET\s*=\s*64/,
 );
 assert.match(bridge, /MAX_NATIVE_EDIT_PAYLOAD_BYTES\s*=\s*4 \* 1024 \* 1024/);
-assert.match(bridge, /extname\(workbookPath\).*\.xlsm/s);
+assert.match(bridge, /\['\.xlsx', '\.xlsm'\]\.includes\(workbookExtension\)/);
+assert.match(bridge, /normalizeTableData/);
+assert.match(bridge, /normalizeChartData/);
+assert.match(bridge, /VALID_CHART_TYPES/);
+assert.match(bridge, /normalizeTableName/);
+assert.match(bridge, /isValidExcelTableName/);
+assert.match(bridge, /normalizeExcelTableName/);
+assert.match(bridge, /cannot be an Excel formula/);
 assert.match(bridge, /windowsHide:\s*true/);
 assert.match(bridge, /fs\.rm\(payloadPath,\s*\{\s*force:\s*true\s*\}\)/);
 assert.match(bridge, /parseOwnedExcelProcessId/);
 assert.match(bridge, /terminateExactProcess/);
+assert.match(bridge, /\$candidate\.Kill\(\)/);
+assert.doesNotMatch(bridge, /Stop-Process -Id \$expectedPid/);
 assert.match(bridge, /expectedWorkbookSha256/);
 assert.match(bridge, /assertNoReparsePointChain/);
 assert.match(bridge, /getFileSha256/);
@@ -64,7 +89,12 @@ assert.match(bridge, /assertAllowedKeys/);
 assert.match(bridge, /NativeExcelEditOperation/);
 assert.match(
   commonHandler,
-  /nativeLoadGeneration\s*=\s*supportsNativeMacroEditing\(uri\)[\s\S]+?randomUUID\(\)/,
+  /nativeLoadGeneration\s*=\s*supportsNativeWorkbookObjectEditing\(uri\)[\s\S]+?randomUUID\(\)/,
+);
+assert.doesNotMatch(commonHandler, /hasWorkbookObjectOperation/);
+assert.match(
+  commonHandler,
+  /state\.readOnlyReason\s*!==\s*'native-excel-editing'[\s\S]+?extname\(uri\.fsPath\)\.toLowerCase\(\)\s*!==\s*'\.xlsx'/,
 );
 assert.match(
   commonHandler,
@@ -101,6 +131,23 @@ assert.match(excelView, /handler\.emit\('clean'\)/);
 assert.match(excelView, /setEditorBusyState\(true\)/);
 assert.match(excelView, /readOnly=\{readOnly \|\| editorBusy\}/);
 assert.match(excelView, /setEditorBusyState\(false\)/);
+assert.match(excelView, /hasExistingNativeObjects/);
+assert.match(excelView, /sheet\.tables\?\.length/);
+assert.match(excelView, /sheet\.charts\?\.length/);
+assert.match(excelView, /function isOoxmlSaveAsExt\(ext: string\)/);
+assert.match(excelView, /isOoxmlSaveAsExt\(ext\)[\s\S]+?sheetsContainUnsafeNativeOoxmlObjects\(spreadSheet\.getData\(\)\)/);
+const unsafeSaveAsHelper = excelView.match(
+  /function sheetsContainUnsafeNativeOoxmlObjects\([\s\S]+?\{([\s\S]+?)\n\}/,
+)?.[1] ?? '';
+assert.match(unsafeSaveAsHelper, /sheet\.charts\?\.length/);
+assert.match(unsafeSaveAsHelper, /sheet\.hasNativeChartParts === true/);
+assert.match(unsafeSaveAsHelper, /sheet\.tables\?\.length/);
+assert.doesNotMatch(excelView, /nativeObjectSaveAsBlocked/);
+assert.match(excelView, /allowSaveAs:\s*!preserveSourceIntegrity/);
+assert.match(excelView, /allowSaveAs=\{!blocksSaveAs\(readOnlyReason\)\}/);
+assert.match(excelView, /tableaux et graphiques Excel natifs/);
+assert.match(excelView, /Choisissez CSV, TSV, ODS ou XLS pour un export aplati/);
+assert.match(spreadsheet, /hasNativeWorkbookObjects\(\): boolean/);
 assert.match(spreadsheet, /setMode\(mode:\s*'edit' \| 'read'\)/);
 assert.match(excelWriter, /Unsupported spreadsheet save format/);
 
@@ -141,6 +188,26 @@ assert.match(script, /Apply-ColumnWidthOperation/);
 assert.match(script, /Apply-RowHeightOperation/);
 assert.match(script, /Apply-ConditionalFormattingOperation/);
 assert.match(script, /Apply-ClearConditionalFormattingOperation/);
+assert.match(script, /Apply-CreateTableOperation/);
+assert.match(script, /Apply-UpdateTableOperation/);
+assert.match(script, /Apply-DeleteTableOperation/);
+assert.match(script, /Apply-CreateChartOperation/);
+assert.match(script, /Apply-UpdateChartOperation/);
+assert.match(script, /Apply-DeleteChartOperation/);
+assert.match(script, /\.ListObjects\.Item|\$worksheet\.ListObjects/);
+assert.match(script, /\$worksheet\.ChartObjects\(\)/);
+assert.match(script, /\.SetSourceData\(/);
+assert.match(script, /\.NewSeries\(\)/);
+assert.match(script, /\.FullSeriesCollection\(\)/);
+assert.match(script, /\.IsFiltered\s*=/);
+assert.match(script, /\.Unlist\(\)/);
+assert.doesNotMatch(script, /\$listObject\.Delete\(\)/);
+assert.match(script, /Test-NativeExcelTableName/);
+assert.match(script, /cannot be an Excel formula/);
+assert.match(script, /Assert-NativeWorkbookObjectOperations/);
+assert.match(script, /Get-NativeUntargetedWorkbookObjectSnapshot/);
+assert.match(script, /\$workbooks\.Open\(\$workPath, 0, \$true\)/);
+assert.match(script, /AllowWorkbookObjectChanges/);
 assert.match(script, /SetLastPriority/);
 assert.match(script, /AddColorScale\(3\)/);
 assert.match(script, /AddDatabar\(\)/);
@@ -152,4 +219,4 @@ assert.doesNotMatch(script, /Copy-Item[\s\S]+?-Destination\s+\$workbookFullPath/
 assert.doesNotMatch(script, /\$workbooks\.Open\(\$workbookFullPath/);
 assert.doesNotMatch(script, /\.Run\(|RunAutoMacros|Application\.Run/);
 
-console.log('Native XLSM editing safety validation passed.');
+console.log('Native XLSX/XLSM editing safety validation passed.');
