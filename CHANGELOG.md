@@ -6,6 +6,8 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-02
+
 ### Added
 
 - Added real Excel `ListObject` support to the integrated grid, including multiple disjoint tables in the same worksheet columns, unique names, preserved header/totals state, stripe options, and all 60 built-in table styles. Native creation requires headers and no totals; header/totals transitions are deliberately refused to prevent Excel from moving cells or rewriting formula references.
