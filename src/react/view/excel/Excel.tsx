@@ -12,7 +12,6 @@ import {
     MIN_VIEW_ROWS,
 } from "./excel_meta.ts";
 import { detectCsvEncoding } from "./csvEncoding.ts";
-import { loadSheets } from "./excel_reader.ts";
 import Spreadsheet, { type SheetData } from './x-spreadsheet/index';
 import FindReplacePanel, { type FindReplacePanelHandle } from './FindReplacePanel';
 import { parseSpreadsheetLink } from './excel_hyperlink';
@@ -501,6 +500,7 @@ function ExcelViewer() {
             if (payload.ext?.match(/csv/i)) {
                 csvEncodingRef.current = detectCsvEncoding(buffer);
             }
+            const { loadSheets } = await import('./excel_reader.ts');
             const { sheets, maxLength, maxCols, csvDelimiter } = await loadSheets(buffer, payload.ext);
             const restoredSheets = Array.isArray(payload.backupSheets)
                 ? payload.backupSheets as SheetData[]

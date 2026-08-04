@@ -13,6 +13,7 @@ const readerSource = readFileSync(
 
 const requiredPatterns = [
   [excelSource, /import\(['"]\.\/excel_writer\.ts['"]\)/, 'Excel writer must be lazy-loaded'],
+  [excelSource, /import\(['"]\.\/excel_reader\.ts['"]\)/, 'Excel reader must be lazy-loaded'],
   [readerSource, /import\(['"]@cweijan\/exceljs['"]\)/, 'ExcelJS must be lazy-loaded'],
   [readerSource, /import\(['"]jszip['"]\)/, 'JSZip must be lazy-loaded'],
   [readerSource, /import\(['"]xlsx['"]\)/, 'SheetJS must be lazy-loaded'],
@@ -27,6 +28,10 @@ for (const [source, pattern, message] of requiredPatterns) {
 
 if (/^import\s+.*from\s+['"]\.\/excel_writer\.ts['"];?$/m.test(excelSource)) {
   throw new Error('Excel writer was moved back into the opening path');
+}
+
+if (/^import\s+.*from\s+['"]\.\/excel_reader\.ts['"];?$/m.test(excelSource)) {
+  throw new Error('Excel reader was moved back into the opening path');
 }
 
 const assetsDir = resolve(root, 'out', 'webview', 'assets');
