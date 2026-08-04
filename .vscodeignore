@@ -6,6 +6,7 @@
 .serena/**
 .playwright-cli/**
 .idea/**
+AI-slop/**
 output/**
 outputs/**
 work/**
