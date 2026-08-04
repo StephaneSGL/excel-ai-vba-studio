@@ -20,6 +20,16 @@ Excel AI & VBA Studio is a preview VS Code extension for inspecting supported sp
 > [!IMPORTANT]
 > The workbook grid and VBA Studio are integrated into VS Code. Microsoft Excel does not open merely because a workbook is viewed or exported. The explicit **Open in Excel** and **Open native VBE** commands launch or reactivate Excel only when requested.
 
+<!-- graphy-map:start -->
+## Graphy codebase view
+
+[![Graphy codebase view of excel-ai-vba-studio showing 1897 tracked files, 106 folders, dominant file types and the main areas icons, src, test, tools, syntaxes.](docs/graphy/overview.svg)](docs/graphy/Graphy.md)
+
+*Tracked repository structure: files, folders, dominant extensions and a readable directory preview.*
+
+[Open full size](docs/graphy/overview.svg) · [Open the accessible Graphy report](docs/graphy/Graphy.md)
+<!-- graphy-map:end -->
+
 ## Current capabilities
 
 | Format | Workbook grid | VBA workspace | Bounded AI context |
