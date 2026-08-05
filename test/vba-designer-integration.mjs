@@ -13,6 +13,19 @@ import {
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
+function normalizeDiagnostic(value) {
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
+assert.equal(
+  normalizeDiagnostic('already\r\n exists;\tset replaceExisting=true'),
+  'already exists; set replaceExisting=true',
+);
+assert.equal(
+  normalizeDiagnostic('Excel refused\r\n ActiveX insertion'),
+  'Excel refused ActiveX insertion',
+);
+
 if (process.platform !== 'win32') {
   console.log('VBA designer integration skipped: Windows and Excel are required.');
   process.exit(0);
@@ -587,7 +600,7 @@ try {
     'existing UserForm event replacement must require explicit opt-in',
   );
   assert.match(
-    String(existingUserFormEventResult.stderr),
+    normalizeDiagnostic(existingUserFormEventResult.stderr),
     /already exists; set replaceExisting=true/i,
   );
   assert.equal(
@@ -726,7 +739,7 @@ try {
       'Office ActiveX policy probe unexpectedly succeeded',
     );
     assert.match(
-      String(blockedByExcelResult.stderr),
+      normalizeDiagnostic(blockedByExcelResult.stderr),
       /Excel refused ActiveX insertion/i,
     );
     assert.equal(
