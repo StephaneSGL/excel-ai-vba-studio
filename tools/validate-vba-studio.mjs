@@ -90,6 +90,16 @@ assert.match(
   /onDidSaveTextDocument[\s\S]+?writebackService\.applySource/,
   'saved Copilot edits must trigger automatic workbook reinjection',
 );
+assert.match(
+  panel,
+  /onDidChangeTextDocument[\s\S]+?runInBackground/,
+  'external editor synchronization must have a rejected-promise boundary',
+);
+assert.match(
+  panel,
+  /private runInBackground[\s\S]+?promise\.catch/,
+  'background VBA tasks must log rejected promises',
+);
 assert.match(panel, /workbench\.action\.chat\.open/, 'VBA Studio must expose a Copilot action');
 assert.match(panel, /copilot-instructions\.md|#excelVbaWorkbook/, 'Copilot context is missing');
 for (const extension of ['.bas', '.cls', '.frm']) {

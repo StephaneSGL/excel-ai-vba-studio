@@ -12,6 +12,7 @@ const excel = read('src/react/view/excel/Excel.tsx');
 const handler = read('src/provider/compress/commonHandler.ts');
 const workbookService = read('src/excelAiVbaStudio/workbookService.ts');
 const excelLauncher = read('scripts/open-excel-developer.ps1');
+const webviewHandler = read('src/common/handler.ts');
 
 assert.doesNotMatch(
   ribbon,
@@ -109,6 +110,16 @@ assert.match(
   workbookService,
   /requestedTask[\s\S]+?T[aâ]che demand[ée]e/i,
   'targeted ribbon requests must be added to the Copilot prompt',
+);
+assert.match(
+  webviewHandler,
+  /postMessage[\s\S]+?\.catch\(/,
+  'webview postMessage rejections must be observed and logged',
+);
+assert.match(
+  webviewHandler,
+  /showErrorMessage\(errorMessage\(error\)\)[\s\S]+?\.catch\(/,
+  'webview callback errors must use a safe message and handle reporting failures',
 );
 
 console.log('Integrated feature validation passed: conditional formatting and ribbon actions are active.');
