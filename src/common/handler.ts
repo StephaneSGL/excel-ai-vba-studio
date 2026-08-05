@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SimpleEventEmitter } from "./simpleEventEmitter";
 import { WebviewPanel } from "vscode";
 import { Output } from "./Output";
+import { errorMessage } from './errorMessage';
 
 interface WebviewMessage {
     type: string;
@@ -33,7 +34,11 @@ export class Handler {
                 await callback(content)
             } catch (error) {
                 Output.debug(error)
-                vscode.window.showErrorMessage(error.message)
+                void Promise.resolve()
+                    .then(() => vscode.window.showErrorMessage(errorMessage(error)))
+                    .catch(reportingError => {
+                        Output.debug(`Unable to show webview error: ${errorMessage(reportingError)}`)
+                    })
             }
         })
         return this;
@@ -41,7 +46,11 @@ export class Handler {
 
     emit(event: string, content?: any) {
         if (this.isEnd) return this;
-        this.panel.webview.postMessage({ type: event, content })
+        void Promise.resolve()
+            .then(() => this.panel.webview.postMessage({ type: event, content }))
+            .catch(error => {
+                Output.debug(`Unable to post webview event ${event}: ${errorMessage(error)}`)
+            })
         return this;
     }
 

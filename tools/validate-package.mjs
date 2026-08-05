@@ -67,6 +67,7 @@ const forbiddenPrefixes = [
   '.git/',
   '.github/',
   '.vscode/',
+  'AI-slop/',
   'docs/',
   'icons/',
   'native/',

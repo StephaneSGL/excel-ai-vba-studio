@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { errorMessage } from '../common/errorMessage';
 import {
 	assertNoReparsePointChain,
 	assertOwnedDirectory,
@@ -350,10 +351,16 @@ export class VbaStudioPanel implements vscode.Disposable {
 	) {
 		this.disposables.push(
 			vscode.workspace.onDidChangeTextDocument(event => {
-				void this.handleExternalDocumentChange(event.document);
+				this.runInBackground(
+					'Synchronisation de l’éditeur VBA',
+					this.handleExternalDocumentChange(event.document)
+				);
 			}),
 			vscode.workspace.onDidSaveTextDocument(document => {
-				void this.handleExternalDocumentSave(document);
+				this.runInBackground(
+					'Réinjection automatique VBA',
+					this.handleExternalDocumentSave(document)
+				);
 			})
 		);
 	}
@@ -1476,9 +1483,23 @@ export class VbaStudioPanel implements vscode.Disposable {
 		} catch (error) {
 			await this.postStatus(
 				'error',
-				`Réinjection automatique refusée : ${(error as Error).message}`
+				`Réinjection automatique refusée : ${errorMessage(error)}`
 			);
 		}
+	}
+
+	private runInBackground(operation: string, promise: Promise<void>): void {
+		void promise.catch(error => {
+			const message = errorMessage(error);
+			this.outputChannel.appendLine(`[vba studio] ${operation} : ${message}`);
+			void this.postStatus('error', `${operation} : ${message}`).catch(
+				reportingError => {
+					this.outputChannel.appendLine(
+						`[vba studio] Affichage de l’erreur impossible : ${errorMessage(reportingError)}`
+					);
+				}
+			);
+		});
 	}
 
 	private async postStatus(

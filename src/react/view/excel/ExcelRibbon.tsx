@@ -459,12 +459,10 @@ export default function ExcelRibbon({
         }
         : undefined;
 
-    const importLocalWorkbook = async (file: File) => {
+    const appendWorkbook = async (buffer: ArrayBuffer, extension: string) => {
         if (!spreadsheet) return;
-        const extension = file.name.split('.').pop()?.toLowerCase() || 'xlsx';
         const { loadSheets } = await import('./excel_reader.ts');
-        const imported = await loadSheets(await file.arrayBuffer(), extension);
-        spreadsheet.appendSheets(imported.sheets);
+        spreadsheet.appendSheets((await loadSheets(buffer, extension)).sheets);
     };
 
     const runIntegratedFeature = async () => {
@@ -597,7 +595,10 @@ export default function ExcelRibbon({
                 case 'From Text/CSV': {
                     const file = await chooseLocalFile('.xlsx,.xls,.ods,.csv,.tsv');
                     if (!file) break;
-                    await importLocalWorkbook(file);
+                    await appendWorkbook(
+                        await file.arrayBuffer(),
+                        file.name.split('.').pop()?.toLowerCase() || 'xlsx',
+                    );
                     setFeatureResult(`Les données de ${file.name} ont été ajoutées dans une nouvelle feuille.`);
                     break;
                 }
@@ -607,9 +608,7 @@ export default function ExcelRibbon({
                     const response = await fetch(url);
                     if (!response.ok) throw new Error(`Téléchargement impossible (${response.status})`);
                     const extension = new URL(url).pathname.split('.').pop()?.toLowerCase() || 'csv';
-                    const { loadSheets } = await import('./excel_reader.ts');
-                    const imported = await loadSheets(await response.arrayBuffer(), extension);
-                    spreadsheet.appendSheets(imported.sheets);
+                    await appendWorkbook(await response.arrayBuffer(), extension);
                     setFeatureResult('Les données Web ont été ajoutées au classeur.');
                     break;
                 }
