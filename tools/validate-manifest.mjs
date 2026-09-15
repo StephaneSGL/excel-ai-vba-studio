@@ -1,11 +1,32 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
+import Ajv from 'ajv';
 
 const root = resolve(import.meta.dirname, '..');
 const manifestPath = resolve(root, 'package.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 const errors = [];
+
+// Exercise all schemas with and without Unicode regexp flags: model providers
+// do not consistently accept JS Unicode property escapes in JSON Schema.
+function validatePortablePatterns(node, location) {
+  if (!node || typeof node !== 'object') return;
+  if (typeof node.pattern === 'string') {
+    expect(!/\\[pP]\{/.test(node.pattern), `${location}.pattern must not require Unicode property escapes`);
+    for (const flags of ['', 'u']) {
+      try { new RegExp(node.pattern, flags); }
+      catch (error) { errors.push(`${location}.pattern (${flags || 'no flags'}): ${error.message}`); }
+    }
+  }
+  for (const [key, value] of Object.entries(node)) validatePortablePatterns(value, `${location}.${key}`);
+}
+const schemaValidator = new Ajv({ strict: false, validateFormats: false });
+for (const tool of manifest.contributes.languageModelTools) {
+  validatePortablePatterns(tool.inputSchema, tool.name);
+  try { schemaValidator.compile(tool.inputSchema); }
+  catch (error) { errors.push(`${tool.name}: ${error.message}`); }
+}
 
 function expect(condition, message) {
   if (!condition) {
@@ -120,11 +141,11 @@ expect(
   'language-model tools must be prompt-referenceable',
 );
 expect(
-  JSON.stringify(writeTool?.inputSchema?.required) === JSON.stringify(['componentFile', 'source']),
+  JSON.stringify(writeTool?.inputSchema?.required) === JSON.stringify(['workbookPath', 'componentFile', 'source']),
   'VBA write tool must require componentFile and source',
 );
 expect(
-  JSON.stringify(designTool?.inputSchema?.required) === JSON.stringify(['operations']),
+  JSON.stringify(designTool?.inputSchema?.required) === JSON.stringify(['workbookPath', 'operations']),
   'VBA designer tool must require operations',
 );
 expect(

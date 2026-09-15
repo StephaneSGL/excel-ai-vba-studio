@@ -3,6 +3,35 @@ export interface OfficeOpenPayload {
     buffer?: number[];
     bufferBase64?: string;
     error?: string;
+    ext?: string;
+    documentCacheId?: string;
+    readOnly?: boolean;
+    readOnlyReason?: string;
+    backupSheets?: unknown[];
+    backupSourceSha256?: string;
+    nativeLoadGeneration?: string;
+}
+
+export function parseOfficeOpenPayload(value: unknown): OfficeOpenPayload {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Invalid spreadsheet open message');
+    }
+    const payload = value as Record<string, unknown>;
+    for (const key of ['path', 'bufferBase64', 'error', 'ext', 'documentCacheId', 'readOnlyReason', 'backupSourceSha256', 'nativeLoadGeneration']) {
+        if (payload[key] !== undefined && typeof payload[key] !== 'string') {
+            throw new Error(`Invalid spreadsheet open field: ${key}`);
+        }
+    }
+    if (payload.readOnly !== undefined && typeof payload.readOnly !== 'boolean') {
+        throw new Error('Invalid spreadsheet read-only flag');
+    }
+    if (payload.backupSheets !== undefined && !Array.isArray(payload.backupSheets)) {
+        throw new Error('Invalid spreadsheet recovery data');
+    }
+    if (payload.buffer !== undefined && (!Array.isArray(payload.buffer) || payload.buffer.length > 135_000_000 || payload.buffer.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255))) {
+        throw new Error('Invalid spreadsheet byte payload');
+    }
+    return payload as OfficeOpenPayload;
 }
 
 const MAX_BASE64_PAYLOAD_CHARACTERS = 180_000_000;

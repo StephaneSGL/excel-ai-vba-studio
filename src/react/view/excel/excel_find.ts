@@ -112,19 +112,22 @@ export function replaceCellText(
     replaceText: string,
     options: FindOptions,
 ): boolean {
-    const sheet = sheets[sheetIndexSafe(sheets, match.sheetIndex)];
+    if (!findText) return false;
+    const sheet = sheetIndexSafe(sheets, match.sheetIndex);
     const row = sheet?.rows?.[match.ri];
     if (!row || typeof row !== 'object' || !('cells' in row)) return false;
     const cell = row.cells?.[match.ci];
-    if (!cell) return false;
+    if (!cell || cell.editable === false) return false;
     const current = cell.text ?? '';
+    if (!cellMatches(current, findText, options)) return false;
     let next = current;
     if (options.wholeCell && cellMatches(current, findText, options)) {
         next = replaceText;
     } else {
         const flags = options.matchCase ? 'g' : 'gi';
         const escaped = findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        next = current.replace(new RegExp(escaped, flags), replaceText);
+        // Replacement text is literal, including dollar sequences such as $&.
+        next = current.replace(new RegExp(escaped, flags), () => replaceText);
     }
     if (next === current) return false;
     cell.text = next;

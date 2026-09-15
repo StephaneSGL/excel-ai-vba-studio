@@ -287,7 +287,7 @@ async function countDeflatedBytes(
     } catch {
         return fail('le moteur ne prend pas en charge DEFLATE brut de façon bornée.');
     }
-    const reader = new Blob([compressed]).stream().pipeThrough(stream).getReader();
+    const reader = new Blob([new Uint8Array(compressed).buffer]).stream().pipeThrough(stream).getReader();
     let produced = 0;
     try {
         while (true) {

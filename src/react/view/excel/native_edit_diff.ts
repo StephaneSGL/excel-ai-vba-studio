@@ -118,7 +118,7 @@ function sheetFeatureSnapshot(sheet: SheetData): Record<string, unknown> {
     return features;
 }
 
-function buildObjectOperations<T extends { id: string; name: string }>(
+function buildObjectOperations<T extends SheetTableData | SheetChartData>(
     sheetName: string,
     objectLabel: 'table' | 'chart',
     beforeObjects: T[] | undefined,

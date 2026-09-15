@@ -41,6 +41,7 @@ import {
 	type WorkbookObjectDesignToolInput
 } from './types';
 import type { ExcelAiVbaWorkbookService } from './workbookService';
+import { requireExplicitWorkbookPath } from './mutationTarget';
 import {
 	assertNoReparsePointChain,
 	canonicalizeWorkbookUri,
@@ -599,13 +600,7 @@ function parseOperation(value: unknown, index: number): WorkbookObjectDesignOper
 export function parseWorkbookObjectToolInput(value: unknown): WorkbookObjectDesignToolInput {
 	const source = objectValue(value, 'input');
 	onlyKeys(source, ['workbookPath', 'operations'], 'input');
-	const workbookPath = textValue(source.workbookPath, 'workbookPath', {
-		required: true,
-		max: 32_767
-	}) as string;
-	if (!/^file:/i.test(workbookPath) && !path.isAbsolute(workbookPath)) {
-		throw new Error('workbookPath doit être un chemin absolu explicite pour cette opération avec effet de bord.');
-	}
+	const workbookPath = requireExplicitWorkbookPath(source.workbookPath);
 	if (!Array.isArray(source.operations) || source.operations.length < 1 || source.operations.length > MAX_OPERATIONS) {
 		throw new Error(`operations doit contenir de 1 à ${MAX_OPERATIONS} opérations.`);
 	}

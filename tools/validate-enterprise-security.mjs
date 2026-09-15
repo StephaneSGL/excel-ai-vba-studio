@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -906,7 +906,9 @@ if (process.platform === 'win32') {
 	const parsedProbe = parseOfficeSecurityProbe(result);
     assert.equal(result.schemaVersion, 1);
     assert.match(result.inspectedAtUtc, /^\d{4}-\d{2}-\d{2}T/);
-    assert.equal(result.workbook.path, workbookPath);
+    // Windows TEMP may use an 8.3 path; the probe intentionally returns the
+    // canonical long path. Compare file identities, not path spelling.
+    assert.equal(await realpath(result.workbook.path), await realpath(workbookPath));
     assert.equal(result.workbook.name, path.basename(workbookPath));
     assert.equal(result.workbook.extension, '.xlsx');
     assert.equal(result.workbook.containerKind, 'zip');
@@ -939,7 +941,7 @@ if (process.platform === 'win32') {
     assert.equal(result.workbook.sha256, sha256Before);
 	assert.equal(parsedProbe.workbook.sha256, sha256Before, 'the TypeScript boundary must accept the live probe schema');
 	assert.equal(parsedProbe.workbook.sensitivityLabels[0].name, 'Confidential <Finance>');
-	assert.equal(buildEnterpriseSecurityReport(parsedProbe).probe.workbook.path, workbookPath);
+	assert.equal(await realpath(buildEnterpriseSecurityReport(parsedProbe).probe.workbook.path), await realpath(workbookPath));
     assert.equal(
       createHash('sha256').update(await readFile(workbookPath)).digest('hex'),
       sha256Before,

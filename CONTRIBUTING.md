@@ -30,6 +30,16 @@ npm ci
 npm run validate
 ```
 
+La validation contrôle séparément TypeScript côté extension et côté webview. Pour la compatibilité et la recette native :
+
+```powershell
+npm run test:extension-host -- 1.95.0
+npm run test:extension-host -- stable
+npm run validate:native-release
+```
+
+Les tests Extension Host utilisent les profils isolés de `@vscode/test-electron` (projet Microsoft, licence MIT). Les schémas sont compilés avec Ajv (licence MIT). Ces dépendances servent aux tests et ne sont pas livrées dans le VSIX. La recette native stricte exige Excel ; un test ignoré dans la validation générale n’est pas une recette native réussie.
+
 Pour produire un VSIX local :
 
 ```powershell
