@@ -1,11 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import process from 'node:process';
+import { requireExcelRegistration } from './helpers/native-prerequisite.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('Native XLSM integration skipped: Windows and Microsoft Excel are required.');
-  process.exit(0);
-}
+requireExcelRegistration('Native XLSM integration');
 
 const root = resolve(import.meta.dirname, '..');
 

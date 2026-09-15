@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { requireExcelRegistration } from './helpers/native-prerequisite.mjs';
+
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
@@ -11,10 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-if (process.platform !== 'win32') {
-  console.log('VBA UserForm inventory skipped: Windows and Excel are required.');
-  process.exit(0);
-}
+requireExcelRegistration('VBA UserForm inventory');
 
 const root = resolve(import.meta.dirname, '..');
 const exporter = resolve(root, 'scripts/office-ai-export.ps1');

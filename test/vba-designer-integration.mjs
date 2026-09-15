@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { skipNativeTest } from './helpers/native-prerequisite.mjs';
 
 function normalizeDiagnostic(value) {
   return String(value).replace(/\s+/g, ' ').trim();
@@ -27,8 +28,7 @@ assert.equal(
 );
 
 if (process.platform !== 'win32') {
-  console.log('VBA designer integration skipped: Windows and Excel are required.');
-  process.exit(0);
+  skipNativeTest('VBA designer requires Windows and Excel.');
 }
 
 const root = resolve(import.meta.dirname, '..');
@@ -215,10 +215,7 @@ assert.ok(existsSync(fixture), 'UserForm fixture is missing');
 
 if (!excelAutomationReady()) {
   rmSync(temporaryDirectory, { recursive: true, force: true });
-  console.log(
-    'VBA designer integration skipped: Excel COM or user-enabled AccessVBOM is unavailable.',
-  );
-  process.exit(0);
+  skipNativeTest('VBA designer: Excel COM or user-enabled AccessVBOM is unavailable.');
 }
 
 const activeXAvailable = activeXCreationReady();

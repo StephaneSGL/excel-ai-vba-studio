@@ -75,9 +75,9 @@ export interface ToolInput {
 }
 
 export interface VbaWriteToolInput {
-	workbookPath?: string;
-	componentFile?: string;
-	source?: string;
+	workbookPath: string;
+	componentFile: string;
+	source: string;
 }
 
 export type VbaUserFormControlType =
@@ -181,7 +181,7 @@ export type VbaDesignOperation =
 	  };
 
 export interface VbaDesignToolInput {
-	workbookPath?: string;
+	workbookPath: string;
 	operations: VbaDesignOperation[];
 }
 
