@@ -13,6 +13,7 @@ The project uses semantic versions. Marketplace Preview status is represented by
 - Removed four Unicode-property regex patterns from AI tool JSON schemas for validator compatibility. Table-name validation, Unicode NFC normalization and duplicate checks remain enforced in extension/native code.
 - Required an explicit absolute workbook path for every mutating AI tool; VBA tools now show the full canonical target in their confirmation and never fall back to a changed active editor.
 - Fixed Find/Replace indexing; replacement text is literal, empty searches and stale whole-cell matches do not write, and locked cells are preserved.
+- Restored native Ctrl/Cmd+V paste events by removing global keydown cancellation; the focused grid keeps its own paste handling.
 - Enabled webview TypeScript validation, corrected ExcelJS and spreadsheet model types, and validated incoming open-message fields.
 - Fixed Windows 8.3/long-path comparison in security tests and prevented release preparation from half-bumping the manifest on a stale lockfile.
 - Updated fast-uri, js-yaml, nanoid and qs; pinned VS Code API types to the declared 1.95.0 baseline and Node types to the Node 20 runtime target.

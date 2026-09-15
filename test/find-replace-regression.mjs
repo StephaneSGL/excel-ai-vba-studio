@@ -26,4 +26,21 @@ await withModule('src/react/util/loadOfficeContent.ts', ({ parseOfficeOpenPayloa
   }
   assert.equal(parseOfficeOpenPayload({ ext: 'xlsx', readOnly: true, buffer: [0, 255] }).readOnly, true);
 });
-console.log('Find/replace and webview message regressions passed.');
+const previousWindow = globalThis.window;
+try {
+  const keyHandlers = [];
+  globalThis.window = { addEventListener(event, listener) { if (event === 'keydown') keyHandlers.push(listener); } };
+  await withModule('src/react/util/vscode.ts', () => {
+    for (const ctrlKey of [true, false]) {
+      let cancelled = false;
+      const event = { code: 'KeyV', ctrlKey, metaKey: !ctrlKey, altKey: false,
+        preventDefault() { cancelled = true; } };
+      keyHandlers.forEach(listener => listener(event));
+      assert.equal(cancelled, false, 'the global host bridge must not cancel browser paste');
+    }
+  });
+} finally {
+  if (previousWindow === undefined) delete globalThis.window;
+  else globalThis.window = previousWindow;
+}
+console.log('Find/replace, paste shortcut and webview message regressions passed.');
