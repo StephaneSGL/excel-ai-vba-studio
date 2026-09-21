@@ -27,8 +27,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run build
-      - run: npm run test:extension-host -- ${{ matrix.vscode }}
+      - run: npm run package
+      - run: npm run test:extension-host -- ${{ matrix.vscode }} --packaged
 
   verify-native-helper:
     runs-on: windows-latest

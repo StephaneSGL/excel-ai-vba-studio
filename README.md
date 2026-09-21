@@ -62,6 +62,9 @@ Excel AI & VBA Studio is a preview VS Code extension for inspecting supported sp
 
 ## Install from a VSIX
 
+[Download a published Preview release](https://github.com/StephaneSGL/excel-ai-vba-studio/releases).
+Use the Windows x64 VSIX attached to the release, not the automatic source-code ZIP.
+
 Download `excel-ai-vba-studio-win32-x64-<version>.vsix`, then run:
 
 ```powershell
@@ -69,6 +72,18 @@ code --install-extension .\excel-ai-vba-studio-win32-x64-<version>.vsix
 ```
 
 You can also use **Extensions > ... > Install from VSIX** in VS Code.
+
+After installation, reload the window, press **Ctrl+Shift+P**, and select
+**Excel AI & VBA Studio : Accueil et diagnostic**. The start page opens a workbook
+directly in the integrated grid and explains the local prerequisites. It is also
+available from the home icon in **Projet Excel & VBA**. It never opens itself over
+your work automatically.
+
+**No Node.js, npm or Python installation is required to use the packaged VSIX.**
+The XLSX/CSV/TSV grid does not require Excel desktop. Native operations (including
+XLSM editing, native tables/charts and VBA workflows) require Microsoft Excel
+desktop and applicable Office permissions. The diagnostic reads registration only:
+it does not launch Excel, test your Office license or change security settings.
 
 ## Build from source
 
@@ -81,6 +96,18 @@ npm ci
 npm run validate
 npm run package
 ```
+
+On Windows x64, verify the actual packaged artifact in an isolated VS Code profile:
+
+```powershell
+npm run test:extension-host -- 1.95.0 --packaged
+npm run test:extension-host -- stable --packaged
+```
+
+These tests cover installation, activation, registered commands/tools, the start
+page and guided CSV opening. They do not replace native Excel acceptance or a full
+visual workbook-editing test. For native acceptance on a suitable Excel test PC,
+run `npm run validate:native-release`; missing prerequisites are failures, not passes.
 
 The Visual Studio Marketplace release is not available yet. This public repository is currently the official source for the preview.
 
@@ -112,6 +139,8 @@ The Visual Studio Marketplace release is not available yet. This public reposito
 
 | Command ID | Purpose |
 | --- | --- |
+| `excelAiVbaStudio.openStart` | Opens the start page, read-only prerequisite checks and installation help. |
+| `excelAiVbaStudio.openWorkbook` | Selects a local XLSX/XLSM/XLS/CSV/TSV and opens the integrated grid. |
 | `excelAiVbaStudio.openExcel` | Launches or reactivates the real workbook only on request. |
 | `excelAiVbaStudio.openVbe` | Opens the workbook in Excel, then displays the native VBE. |
 | `excelAiVbaStudio.openSecurityCenter` | Inspects local file and Office security signals without opening Excel or changing policy. |

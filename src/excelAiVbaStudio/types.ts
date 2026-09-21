@@ -7,6 +7,8 @@ import type {
 export const EXCEL_EXTENSIONS = new Set(['.xlsx', '.xlsm', '.xls', '.xlsb']);
 
 export const EXCEL_AI_COMMANDS = Object.freeze({
+	openStart: 'excelAiVbaStudio.openStart',
+	openWorkbook: 'excelAiVbaStudio.openWorkbook',
 	exportWorkbook: 'excelAiVbaStudio.exportWorkbook',
 	copyWorkbookContext: 'excelAiVbaStudio.copyWorkbookContext',
 	openWorkbookContext: 'excelAiVbaStudio.openWorkbookContext',

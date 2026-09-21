@@ -6,6 +6,20 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-21
+
+### Added
+
+- French, theme-aware start page with guided workbook opening, capability explanations, installation help and a copyable local diagnostic report.
+- Read-only prerequisite checks for Windows x64, workspace trust, PowerShell, Excel registration in both registry views, the bundled VBA helper and all four AI tools. Registration is explicitly not treated as native Excel acceptance; no workbook, COM instance, account or Office security setting is touched.
+- Start/open actions in the Explorer, including its previously non-interactive empty state. The picker opens supported local workbooks directly in the integrated editor without changing editor associations.
+- Regression coverage for diagnostic states, privacy, webview CSP/escaping, action allowlists, picker cancellation, workspace trust and panel lifecycle. Real Extension Host smoke tests now exercise the start page and guided opening.
+- Optional packaged host testing installs the real VSIX in an isolated profile and asserts that the loaded extension is that package. Windows CI exercises this on VS Code 1.95.0 and stable without touching the user's installed extensions.
+
+### Release status
+
+- This is an installable Preview candidate, not a native Excel certification. Excel/COM acceptance on a Windows machine equipped with Excel remains required before final promotion.
+
 ## [0.6.1] - 2026-09-15
 
 ### Fixed

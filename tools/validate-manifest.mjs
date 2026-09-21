@@ -67,6 +67,8 @@ expect(manifest.icon === 'image/marketplace-icon.png', 'use the original Marketp
 expect(existsSync(resolve(root, manifest.icon ?? '')), 'Marketplace icon does not exist');
 
 const expectedCommands = sorted([
+  'excelAiVbaStudio.openStart',
+  'excelAiVbaStudio.openWorkbook',
   'excelAiVbaStudio.exportWorkbook',
   'excelAiVbaStudio.copyWorkbookContext',
   'excelAiVbaStudio.openWorkbookContext',

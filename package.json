@@ -2,7 +2,7 @@
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
   "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -71,6 +71,16 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "excelAiVbaStudio.openStart",
+        "title": "Excel AI & VBA Studio : Accueil et diagnostic",
+        "icon": "$(home)"
+      },
+      {
+        "command": "excelAiVbaStudio.openWorkbook",
+        "title": "Excel AI & VBA Studio : Ouvrir un classeur dans VS Code",
+        "icon": "$(folder-opened)"
+      },
       {
         "command": "excelAiVbaStudio.exportWorkbook",
         "title": "Excel AI & VBA Studio : Exporter le contexte du classeur",
@@ -1906,6 +1916,16 @@
     "menus": {
       "view/title": [
         {
+          "command": "excelAiVbaStudio.openStart",
+          "group": "navigation@0",
+          "when": "view == excelAiVbaExplorer"
+        },
+        {
+          "command": "excelAiVbaStudio.openWorkbook",
+          "group": "navigation@1",
+          "when": "view == excelAiVbaExplorer"
+        },
+        {
           "command": "excelAiVbaStudio.exportWorkbook",
           "group": "navigation@1",
           "when": "view == excelAiVbaExplorer"
@@ -2093,7 +2113,7 @@
     "release:prepare": "node tools/prepare-release.mjs",
     "typecheck:host": "tsc --noEmit",
     "typecheck:webview": "tsc -p src/react/tsconfig.json",
-    "test:release-regressions": "node test/find-replace-regression.mjs && node test/vba-tool-target-regression.mjs && node test/image-roundtrip-regression.mjs && node test/release-preparation-regression.mjs",
+    "test:release-regressions": "node test/find-replace-regression.mjs && node test/vba-tool-target-regression.mjs && node test/image-roundtrip-regression.mjs && node test/release-preparation-regression.mjs && node test/setup-start-page-regression.mjs",
     "test:extension-host": "node test/run-extension-host.mjs",
     "audit:source": "node tools/source-inventory.mjs",
     "validate:native-release": "node tools/validate-native-release.mjs"
