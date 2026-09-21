@@ -143,29 +143,8 @@ export interface SheetValidationData {
     value?: string | string[] | number;
 }
 
-export interface SheetImageAnchor {
-    col: number;
-    row: number;
-    width?: number;
-    height?: number;
-    brCol?: number;
-    brRow?: number;
-    editAs?: string;
-}
-
-export interface SheetImage {
-    id: string;
-    imageId: number;
-    extension: 'jpeg' | 'png' | 'gif';
-    base64: string;
-    anchor: SheetImageAnchor;
-}
-
-export interface SheetBackgroundImage {
-    imageId: number;
-    extension: 'jpeg' | 'png' | 'gif';
-    base64: string;
-}
+import type { SheetImage, SheetBackgroundImage } from '../excel_images';
+export type { SheetImageAnchor, SheetImage, SheetBackgroundImage } from '../excel_images';
 
 export interface SheetCommentData {
     text: string;
@@ -412,10 +391,7 @@ export function isWorkbookTableNameAvailableInSheets(
     ));
 }
 
-export interface SpreadsheetData {
-    name?: string;
-    [index: number]: SheetData;
-}
+export type SpreadsheetData = SheetData;
 
 export interface WorkbookStatistics {
     sheets: number;

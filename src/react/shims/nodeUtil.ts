@@ -1,7 +1,3 @@
-type InspectOptions = {
-    depth?: number | null;
-};
-
 function safeStringify(value: unknown, depth: number | null = 2): string {
     const seen = new WeakSet<object>();
     const maxDepth = depth == null ? Number.POSITIVE_INFINITY : depth;

@@ -1,8 +1,8 @@
 import { App, Button, ConfigProvider, Spin } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { handler, vscodeApi } from "../../util/vscode.ts";
+import { handler } from "../../util/vscode.ts";
 import { isVscodeEditorDark, observeVscodeThemeChange } from "../../util/vscodeTheme.ts";
-import { loadOfficeBuffer } from "../../util/loadOfficeContent.ts";
+import { loadOfficeBuffer, parseOfficeOpenPayload, type OfficeOpenPayload } from "../../util/loadOfficeContent.ts";
 import { antThemeConfig } from '../../antThemeConfig.ts';
 import './Excel.less';
 import {
@@ -490,7 +490,7 @@ function ExcelViewer() {
     useEffect(() => {
         const container = document.getElementById('container');
 
-        const initSpreadsheet = async (buffer: ArrayBuffer, payload: any) => {
+        const initSpreadsheet = async (buffer: ArrayBuffer, payload: OfficeOpenPayload) => {
             const fileReadOnly = payload.readOnly === true;
             const preserveSourceIntegrity =
                 payload.readOnlyReason === 'macro-preservation'
@@ -585,7 +585,15 @@ function ExcelViewer() {
                 : '';
         };
 
-        handler.on("open", (payload) => {
+        handler.on("open", (incoming) => {
+            let payload: OfficeOpenPayload;
+            try {
+                payload = parseOfficeOpenPayload(incoming);
+            } catch (error) {
+                setLoadError(error instanceof Error ? error.message : String(error));
+                setLoading(false);
+                return;
+            }
             const openGeneration = ++openGenerationRef.current;
             const previousOpen = openQueueRef.current;
             setEditorBusyState(true);

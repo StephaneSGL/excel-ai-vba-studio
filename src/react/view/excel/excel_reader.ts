@@ -1,4 +1,4 @@
-import type ExcelJS from '@cweijan/exceljs';
+import type * as ExcelJS from '@cweijan/exceljs';
 import type * as XLSX from 'xlsx';
 import {
     normalizeA1Range,

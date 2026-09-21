@@ -1,4 +1,5 @@
-import ExcelJS from '@cweijan/exceljs';
+import ExcelJSRuntime from '@cweijan/exceljs';
+import type * as ExcelJS from '@cweijan/exceljs';
 import JSZip from 'jszip';
 import {
     buildExcelTableStyleCatalog,
@@ -382,7 +383,7 @@ async function patchWorkbookSortStates(buffer: Uint8Array, sheets: SheetData[]) 
 
 export async function buildExcelWorkbookBuffer(sheets: SheetData[]): Promise<Uint8Array> {
     validateWorkbookTables(sheets);
-    const workbook = new ExcelJS.Workbook();
+    const workbook = new ExcelJSRuntime.Workbook();
     for (let i = 0; i < sheets.length; i += 1) {
         const sheetData = sheets[i];
         const worksheet = workbook.addWorksheet(sheetData.name || `Sheet${i + 1}`);

@@ -15,6 +15,7 @@ import {
 } from './types';
 import { ExcelAiVbaWorkbookService } from './workbookService';
 import { registerWorkbookObjectLanguageModelTool } from './workbookObjectTool';
+import { mutationConfirmation, requireExplicitWorkbookPath, resolveMutationTarget } from './mutationTarget';
 
 const MAX_TOOL_CONTEXT_BYTES = 4 * 1024 * 1024;
 const MAX_VBA_SOURCE_CHARACTERS = 2_000_000;
@@ -94,6 +95,8 @@ function parseWriteInput(value: unknown): VbaWriteToolInput {
 		throw new Error('Les paramètres de l’outil d’écriture doivent être un objet.');
 	}
 	const source = value as Record<string, unknown>;
+	rejectUnknownDesignProperties(source, ['workbookPath', 'componentFile', 'source'], 'input');
+	const workbookPath = requireExplicitWorkbookPath(source.workbookPath);
 	for (const property of ['workbookPath', 'componentFile', 'source']) {
 		if (
 			source[property] !== undefined &&
@@ -120,7 +123,7 @@ function parseWriteInput(value: unknown): VbaWriteToolInput {
 		throw new Error('source dépasse la limite de 2 000 000 de caractères.');
 	}
 	return {
-		workbookPath: source.workbookPath as string | undefined,
+		workbookPath,
 		componentFile,
 		source: vbaSource
 	};
@@ -686,7 +689,7 @@ function parseDesignInput(value: unknown): VbaDesignToolInput {
 		['workbookPath', 'operations'],
 		'input'
 	);
-	const workbookPath = designString(source.workbookPath, 'workbookPath');
+	const workbookPath = requireExplicitWorkbookPath(source.workbookPath);
 	if (
 		!Array.isArray(source.operations) ||
 		source.operations.length < 1 ||
@@ -795,7 +798,7 @@ function parseDesignInput(value: unknown): VbaDesignToolInput {
 		}
 	}
 	return {
-		...(workbookPath?.trim() ? { workbookPath } : {}),
+		workbookPath,
 		operations
 	};
 }
@@ -889,14 +892,16 @@ export function registerExcelAiVbaLanguageModelTool(
 	const writeTool = {
 		async prepareInvocation(options: { input?: unknown }) {
 			const input = parseWriteInput(options?.input);
-			const requestedPath = input.workbookPath?.trim() || '';
+			const target = await resolveMutationTarget(input.workbookPath);
+			const requestedPath = target.fsPath;
 			const conversionNotice = requestedPath
 				.toLocaleLowerCase('en-US')
 				.endsWith('.xlsx')
 				? ' vers une nouvelle copie XLSM voisine'
 				: '';
 			return {
-				invocationMessage: `Réinjection VBA transactionnelle de ${input.componentFile}${conversionNotice}`
+				invocationMessage: `Réinjection VBA transactionnelle de ${input.componentFile}${conversionNotice}`,
+				confirmationMessages: mutationConfirmation(target, `Écriture de ${input.componentFile}${conversionNotice}.`)
 			};
 		},
 
@@ -908,16 +913,11 @@ export function registerExcelAiVbaLanguageModelTool(
 				throw new vscode.CancellationError();
 			}
 			const input = parseWriteInput(options?.input);
-			const workbookUri = await service.resolveToolWorkbookUri(input);
-			if (!workbookUri) {
-				throw new Error(
-					'Aucun classeur Excel local unique ne peut recevoir le code VBA.'
-				);
-			}
+			const workbookUri = await resolveMutationTarget(input.workbookPath);
 			const writeResult = await service.writeVbaFromTool(
 				workbookUri,
-				input.componentFile as string,
-				input.source as string,
+				input.componentFile,
+				input.source,
 				cancellationToken
 			);
 			if (cancellationToken?.isCancellationRequested) {
@@ -952,13 +952,10 @@ export function registerExcelAiVbaLanguageModelTool(
 	const designTool = {
 		async prepareInvocation(options: { input?: unknown }) {
 			const input = parseDesignInput(options?.input);
-			const requestedPath = input.workbookPath?.trim();
+			const target = await resolveMutationTarget(input.workbookPath);
 			return {
-				invocationMessage: requestedPath
-					? `Création transactionnelle de composants visuels VBA dans ${path.basename(
-							requestedPath
-					  )}`
-					: 'Création transactionnelle de composants visuels dans le classeur XLSM actif'
+				invocationMessage: `Création transactionnelle de composants visuels VBA dans ${path.basename(target.fsPath)}`,
+				confirmationMessages: mutationConfirmation(target, `${input.operations.length} opération(s) : ${[...new Set(input.operations.map(operation => operation.kind))].join(', ')}.`)
 			};
 		},
 
@@ -970,12 +967,7 @@ export function registerExcelAiVbaLanguageModelTool(
 				throw new vscode.CancellationError();
 			}
 			const input = parseDesignInput(options?.input);
-			const workbookUri = await service.resolveToolWorkbookUri(input);
-			if (!workbookUri) {
-				throw new Error(
-					'Aucun classeur XLSM local unique ne peut recevoir les composants visuels VBA.'
-				);
-			}
+			const workbookUri = await resolveMutationTarget(input.workbookPath);
 			const designResult = await service.designVbaFromTool(
 				workbookUri,
 				input.operations,

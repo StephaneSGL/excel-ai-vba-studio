@@ -460,9 +460,9 @@ export class ExcelAiVbaWorkbookService implements vscode.Disposable {
 				cancellationToken
 			);
 		}
-		if (workbookExtension !== '.xlsm' && workbookExtension !== '.xlam') {
+		if (workbookExtension !== '.xlsm') {
 			throw new Error(
-				'L’écriture VBA accepte un fichier .xlsm ou .xlam, ou un fichier .xlsx à convertir en copie .xlsm. Les formats .xls et .xlsb restent protégés.'
+				'L’écriture VBA accepte un fichier .xlsm, ou un fichier .xlsx à convertir en copie .xlsm. Les formats .xls et .xlsb restent protégés ; .xlam n’est pas pris en charge par cet outil.'
 			);
 		}
 

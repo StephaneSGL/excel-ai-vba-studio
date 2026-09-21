@@ -69,6 +69,5 @@ export function isCompose(e) {
     return e.metaKey || e.ctrlKey;
 }
 
-window.addEventListener('keydown', e => {
-    if (isCompose(e) && e.code == 'KeyV') e.preventDefault()
-})
+// Do not suppress Ctrl/Cmd+V globally. The focused spreadsheet handles its
+// own paste event; inputs, textareas and dialogs need native browser paste.
