@@ -39,6 +39,9 @@ MAX_PATCHES = 64
 MAX_MODULE_SOURCE_CHARACTERS = 2_000_000
 MAX_PROJECT_SOURCE_CHARACTERS = 8_000_000
 MAX_ZIP_ENTRIES = 20_000
+MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+ZIP_STREAM_CHUNK_BYTES = 1024 * 1024
 MAX_METADATA_PART_BYTES = 1024 * 1024
 MAX_COMPRESSED_METADATA_PART_BYTES = 2 * 1024 * 1024
 MAX_RELATIONSHIP_PARTS = 4_096
@@ -208,26 +211,162 @@ def _relationships_part_for(source_part_name: str) -> str:
     return _validate_part_name(f"{directory}_rels/{file_name}.rels")
 
 
-def _entry_map(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
+def _validated_zip_infos(
+    archive: zipfile.ZipFile,
+    *,
+    maximum_entry_bytes: int = MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES,
+    maximum_total_bytes: int = MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+) -> list[zipfile.ZipInfo]:
     infos = archive.infolist()
     if len(infos) > MAX_ZIP_ENTRIES:
         raise ValueError(f"package contains more than {MAX_ZIP_ENTRIES} ZIP entries")
-    entries: dict[str, zipfile.ZipInfo] = {}
+    seen_parts: set[str] = set()
+    total_uncompressed_bytes = 0
     for info in infos:
         name = info.filename
         if "\\" in name or name.startswith("/"):
             raise ValueError(f"invalid ZIP entry name: {name}")
+        if info.flag_bits & 0x0001:
+            raise ValueError(f"encrypted ZIP entry is not supported: {name}")
+        if info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+            raise ValueError(f"unsupported ZIP compression method: {name}")
         if name.endswith("/"):
             if not name[:-1]:
                 raise ValueError("invalid ZIP directory entry")
-            _validate_part_name("/" + name[:-1])
+            part_name = _validate_part_name("/" + name[:-1])
+            if info.file_size != 0:
+                raise ValueError(f"ZIP directory entry carries payload data: {name}")
+        else:
+            part_name = _validate_part_name("/" + name)
+            if info.file_size > maximum_entry_bytes:
+                raise WritebackError(
+                    "WORKBOOK_TOO_LARGE",
+                    f"ZIP entry exceeds the {maximum_entry_bytes}-byte expanded limit: {name}",
+                )
+            total_uncompressed_bytes += info.file_size
+            if total_uncompressed_bytes > maximum_total_bytes:
+                raise WritebackError(
+                    "WORKBOOK_TOO_LARGE",
+                    "Workbook ZIP payloads exceed the "
+                    f"{maximum_total_bytes}-byte expanded limit.",
+                )
+        key = part_name.casefold()
+        if key in seen_parts:
+            raise ValueError(f"duplicate or case-colliding ZIP part: {part_name}")
+        seen_parts.add(key)
+    return infos
+
+
+def _entry_map(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
+    infos = _validated_zip_infos(archive)
+    entries: dict[str, zipfile.ZipInfo] = {}
+    for info in infos:
+        name = info.filename
+        if name.endswith("/"):
             continue
         part_name = _validate_part_name("/" + name)
-        key = part_name.casefold()
-        if key in entries:
-            raise ValueError(f"duplicate or case-colliding ZIP part: {part_name}")
-        entries[key] = info
+        entries[part_name.casefold()] = info
     return entries
+
+
+def _consume_zip_entry(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    maximum_entry_bytes: int,
+    remaining_total_bytes: int,
+    digest: Any | None = None,
+    chunks: list[bytes] | None = None,
+) -> int:
+    if info.is_dir():
+        if info.file_size != 0:
+            raise ValueError(f"ZIP directory entry carries payload data: {info.filename}")
+        return 0
+    consumed = 0
+    with archive.open(info, "r") as stream:
+        while True:
+            remaining_entry = maximum_entry_bytes - consumed
+            remaining_archive = remaining_total_bytes - consumed
+            read_size = min(
+                ZIP_STREAM_CHUNK_BYTES,
+                max(1, remaining_entry + 1),
+                max(1, remaining_archive + 1),
+            )
+            chunk = stream.read(read_size)
+            if not chunk:
+                break
+            consumed += len(chunk)
+            if consumed > maximum_entry_bytes or consumed > remaining_total_bytes:
+                raise WritebackError(
+                    "WORKBOOK_TOO_LARGE",
+                    "Workbook ZIP payloads exceed the configured expanded-size limit.",
+                )
+            if digest is not None:
+                digest.update(chunk)
+            if chunks is not None:
+                chunks.append(chunk)
+    if consumed != info.file_size:
+        raise ValueError(f"ZIP entry size is inconsistent: {info.filename}")
+    return consumed
+
+
+def _preflight_zip_payloads(
+    workbook_path: Path,
+    *,
+    maximum_entry_bytes: int = MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES,
+    maximum_total_bytes: int = MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+) -> None:
+    with zipfile.ZipFile(workbook_path, "r") as archive:
+        infos = _validated_zip_infos(
+            archive,
+            maximum_entry_bytes=maximum_entry_bytes,
+            maximum_total_bytes=maximum_total_bytes,
+        )
+        consumed_total = 0
+        for info in infos:
+            consumed_total += _consume_zip_entry(
+                archive,
+                info,
+                maximum_entry_bytes=maximum_entry_bytes,
+                remaining_total_bytes=maximum_total_bytes - consumed_total,
+            )
+
+
+def _create_private_workbook_snapshot(
+    workbook_path: Path,
+    *,
+    adjacent: bool,
+) -> tuple[Path, Path]:
+    snapshot_directory = Path(
+        tempfile.mkdtemp(
+            prefix=f".{workbook_path.stem}.excel-ai-vba-private-",
+            dir=workbook_path.parent if adjacent else None,
+        )
+    )
+    try:
+        os.chmod(snapshot_directory, stat.S_IRWXU)
+        snapshot_path = snapshot_directory / workbook_path.name
+        copied_bytes = 0
+        with workbook_path.open("rb") as source, snapshot_path.open("xb") as target:
+            while True:
+                chunk = source.read(ZIP_STREAM_CHUNK_BYTES)
+                if not chunk:
+                    break
+                copied_bytes += len(chunk)
+                if copied_bytes > MAX_WORKBOOK_BYTES:
+                    raise WritebackError(
+                        "WORKBOOK_TOO_LARGE",
+                        f"Workbook exceeds the {MAX_WORKBOOK_BYTES}-byte safety limit.",
+                    )
+                target.write(chunk)
+        if copied_bytes <= 0:
+            raise WritebackError("WORKBOOK_TOO_LARGE", "Workbook is empty.")
+        assert_no_reparse_point_chain(snapshot_path)
+        _preflight_zip_payloads(snapshot_path)
+        return snapshot_directory, snapshot_path
+    except Exception:
+        shutil.rmtree(snapshot_directory, ignore_errors=True)
+        raise
 
 
 def _get_entry(
@@ -248,10 +387,15 @@ def _read_metadata_entry(
         raise ValueError(
             f"compressed metadata exceeds the inspection limit: {info.filename}"
         )
-    value = archive.read(info)
-    if len(value) != info.file_size:
-        raise ValueError(f"metadata part size is inconsistent: {info.filename}")
-    return value
+    chunks: list[bytes] = []
+    _consume_zip_entry(
+        archive,
+        info,
+        maximum_entry_bytes=maximum_bytes,
+        remaining_total_bytes=maximum_bytes,
+        chunks=chunks,
+    )
+    return b"".join(chunks)
 
 
 def _read_xml_entry(
@@ -618,13 +762,36 @@ def classify_existing_component(
     )
 
 
-def zip_payload_hashes(workbook_path: Path) -> dict[str, str]:
+def zip_payload_hashes(
+    workbook_path: Path,
+    *,
+    maximum_entry_bytes: int = MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES,
+    maximum_total_bytes: int = MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES,
+) -> dict[str, str]:
     with zipfile.ZipFile(workbook_path, "r") as archive:
-        return {
-            info.filename: sha256_bytes(archive.read(info.filename))
-            for info in archive.infolist()
-            if info.filename != "xl/vbaProject.bin"
-        }
+        infos = _validated_zip_infos(
+            archive,
+            maximum_entry_bytes=maximum_entry_bytes,
+            maximum_total_bytes=maximum_total_bytes,
+        )
+        hashes: dict[str, str] = {}
+        consumed_total = 0
+        for info in infos:
+            digest = (
+                None
+                if info.filename == "xl/vbaProject.bin"
+                else hashlib.sha256()
+            )
+            consumed_total += _consume_zip_entry(
+                archive,
+                info,
+                maximum_entry_bytes=maximum_entry_bytes,
+                remaining_total_bytes=maximum_total_bytes - consumed_total,
+                digest=digest,
+            )
+            if digest is not None:
+                hashes[info.filename] = digest.hexdigest()
+        return hashes
 
 
 def designer_stream_hashes(workbook: ExcelFile, form_names: set[str]) -> dict[str, str]:
@@ -689,30 +856,37 @@ def project_stream_fingerprint(workbook: ExcelFile) -> dict[str, Any]:
 
 def fingerprint_request(request: dict[str, Any]) -> dict[str, Any]:
     workbook_path = validate_workbook_path(request)
-    with ExcelFile(workbook_path) as workbook:
-        project = workbook.vba_project()
-        validation_errors = workbook.validate()
-        if validation_errors:
-            raise WritebackError(
-                "VBA_PROJECT_INVALID",
-                "VBA project validation failed: " + "; ".join(validation_errors),
-            )
-        signature = detect_signature(workbook._get_cfb())
-        fingerprint = project_stream_fingerprint(workbook)
-        return {
-            "ok": True,
-            "operation": "fingerprint",
-            "workbookSha256": sha256_file(workbook_path),
-            "projectName": project.name,
-            "protected": bool(
-                project.protection is not None and project.protection.has_password
-            ),
-            "signed": signature.present,
-            "signatureKinds": signature.kinds,
-            "projectFingerprintSha256": fingerprint["sha256"],
-            "projectStreamCount": fingerprint["streamCount"],
-            "projectStorageCount": fingerprint["storageCount"],
-        }
+    snapshot_directory, snapshot_path = _create_private_workbook_snapshot(
+        workbook_path,
+        adjacent=False,
+    )
+    try:
+        with ExcelFile(snapshot_path) as workbook:
+            project = workbook.vba_project()
+            validation_errors = workbook.validate()
+            if validation_errors:
+                raise WritebackError(
+                    "VBA_PROJECT_INVALID",
+                    "VBA project validation failed: " + "; ".join(validation_errors),
+                )
+            signature = detect_signature(workbook._get_cfb())
+            fingerprint = project_stream_fingerprint(workbook)
+            return {
+                "ok": True,
+                "operation": "fingerprint",
+                "workbookSha256": sha256_file(snapshot_path),
+                "projectName": project.name,
+                "protected": bool(
+                    project.protection is not None and project.protection.has_password
+                ),
+                "signed": signature.present,
+                "signatureKinds": signature.kinds,
+                "projectFingerprintSha256": fingerprint["sha256"],
+                "projectStreamCount": fingerprint["streamCount"],
+                "projectStorageCount": fingerprint["storageCount"],
+            }
+    finally:
+        shutil.rmtree(snapshot_directory, ignore_errors=True)
 
 
 def create_backup_path(workbook_path: Path, original_hash: str) -> Path:
@@ -1084,8 +1258,7 @@ def validate_workbook_path(request: dict[str, Any]) -> Path:
     return workbook_path
 
 
-def inspect_request(request: dict[str, Any]) -> dict[str, Any]:
-    workbook_path = validate_workbook_path(request)
+def _inspect_workbook(workbook_path: Path) -> dict[str, Any]:
     with ExcelFile(workbook_path) as workbook:
         project = workbook.vba_project()
         validation_errors = workbook.validate()
@@ -1137,6 +1310,18 @@ def inspect_request(request: dict[str, Any]) -> dict[str, Any]:
             "designerStreamsSha256": designer_stream_hashes(workbook, form_names),
             "modules": modules,
         }
+
+
+def inspect_request(request: dict[str, Any]) -> dict[str, Any]:
+    workbook_path = validate_workbook_path(request)
+    snapshot_directory, snapshot_path = _create_private_workbook_snapshot(
+        workbook_path,
+        adjacent=False,
+    )
+    try:
+        return _inspect_workbook(snapshot_path)
+    finally:
+        shutil.rmtree(snapshot_directory, ignore_errors=True)
 
 
 def apply_request(request: dict[str, Any]) -> dict[str, Any]:
@@ -1199,25 +1384,12 @@ def apply_request(request: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    current_source_hash = sha256_file(workbook_path)
-    if current_source_hash != expected_workbook_hash:
-        raise WritebackError(
-            "STALE_WORKBOOK",
-            "Workbook changed after export. Refresh the VBA project before applying edits.",
-        )
-    assert_ooxml_package_unsigned(workbook_path)
-
-    work_handle, work_name = tempfile.mkstemp(
-        prefix=f".{workbook_path.stem}.excel-ai-vba-",
-        suffix=workbook_path.suffix,
-        dir=workbook_path.parent,
+    work_directory, work_path = _create_private_workbook_snapshot(
+        workbook_path,
+        adjacent=True,
     )
-    os.close(work_handle)
-    work_path = Path(work_name)
-    assert_no_reparse_point_chain(work_path)
     backup_path: Path | None = None
     try:
-        shutil.copy2(workbook_path, work_path)
         current_workbook_hash = sha256_file(work_path)
         if current_workbook_hash != expected_workbook_hash:
             raise WritebackError(
@@ -1348,6 +1520,7 @@ def apply_request(request: dict[str, Any]) -> dict[str, Any]:
             backup_path = create_backup_path(workbook_path, current_workbook_hash)
             workbook.save()
 
+        _preflight_zip_payloads(work_path)
         with ExcelFile(work_path) as validated:
             validation_errors = validated.validate()
             if validation_errors:
@@ -1438,11 +1611,7 @@ def apply_request(request: dict[str, Any]) -> dict[str, Any]:
             "backupPath": str(backup_path),
         }
     finally:
-        try:
-            if work_path.exists():
-                work_path.unlink()
-        except OSError:
-            pass
+        shutil.rmtree(work_directory, ignore_errors=True)
 
 
 def emit_result(result: dict[str, Any], exit_code: int) -> int:

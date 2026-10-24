@@ -499,7 +499,20 @@ function parseXmlElements(value: Buffer): XmlElement[] {
         return fail('DTD and entity declarations are forbidden in package metadata');
     }
     const elements: XmlElement[] = [];
-    const stack: Array<{ qName: string; namespaces: Map<string, string> }> = [];
+    const namespaces = new Map<string, string>();
+    const stack: Array<{
+        qName: string;
+        namespaceChanges: Array<{ prefix: string; previousValue: string | undefined }>;
+    }> = [];
+    const restoreNamespaces = (
+        namespaceChanges: Array<{ prefix: string; previousValue: string | undefined }>,
+    ): void => {
+        for (let index = namespaceChanges.length - 1; index >= 0; index -= 1) {
+            const { prefix, previousValue } = namespaceChanges[index];
+            if (previousValue === undefined) namespaces.delete(prefix);
+            else namespaces.set(prefix, previousValue);
+        }
+    };
     let cursor = 0;
     let rootClosed = false;
     while (cursor < xml.length) {
@@ -537,6 +550,7 @@ function parseXmlElements(value: Buffer): XmlElement[] {
             }
             const current = stack.pop();
             if (!current || current.qName !== qName) return fail('XML tags are not balanced');
+            restoreNamespaces(current.namespaceChanges);
             if (stack.length === 0) rootClosed = true;
             cursor = close + 1;
             continue;
@@ -547,20 +561,31 @@ function parseXmlElements(value: Buffer): XmlElement[] {
         if (!nameMatch) return fail('XML start tag is malformed');
         if (rootClosed && stack.length === 0) return fail('XML contains multiple root elements');
         const qName = nameMatch[1];
-        let attributeText = token.slice(nameMatch[0].length);
+        const attributeText = token.slice(nameMatch[0].length);
+        const attributePattern = /\s+([A-Za-z_][A-Za-z0-9_.:-]*)\s*=\s*(["'])([\s\S]*?)\2/y;
+        let attributeCursor = 0;
         const rawAttributes = new Map<string, string>();
-        while (attributeText.trim() !== '') {
-            const attributeMatch = /^\s+([A-Za-z_][A-Za-z0-9_.:-]*)\s*=\s*(["'])([\s\S]*?)\2/.exec(attributeText);
-            if (!attributeMatch) return fail('XML attribute syntax is malformed');
+        while (attributeCursor < attributeText.length) {
+            attributePattern.lastIndex = attributeCursor;
+            const attributeMatch = attributePattern.exec(attributeText);
+            if (!attributeMatch) {
+                if (/^\s*$/.test(attributeText.slice(attributeCursor))) break;
+                return fail('XML attribute syntax is malformed');
+            }
             const attributeName = attributeMatch[1];
             if (rawAttributes.has(attributeName)) return fail('XML contains duplicate attributes');
             rawAttributes.set(attributeName, decodeXmlAttribute(attributeMatch[3]));
-            attributeText = attributeText.slice(attributeMatch[0].length);
+            attributeCursor = attributePattern.lastIndex;
         }
-        const namespaces = new Map(stack.at(-1)?.namespaces ?? []);
+        const namespaceChanges: Array<{ prefix: string; previousValue: string | undefined }> = [];
         for (const [attributeName, attributeValue] of rawAttributes) {
-            if (attributeName === 'xmlns') namespaces.set('', attributeValue);
-            else if (attributeName.startsWith('xmlns:')) namespaces.set(attributeName.slice(6), attributeValue);
+            let prefix: string | undefined;
+            if (attributeName === 'xmlns') prefix = '';
+            else if (attributeName.startsWith('xmlns:')) prefix = attributeName.slice(6);
+            if (prefix !== undefined) {
+                namespaceChanges.push({ prefix, previousValue: namespaces.get(prefix) });
+                namespaces.set(prefix, attributeValue);
+            }
         }
         const { prefix, localName } = splitQualifiedName(qName);
         const namespaceUri = namespaces.get(prefix);
@@ -579,8 +604,11 @@ function parseXmlElements(value: Buffer): XmlElement[] {
             attributes.set(attributeQName.localName, attributeValue);
         }
         elements.push({ localName, namespaceUri, attributes, depth: stack.length });
-        if (!selfClosing) stack.push({ qName, namespaces });
-        else if (stack.length === 0) rootClosed = true;
+        if (!selfClosing) stack.push({ qName, namespaceChanges });
+        else {
+            restoreNamespaces(namespaceChanges);
+            if (stack.length === 0) rootClosed = true;
+        }
         cursor = close + 1;
     }
     if (stack.length !== 0 || elements.length === 0 || !rootClosed) {

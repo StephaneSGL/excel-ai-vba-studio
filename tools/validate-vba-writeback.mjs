@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -21,6 +22,19 @@ const helperPath = resolve(
   root,
   'bin/win32-x64/excel-ai-vba-writeback.exe',
 );
+const provenancePath = resolve(
+  root,
+  'bin/win32-x64/excel-ai-vba-writeback.provenance.json',
+);
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function canonicalTextSha256(path) {
+  const canonicalText = readFileSync(path, 'utf8').replace(/\r\n?/g, '\n');
+  return createHash('sha256').update(canonicalText, 'utf8').digest('hex');
+}
 
 assert.match(cli, /expectedWorkbookSha256/, 'stale workbook hash gate is missing');
 assert.match(cli, /detect_signature/, 'signed project gate is missing');
@@ -29,6 +43,15 @@ assert.match(cli, /designer_stream_hashes/, 'UserForm designer preservation is m
 assert.match(cli, /project_stream_fingerprint/, 'complete VBA stream fingerprint is missing');
 assert.match(cli, /fingerprint_request/, 'VBA fingerprint operation is missing');
 assert.match(cli, /zip_payload_hashes/, 'non-VBA OOXML preservation is missing');
+assert.match(cli, /MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES/, 'per-entry ZIP inflation limit is missing');
+assert.match(cli, /MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES/, 'aggregate ZIP inflation limit is missing');
+assert.match(cli, /_create_private_workbook_snapshot/, 'private bounded workbook snapshots are missing');
+assert.match(cli, /_preflight_zip_payloads\(snapshot_path\)/, 'native ZIP preflight is missing');
+assert.doesNotMatch(
+  cli,
+  /archive[.]read\(/,
+  'native ZIP payloads must be streamed instead of eagerly inflated',
+);
 assert.match(cli, /assert_no_reparse_point_chain/, 'native reparse-point gate is missing');
 assert.match(cli, /project\.add_module/, 'new standard/class module support is missing');
 assert.match(cli, /replace_file_with_backup/, 'atomic workbook replacement is missing');
@@ -67,6 +90,24 @@ assert.match(
 assert.ok(
   statSync(helperPath).size > 1_000_000,
   'bundled Windows x64 helper is missing or implausibly small',
+);
+const provenance = JSON.parse(readFileSync(provenancePath, 'utf8'));
+assert.deepEqual(
+  Object.keys(provenance).sort(),
+  ['executableSha256', 'pythonVersion', 'schemaVersion', 'sourceSha256'].sort(),
+  'native helper provenance has unexpected fields',
+);
+assert.equal(provenance.schemaVersion, 1, 'native helper provenance schema is unsupported');
+assert.equal(provenance.pythonVersion, '3.11.9', 'native helper Python version is inconsistent');
+assert.equal(
+  provenance.sourceSha256,
+  canonicalTextSha256(resolve(root, 'native/vba-writeback/cli.py')),
+  'bundled helper was not built from the current native source',
+);
+assert.equal(
+  provenance.executableSha256,
+  sha256(helperPath),
+  'bundled helper bytes do not match their build provenance',
 );
 
 console.log('VBA write-back validation passed: transactional, bounded, no COM/registry/macro execution.');

@@ -114,6 +114,7 @@ export default {
   },
   error: {
     pasteForMergedCell: 'Unable to do this for merged cells',
+    pasteTooLarge: 'The clipboard table is too large or has an invalid structure',
   },
   calendar: {
     weeks: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],

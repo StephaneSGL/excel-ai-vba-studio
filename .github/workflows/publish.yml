@@ -35,10 +35,10 @@ jobs:
         run: npm ci
 
       - name: Test the committed VBA helper
-        run: |
-          npm run validate:vba-writeback
-          npm run test:package-signatures
-          npm run test:vba-writeback
+        run: >-
+          npm run validate:vba-writeback &&
+          npm run test:package-signatures &&
+          npm run test:vba-writeback &&
           npm run test:vba-atomic
 
       - name: Rebuild the VBA helper from pinned source
@@ -51,17 +51,19 @@ jobs:
           "Source-built helper SHA-256: ``$digest``" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Test the source-built VBA helper
-        run: |
-          npm run validate:vba-writeback
-          npm run test:package-signatures
-          npm run test:vba-writeback
+        run: >-
+          npm run validate:vba-writeback &&
+          npm run test:package-signatures &&
+          npm run test:vba-writeback &&
           npm run test:vba-atomic
 
       - name: Upload verified VBA helper
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: verified-vba-writeback-${{ github.sha }}
-          path: bin/win32-x64/excel-ai-vba-writeback.exe
+          path: |
+            bin/win32-x64/excel-ai-vba-writeback.exe
+            bin/win32-x64/excel-ai-vba-writeback.provenance.json
           if-no-files-found: error
           retention-days: 1
 

@@ -1787,6 +1787,7 @@
     "validate:vba-designer": "node tools/validate-vba-designer.mjs",
     "validate:enterprise-security": "node tools/validate-enterprise-security.mjs",
     "test:package-signatures": "node test/package-signature-lock.mjs",
+    "test:security-remediations": "node test/ooxml-namespace-security-regression.mjs && node test/clipboard-html-security-regression.mjs && node test/run-native-zip-budget-regression.mjs",
     "test:xlm-preflight": "node test/xlm-automation-preflight.mjs",
     "test:codeql-security": "node test/codeql-http-security-regression.mjs && node test/codeql-ui-core-security-regression.mjs && node test/pretty-data-security-regression.mjs",
     "test:vba-bootstrap": "node test/vba-bootstrap-integration.mjs",
@@ -1804,7 +1805,7 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:package-signatures && npm run test:xlm-preflight && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:workbook-objects && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:security-remediations && npm run test:package-signatures && npm run test:xlm-preflight && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:workbook-objects && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
     "release:prepare": "node tools/prepare-release.mjs"

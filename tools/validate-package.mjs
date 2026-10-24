@@ -56,6 +56,7 @@ const required = [
   'scripts/open-excel-developer.ps1',
   'scripts/prepare-macro-workbook.ps1',
   'bin/win32-x64/excel-ai-vba-writeback.exe',
+  'bin/win32-x64/excel-ai-vba-writeback.provenance.json',
 ];
 for (const file of required) {
   if (!files.includes(file)) {

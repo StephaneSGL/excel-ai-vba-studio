@@ -1,5 +1,58 @@
 /* global document, window */
 
+export const MAX_HTML_CLIPBOARD_ROWS = 1_048_576;
+export const MAX_HTML_CLIPBOARD_COLUMNS = 16_384;
+export const MAX_HTML_CLIPBOARD_CELLS = 1_000_000;
+export const MAX_HTML_CLIPBOARD_DOM_NODES = 50_000;
+export const MAX_HTML_CLIPBOARD_CHARACTERS = 4 * 1024 * 1024;
+
+const DEFAULT_HTML_CLIPBOARD_LIMITS = Object.freeze({
+  maxRows: MAX_HTML_CLIPBOARD_ROWS,
+  maxColumns: MAX_HTML_CLIPBOARD_COLUMNS,
+  maxCells: MAX_HTML_CLIPBOARD_CELLS,
+  maxDomNodes: MAX_HTML_CLIPBOARD_DOM_NODES,
+});
+
+export class HtmlClipboardLimitError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'HtmlClipboardLimitError';
+  }
+}
+
+export function isHtmlClipboardDestinationInBounds(
+  startRow,
+  startColumn,
+  height,
+  width,
+) {
+  return Number.isSafeInteger(startRow)
+    && Number.isSafeInteger(startColumn)
+    && Number.isSafeInteger(height)
+    && Number.isSafeInteger(width)
+    && startRow >= 0
+    && startColumn >= 0
+    && height > 0
+    && width > 0
+    && height <= MAX_HTML_CLIPBOARD_ROWS - startRow
+    && width <= MAX_HTML_CLIPBOARD_COLUMNS - startColumn;
+}
+
+function rejectHtmlClipboard(message) {
+  throw new HtmlClipboardLimitError(message);
+}
+
+function validateHtmlMarkupBudget(html) {
+  let markupTokens = 0;
+  let cursor = -1;
+  while ((cursor = html.indexOf('<', cursor + 1)) >= 0) {
+    markupTokens += 1;
+    if (markupTokens > MAX_HTML_CLIPBOARD_DOM_NODES) {
+      rejectHtmlClipboard('HTML clipboard payload exceeds the markup budget');
+    }
+  }
+}
+
 function normalizeColor(value) {
   if (!value) return null;
   const text = value.trim().toLowerCase();
@@ -79,20 +132,25 @@ function styleFromCell(cell) {
   return Object.keys(style).length > 0 ? style : null;
 }
 
-function collectCellText(node) {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return node.nodeValue || '';
-  }
-  if (node.nodeType !== Node.ELEMENT_NODE) {
-    return '';
-  }
-  if (node.tagName === 'BR') {
-    return '\n';
-  }
+function collectCellText(root) {
   let text = '';
-  node.childNodes.forEach((child) => {
-    text += collectCellText(child);
-  });
+  const pending = [root];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node.nodeType === 3) {
+      text += node.nodeValue || '';
+      continue;
+    }
+    if (node.nodeType !== 1) continue;
+    if (node.tagName === 'BR') {
+      text += '\n';
+      continue;
+    }
+    const children = node.childNodes;
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      pending.push(children[index]);
+    }
+  }
   return text;
 }
 
@@ -223,8 +281,148 @@ export function formatHtmlClipboard(data, range) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${table}</body></html>`;
 }
 
+function validateTableDomSize(table, maximumNodes) {
+  let visited = 0;
+  const pending = [table];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    visited += 1;
+    if (visited > maximumNodes) {
+      rejectHtmlClipboard('HTML clipboard table exceeds the DOM traversal budget');
+    }
+    const children = node.childNodes || [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      pending.push(children[index]);
+    }
+  }
+}
+
+function parseSpan(rawValue, maximum, label) {
+  if (rawValue === null) return 1;
+  const normalized = rawValue.trim();
+  if (!/^\d+$/.test(normalized)) return 1;
+  const significant = normalized.replace(/^0+/, '') || '0';
+  const maximumText = String(maximum);
+  if (
+    significant.length > maximumText.length
+    || (significant.length === maximumText.length && significant > maximumText)
+  ) {
+    rejectHtmlClipboard(`${label} exceeds the worksheet limit`);
+  }
+  return Math.max(1, Number(significant));
+}
+
+export function parseHtmlClipboardTable(
+  table,
+  limits = DEFAULT_HTML_CLIPBOARD_LIMITS,
+) {
+  validateTableDomSize(table, limits.maxDomNodes);
+  const tableRows = Array.from(table.rows).filter(
+    row => typeof row.closest !== 'function' || row.closest('table') === table,
+  );
+  if (tableRows.length > limits.maxRows) {
+    rejectHtmlClipboard('HTML clipboard table exceeds the worksheet row limit');
+  }
+
+  const occupiedThroughRow = new Uint32Array(limits.maxColumns);
+  const placements = [];
+  let expandedCells = 0;
+  let height = 0;
+  let width = 0;
+
+  tableRows.forEach((tr, ri) => {
+    let ci = 0;
+    Array.from(tr.cells).forEach((td) => {
+      const rowspan = parseSpan(td.getAttribute('rowspan'), limits.maxRows, 'rowspan');
+      const colspan = parseSpan(td.getAttribute('colspan'), limits.maxColumns, 'colspan');
+
+      let placed = false;
+      while (!placed) {
+        while (ci < limits.maxColumns && occupiedThroughRow[ci] > ri) ci += 1;
+        if (ci > limits.maxColumns - colspan) {
+          rejectHtmlClipboard('HTML clipboard table exceeds the worksheet column limit');
+        }
+        let blockedColumn = -1;
+        for (let column = ci; column < ci + colspan; column += 1) {
+          if (occupiedThroughRow[column] > ri) {
+            blockedColumn = column;
+            break;
+          }
+        }
+        if (blockedColumn < 0) placed = true;
+        else ci = blockedColumn + 1;
+      }
+
+      if (ri > limits.maxRows - rowspan) {
+        rejectHtmlClipboard('HTML clipboard table exceeds the worksheet row limit');
+      }
+      if (rowspan > Math.floor((limits.maxCells - expandedCells) / colspan)) {
+        rejectHtmlClipboard('HTML clipboard table exceeds the expanded-cell budget');
+      }
+      expandedCells += rowspan * colspan;
+      const nextHeight = Math.max(height, ri + rowspan);
+      const nextWidth = Math.max(width, ci + colspan);
+      if (nextWidth > 0 && nextHeight > Math.floor(limits.maxCells / nextWidth)) {
+        rejectHtmlClipboard('HTML clipboard table exceeds the bounding-cell budget');
+      }
+
+      for (let column = ci; column < ci + colspan; column += 1) {
+        occupiedThroughRow[column] = Math.max(
+          occupiedThroughRow[column],
+          ri + rowspan,
+        );
+      }
+      placements.push({ td, ri, ci, rowspan, colspan });
+      height = nextHeight;
+      width = nextWidth;
+      ci += colspan;
+    });
+  });
+
+  if (placements.length === 0) return null;
+  const rows = [];
+  rows.length = height;
+  const merges = [];
+  placements.forEach((placement) => {
+    const {
+      td, ri, ci, rowspan, colspan,
+    } = placement;
+    const row = rows[ri] || [];
+    rows[ri] = row;
+    row[ci] = {
+      text: cellText(td),
+      style: styleFromCell(td),
+      merge: rowspan > 1 || colspan > 1 ? [rowspan - 1, colspan - 1] : undefined,
+    };
+    if (rowspan > 1 || colspan > 1) {
+      merges.push({
+        sri: ri,
+        sci: ci,
+        eri: ri + rowspan - 1,
+        eci: ci + colspan - 1,
+      });
+    }
+    for (let r = ri; r < ri + rowspan; r += 1) {
+      rows[r] = rows[r] || [];
+      for (let c = ci; c < ci + colspan; c += 1) {
+        if (r !== ri || c !== ci) rows[r][c] = { covered: true };
+      }
+    }
+  });
+  return {
+    rows,
+    merges,
+    height,
+    width,
+  };
+}
+
 export function parseHtmlClipboard(html) {
   if (!html) return null;
+  if (html.length > MAX_HTML_CLIPBOARD_CHARACTERS) {
+    rejectHtmlClipboard('HTML clipboard payload exceeds the input limit');
+  }
+  validateHtmlMarkupBudget(html);
   const container = document.createElement('div');
   container.style.cssText = 'position:fixed;left:-10000px;top:-10000px;visibility:hidden;pointer-events:none;';
   container.innerHTML = html;
@@ -232,39 +430,7 @@ export function parseHtmlClipboard(html) {
   try {
     const table = container.querySelector('table');
     if (!table) return null;
-    const rows = [];
-    const merges = [];
-    table.querySelectorAll('tr').forEach((tr, ri) => {
-      const row = rows[ri] || [];
-      let ci = 0;
-      tr.querySelectorAll('td,th').forEach((td) => {
-        while (row[ci]) ci += 1;
-        const rowspan = Math.max(1, Number.parseInt(td.getAttribute('rowspan') || '1', 10));
-        const colspan = Math.max(1, Number.parseInt(td.getAttribute('colspan') || '1', 10));
-        row[ci] = {
-          text: cellText(td),
-          style: styleFromCell(td),
-          merge: rowspan > 1 || colspan > 1 ? [rowspan - 1, colspan - 1] : undefined,
-        };
-        if (rowspan > 1 || colspan > 1) {
-          merges.push({
-            sri: ri,
-            sci: ci,
-            eri: ri + rowspan - 1,
-            eci: ci + colspan - 1,
-          });
-        }
-        for (let r = ri; r < ri + rowspan; r += 1) {
-          rows[r] = rows[r] || [];
-          for (let c = ci; c < ci + colspan; c += 1) {
-            if (r !== ri || c !== ci) rows[r][c] = { covered: true };
-          }
-        }
-        ci += colspan;
-      });
-      rows[ri] = row;
-    });
-    return rows.some(row => row && row.length > 0) ? { rows, merges } : null;
+    return parseHtmlClipboardTable(table);
   } finally {
     document.body.removeChild(container);
   }

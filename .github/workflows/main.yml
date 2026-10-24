@@ -54,11 +54,18 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Validate and test the bundled VBA helper
-        run: |
-          npm run validate:vba-writeback
-          npm run test:package-signatures
-          npm run test:vba-writeback
+      - name: Validate committed VBA helper provenance
+        id: committed-helper-provenance
+        continue-on-error: true
+        run: npm run validate:vba-writeback
+
+      - name: Test the committed VBA helper
+        id: committed-helper-tests
+        if: steps.committed-helper-provenance.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          npm run test:package-signatures &&
+          npm run test:vba-writeback &&
           npm run test:vba-atomic
 
       - name: Rebuild the VBA helper from pinned source
@@ -71,16 +78,26 @@ jobs:
           "Source-built helper SHA-256: ``$digest``" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Test the source-built VBA helper
-        run: |
-          npm run validate:vba-writeback
-          npm run test:package-signatures
-          npm run test:vba-writeback
+        run: >-
+          npm run validate:vba-writeback &&
+          npm run test:package-signatures &&
+          npm run test:vba-writeback &&
           npm run test:vba-atomic
 
       - name: Upload tested VBA helper candidate
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: vba-writeback-helper-${{ github.sha }}
-          path: bin/win32-x64/excel-ai-vba-writeback.exe
+          path: |
+            bin/win32-x64/excel-ai-vba-writeback.exe
+            bin/win32-x64/excel-ai-vba-writeback.provenance.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Require the committed helper to match source
+        if: >-
+          always() &&
+          (steps.committed-helper-provenance.outcome != 'success' ||
+          steps.committed-helper-tests.outcome != 'success')
+        shell: pwsh
+        run: throw 'Commit the source-built helper candidate and its provenance file.'

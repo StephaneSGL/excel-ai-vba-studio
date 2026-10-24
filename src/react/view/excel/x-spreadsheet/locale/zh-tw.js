@@ -114,6 +114,7 @@ export default {
   },
   error: {
     pasteForMergedCell: '無法對合併的儲存格執行此操作',
+    pasteTooLarge: '剪貼簿表格過大或結構無效',
   },
   calendar: {
     weeks: ['日', '一', '二', '三', '四', '五', '六'],
