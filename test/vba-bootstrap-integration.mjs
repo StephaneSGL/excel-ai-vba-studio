@@ -125,7 +125,7 @@ function runBootstrap(workbookPath, componentFile, source, expectedSuccess = tru
     .at(-1);
   const output = JSON.parse(jsonLine);
   assert.equal(output.ok, true);
-  assert.match(String(result.stdout), /OWNED_EXCEL_PID\|\d+/);
+  assert.match(String(result.stdout), /OWNED_EXCEL_PID\|\d+\|\d{15,19}(?:\r?\n|$)/);
   return output;
 }
 

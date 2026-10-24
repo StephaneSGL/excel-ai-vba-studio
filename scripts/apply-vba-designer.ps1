@@ -12,6 +12,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 . (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
+. (Join-Path $PSScriptRoot 'excel-automation-safety.ps1')
 
 $MaxNamedStreams = 64
 $MaxNamedStreamBytes = 8MB
@@ -675,39 +676,65 @@ function Ensure-ExcelSession {
     param()
     $excel = $null
     $ownedProcessIdentity = $null
+    $calculationGuardWorkbook = $null
+    $workbooks = $null
     try {
+        $preexistingExcelProcessIds = @(Get-ExcelAutomationProcessIds)
+        $excelCreationStartedUtcTicks = [DateTime]::UtcNow.Ticks
         $excel = New-Object -ComObject Excel.Application
+        $candidateProcessIdentity = Get-ExcelProcessIdentity $excel
+        $ownedProcessIdentity = Get-ExcelAutomationProcessIdentity `
+            $candidateProcessIdentity.ProcessId $preexistingExcelProcessIds $excelCreationStartedUtcTicks
+        [Console]::Out.WriteLine(
+            'OWNED_EXCEL_PID|' + $ownedProcessIdentity.ProcessId + '|' +
+            $ownedProcessIdentity.StartTimeUtcTicks
+        )
+        [Console]::Out.Flush()
         $excel.AutomationSecurity = 3
         $excel.DisplayAlerts = $false
         $excel.EnableEvents = $false
         $excel.AskToUpdateLinks = $false
         $excel.ScreenUpdating = $false
         $excel.Visible = $false
-        $ownedProcessIdentity = Get-ExcelProcessIdentity $excel
-        [Console]::Out.WriteLine(
-            'OWNED_EXCEL_PID|' + $ownedProcessIdentity.ProcessId + '|' +
-            $ownedProcessIdentity.StartTimeUtcTicks
-        )
+        Set-ExcelAutomationSafety $excel -BeforeGuard
+        $workbooks = $excel.Workbooks
+        $calculationGuardWorkbook = $workbooks.Add(-4167)
+        Set-ExcelAutomationSafety $excel
+        $ownedProcessIdentity | Add-Member -NotePropertyName CalculationGuardWorkbook `
+            -NotePropertyValue $calculationGuardWorkbook
         return $excel, $ownedProcessIdentity
     }
     catch {
-        if ($null -ne $excel) {
-            try { $excel.Quit() } catch { }
-            Release-ComObject $excel
+        if ($null -ne $calculationGuardWorkbook) {
+            try { $calculationGuardWorkbook.Close($false) } catch { }
+            Release-ComObject $calculationGuardWorkbook
         }
+        if ($null -ne $excel -and $null -ne $ownedProcessIdentity) {
+            try { $excel.Quit() } catch { }
+        }
+        Release-ComObject $excel
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
         Stop-OwnedExcelProcess $ownedProcessIdentity 0
         throw
     }
+    finally { Release-ComObject $workbooks }
 }
 
 function Cleanup-Excel {
     param([object]$Excel, [AllowNull()][object]$OwnedProcessIdentity)
-    if ($null -ne $Excel) {
-        try { $Excel.Quit() } catch { }
-        Release-ComObject $Excel
+    if ($null -ne $OwnedProcessIdentity) {
+        $guardProperty = $OwnedProcessIdentity.PSObject.Properties['CalculationGuardWorkbook']
+        if ($null -ne $guardProperty -and $null -ne $guardProperty.Value) {
+            try { $guardProperty.Value.Close($false) } catch { }
+            Release-ComObject $guardProperty.Value
+            $guardProperty.Value = $null
+        }
     }
+    if ($null -ne $Excel -and $null -ne $OwnedProcessIdentity) {
+        try { $Excel.Quit() } catch { }
+    }
+    Release-ComObject $Excel
     [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
     Stop-OwnedExcelProcess $OwnedProcessIdentity
 }
@@ -717,8 +744,14 @@ function Open-WorkbookReadOnly {
     $workbooks = $null; $wb = $null
     try {
         $workbooks = $Excel.Workbooks
+        Set-ExcelAutomationSafety $Excel
         $wb = $workbooks.Open($Path, 0, $true)  # ReadOnly
+        Assert-ExcelAutomationSafety $Excel
         return $wb
+    } catch {
+        if ($null -ne $wb) { try { $wb.Close($false) } catch { } }
+        Release-ComObject $wb
+        throw
     } finally {
         Release-ComObject $workbooks
     }
@@ -1294,7 +1327,9 @@ try {
     $workbooks1 = $null
     try {
         $workbooks1 = $excel1.Workbooks
+        Set-ExcelAutomationSafety $excel1
         $wbStaging = $workbooks1.Open($stagingPath, 0, $false)
+        Assert-ExcelAutomationSafety $excel1
         if (-not $wbStaging) { throw "Failed to open staging workbook" }
         $vbaProject = $wbStaging.VBProject
         $components = $vbaProject.VBComponents
@@ -2247,16 +2282,14 @@ End Sub
     if ($null -ne $vbaProject) { Release-ComObject $vbaProject }
     if ($null -ne $components) { Release-ComObject $components }
     if ($null -ne $excel1) {
-        try { $excel1.Quit() } catch { }
-        Release-ComObject $excel1
+        Cleanup-Excel $excel1 $excel1Identity
     }
     if ($null -ne $wbVerify) {
         try { $wbVerify.Close($false) } catch { }
         Release-ComObject $wbVerify
     }
     if ($null -ne $excel2) {
-        try { $excel2.Quit() } catch { }
-        Release-ComObject $excel2
+        Cleanup-Excel $excel2 $excel2Identity
     }
     [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
 

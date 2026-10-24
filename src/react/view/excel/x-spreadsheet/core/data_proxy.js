@@ -5,7 +5,12 @@ import Scroll from './scroll';
 import History from './history';
 import Clipboard from './clipboard';
 import { formatTsvRows, parseTsvRows } from './clipboard_text';
-import { formatHtmlClipboard, parseHtmlClipboard } from './clipboard_html';
+import {
+  formatHtmlClipboard,
+  HtmlClipboardLimitError,
+  isHtmlClipboardDestinationInBounds,
+  parseHtmlClipboard,
+} from './clipboard_html';
 import AutoFilter from './auto_filter';
 import { Merges } from './merge';
 import helper from './helper';
@@ -747,14 +752,31 @@ export default class DataProxy {
   }
 
   pasteFromHtml(html) {
-    const parsed = parseHtmlClipboard(html);
-    if (!parsed || parsed.rows.length <= 0) return false;
+    let parsed;
+    try {
+      parsed = parseHtmlClipboard(html);
+    } catch (error) {
+      if (error instanceof HtmlClipboardLimitError) return 'rejected';
+      throw error;
+    }
+    if (!parsed || parsed.rows.length <= 0) return 'unsupported';
     const { rows, selector } = this;
+    const { sri, sci } = selector.range;
+    if (!isHtmlClipboardDestinationInBounds(
+      sri,
+      sci,
+      parsed.height,
+      parsed.width,
+    )) {
+      return 'rejected';
+    }
     this.changeData(() => {
-      const { sri, sci } = selector.range;
-      const height = parsed.rows.length;
-      const width = Math.max(...parsed.rows.map(row => row.length));
-      const pasteRange = new CellRange(sri, sci, sri + height - 1, sci + width - 1);
+      const pasteRange = new CellRange(
+        sri,
+        sci,
+        sri + parsed.height - 1,
+        sci + parsed.width - 1,
+      );
       this.merges.deleteWithin(pasteRange);
       pasteRange.each((ri, ci) => {
         rows.deleteCell(getDataRowIndex(this, ri), ci, 'merge');
@@ -786,7 +808,7 @@ export default class DataProxy {
       });
       this.revalidateAll();
     });
-    return true;
+    return 'pasted';
   }
 
   autofill(cellRange, what, error = () => {}) {

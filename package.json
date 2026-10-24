@@ -1,7 +1,7 @@
 {
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
-  "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
+  "description": "Edit portable spreadsheets in VS Code on Linux and Windows, with native Excel and VBA tools on Windows.",
   "version": "0.6.0",
   "publisher": "steph-tools",
   "preview": true,
@@ -66,76 +66,88 @@
     "onLanguageModelTool:excel_ai_vba_writeModule",
     "onLanguageModelTool:excel_ai_vba_designWorkbook",
     "onLanguageModelTool:excel_ai_workbook_designObjects",
-    "workspaceContains:.excel-ai-vba-studio-project.json"
+    "workspaceContains:.excel-ai-vba-studio-project.json",
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
+        "command": "excelAiVbaStudio.newWorkbook",
+        "title": "Excel AI & VBA Studio : Nouveau classeur",
+        "icon": "$(new-file)"
+      },
+      {
         "command": "excelAiVbaStudio.exportWorkbook",
         "title": "Excel AI & VBA Studio : Exporter le contexte du classeur",
         "icon": "$(sparkle-filled)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        "enablement": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv')"
       },
       {
         "command": "excelAiVbaStudio.copyWorkbookContext",
         "title": "Excel AI & VBA Studio : Exporter et copier le contexte",
         "icon": "$(copy)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+        "enablement": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv')"
       },
       {
         "command": "excelAiVbaStudio.openWorkbookContext",
         "title": "Excel AI & VBA Studio : Ouvrir le dernier contexte exporté",
-        "icon": "$(book-open)"
+        "icon": "$(book-open)",
+        "enablement": "excelAiVbaStudio.nativeExcel"
       },
       {
         "command": "excelAiVbaStudio.copyGeneratedContext",
         "title": "Excel AI & VBA Studio : Copier le dernier contexte exporté",
-        "icon": "$(clippy)"
+        "icon": "$(clippy)",
+        "enablement": "excelAiVbaStudio.nativeExcel"
       },
       {
         "command": "excelAiVbaStudio.openExcel",
         "title": "Excel AI & VBA Studio : Ouvrir le classeur dans Microsoft Excel",
-        "icon": "$(file)"
+        "icon": "$(file)",
+        "enablement": "excelAiVbaStudio.nativeExcel"
       },
       {
         "command": "excelAiVbaStudio.openVbe",
         "title": "Excel AI & VBA Studio : Ouvrir le VBE natif d’Excel",
-        "icon": "$(window)"
+        "icon": "$(window)",
+        "enablement": "excelAiVbaStudio.nativeExcel"
       },
       {
         "command": "excelAiVbaStudio.openSecurityCenter",
         "title": "Excel AI & VBA Studio : Ouvrir le Centre de sécurité",
         "icon": "$(shield)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        "enablement": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
       },
       {
         "command": "excelAiVbaStudio.openVbaDeveloper",
         "title": "Excel AI & VBA Studio : Ouvrir le studio VBA dans VS Code",
         "icon": "$(code)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        "enablement": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
       },
       {
         "command": "excelAiVbaStudio.openVbaExplorer",
         "title": "Excel AI & VBA Studio : Ouvrir le projet VBA dans VS Code",
         "icon": "$(folder-opened)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        "enablement": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
       },
       {
         "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
         "title": "Excel AI & VBA Studio : Analyser le classeur et le VBA avec Copilot",
         "icon": "$(copilot)",
-        "enablement": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        "enablement": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
       },
       {
         "command": "excelAiVbaStudio.refreshExplorer",
         "title": "Excel AI & VBA Studio : Actualiser l’explorateur",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "excelAiVbaStudio.nativeExcel"
       },
       {
         "command": "excelAiVbaStudio.cleanExports",
         "title": "Excel AI & VBA Studio : Nettoyer les exports générés",
-        "icon": "$(trash)"
+        "icon": "$(trash)",
+        "enablement": "excelAiVbaStudio.nativeExcel"
       }
     ],
     "languageModelTools": [
@@ -169,7 +181,8 @@
             }
           },
           "additionalProperties": false
-        }
+        },
+        "when": "excelAiVbaStudio.nativeExcel"
       },
       {
         "name": "excel_ai_vba_writeModule",
@@ -200,7 +213,8 @@
             "source"
           ],
           "additionalProperties": false
-        }
+        },
+        "when": "excelAiVbaStudio.nativeExcel"
       },
       {
         "name": "excel_ai_vba_designWorkbook",
@@ -758,7 +772,8 @@
             "operations"
           ],
           "additionalProperties": false
-        }
+        },
+        "when": "excelAiVbaStudio.nativeExcel"
       },
       {
         "name": "excel_ai_workbook_designObjects",
@@ -1610,14 +1625,15 @@
             "operations"
           ],
           "additionalProperties": false
-        }
+        },
+        "when": "excelAiVbaStudio.nativeExcel"
       }
     ],
     "keybindings": [
       {
         "command": "excelAiVbaStudio.openVbaDeveloper",
         "key": "ctrl+alt+f11",
-        "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+        "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
       }
     ],
     "menus": {
@@ -1625,76 +1641,126 @@
         {
           "command": "excelAiVbaStudio.exportWorkbook",
           "group": "navigation@1",
-          "when": "view == excelAiVbaExplorer"
+          "when": "excelAiVbaStudio.nativeExcel && (view == excelAiVbaExplorer)"
         },
         {
           "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "navigation@2",
-          "when": "view == excelAiVbaExplorer"
+          "when": "excelAiVbaStudio.nativeExcel && (view == excelAiVbaExplorer)"
         },
         {
           "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "navigation@3",
-          "when": "view == excelAiVbaExplorer"
+          "when": "excelAiVbaStudio.nativeExcel && (view == excelAiVbaExplorer)"
         },
         {
           "command": "excelAiVbaStudio.openSecurityCenter",
           "group": "navigation@4",
-          "when": "view == excelAiVbaExplorer"
+          "when": "excelAiVbaStudio.nativeExcel && (view == excelAiVbaExplorer)"
         },
         {
           "command": "excelAiVbaStudio.refreshExplorer",
           "group": "navigation@5",
-          "when": "view == excelAiVbaExplorer"
+          "when": "excelAiVbaStudio.nativeExcel && (view == excelAiVbaExplorer)"
         }
       ],
       "editor/title": [
         {
           "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "navigation@1",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
         },
         {
           "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "navigation@2",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
         },
         {
           "command": "excelAiVbaStudio.exportWorkbook",
           "group": "navigation@3",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv')"
         },
         {
           "command": "excelAiVbaStudio.openSecurityCenter",
           "group": "navigation@4",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
         }
       ],
       "explorer/context": [
         {
           "command": "excelAiVbaStudio.openVbaExplorer",
           "group": "excelAiVbaStudio@1",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
         },
         {
           "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
           "group": "excelAiVbaStudio@2",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
         },
         {
           "command": "excelAiVbaStudio.exportWorkbook",
           "group": "excelAiVbaStudio@3",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv')"
         },
         {
           "command": "excelAiVbaStudio.copyWorkbookContext",
           "group": "excelAiVbaStudio@4",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb' || resourceExtname == '.csv' || resourceExtname == '.tsv')"
         },
         {
           "command": "excelAiVbaStudio.openSecurityCenter",
           "group": "excelAiVbaStudio@5",
-          "when": "resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb'"
+          "when": "excelAiVbaStudio.nativeExcel && (resourceExtname == '.xlsx' || resourceExtname == '.xlsm' || resourceExtname == '.xls' || resourceExtname == '.xlsb')"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "excelAiVbaStudio.exportWorkbook",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.copyWorkbookContext",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.openWorkbookContext",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.copyGeneratedContext",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.openExcel",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbe",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.openSecurityCenter",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbaDeveloper",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.openVbaExplorer",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.askCopilotAboutWorkbook",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.refreshExplorer",
+          "when": "excelAiVbaStudio.nativeExcel"
+        },
+        {
+          "command": "excelAiVbaStudio.cleanExports",
+          "when": "excelAiVbaStudio.nativeExcel"
         }
       ]
     },
@@ -1703,12 +1769,14 @@
         {
           "id": "excelAiVbaExplorer",
           "name": "Projet Excel & VBA",
-          "visibility": "visible"
+          "visibility": "visible",
+          "when": "excelAiVbaStudio.nativeExcel"
         },
         {
           "id": "excelAiVbaProperties",
           "name": "Propriétés VBA",
-          "visibility": "visible"
+          "visibility": "visible",
+          "when": "excelAiVbaStudio.nativeExcel"
         }
       ]
     },
@@ -1787,6 +1855,7 @@
     "validate:vba-designer": "node tools/validate-vba-designer.mjs",
     "validate:enterprise-security": "node tools/validate-enterprise-security.mjs",
     "test:package-signatures": "node test/package-signature-lock.mjs",
+    "test:security-remediations": "node test/ooxml-namespace-security-regression.mjs && node test/clipboard-html-security-regression.mjs && node test/run-native-zip-budget-regression.mjs",
     "test:xlm-preflight": "node test/xlm-automation-preflight.mjs",
     "test:codeql-security": "node test/codeql-http-security-regression.mjs && node test/codeql-ui-core-security-regression.mjs && node test/pretty-data-security-regression.mjs",
     "test:vba-bootstrap": "node test/vba-bootstrap-integration.mjs",
@@ -1794,7 +1863,7 @@
     "test:vba-designer": "node test/vba-designer-ads-security.mjs && node test/vba-designer-integration.mjs",
     "test:vba-inventory": "node test/vba-userform-inventory.mjs",
     "test:vba-interactions": "node test/vba-interaction-graph.mjs",
-    "test:vba-atomic": "python test/atomic-writeback-regression.py",
+    "test:vba-atomic": "node test/run-atomic-writeback-regression.mjs",
     "test:xlsx-prefixes": "node test/xlsx-namespace-prefix-regression.mjs",
     "test:native-diff": "node test/native-edit-regression.mjs",
     "test:workbook-objects": "node test/native-security-preflight.mjs && node test/chart-catalog.mjs && node test/chart-designer-model.mjs && node test/ooxml-zip-preflight.mjs && node test/office-file-open-bounds.mjs && node test/chart-ooxml-reader.mjs && node test/workbook-object-tool-input.mjs && node test/table-roundtrip.mjs && node test/office-payload-transport.mjs && node test/native-bridge-object-validation.mjs && node test/native-series-formula-parser.mjs && node test/workbook-object-security-regression.mjs",
@@ -1804,10 +1873,13 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:package-signatures && npm run test:xlm-preflight && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:workbook-objects && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:security-remediations && npm run test:package-signatures && npm run test:xlm-preflight && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:workbook-objects && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run test:portable && npm run test:automation-safety && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
-    "release:prepare": "node tools/prepare-release.mjs"
+    "release:prepare": "node tools/prepare-release.mjs",
+    "test:portable": "node test/portable-editor.mjs && node test/portable-file-save.mjs",
+    "test:automation-safety": "node test/excel-automation-safety.mjs",
+    "test:extension-host": "node test/run-extension-host.mjs"
   },
   "devDependencies": {
     "@ant-design/icons": "^5.3.5",
@@ -1818,6 +1890,7 @@
     "@types/vscode": "^1.95.0",
     "@vitejs/plugin-react": "^6.0.5",
     "@vscode/codicons": "^0.0.45",
+    "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "^3.9.1",
     "antd": "^5.15.4",
     "buffer": "^6.0.3",
@@ -1825,6 +1898,7 @@
     "iconv-lite": "^0.7.3",
     "jszip": "^3.10.1",
     "less": "^4.8.1",
+    "playwright-core": "1.64.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^5.9.3",

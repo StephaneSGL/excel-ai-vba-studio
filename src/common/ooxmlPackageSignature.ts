@@ -499,7 +499,20 @@ function parseXmlElements(value: Buffer): XmlElement[] {
         return fail('DTD and entity declarations are forbidden in package metadata');
     }
     const elements: XmlElement[] = [];
-    const stack: Array<{ qName: string; namespaces: Map<string, string> }> = [];
+    const namespaces = new Map<string, string>();
+    const stack: Array<{
+        qName: string;
+        namespaceChanges: Array<{ prefix: string; previousValue: string | undefined }>;
+    }> = [];
+    const restoreNamespaces = (
+        namespaceChanges: Array<{ prefix: string; previousValue: string | undefined }>,
+    ): void => {
+        for (let index = namespaceChanges.length - 1; index >= 0; index -= 1) {
+            const { prefix, previousValue } = namespaceChanges[index];
+            if (previousValue === undefined) namespaces.delete(prefix);
+            else namespaces.set(prefix, previousValue);
+        }
+    };
     let cursor = 0;
     let rootClosed = false;
     while (cursor < xml.length) {
@@ -537,6 +550,7 @@ function parseXmlElements(value: Buffer): XmlElement[] {
             }
             const current = stack.pop();
             if (!current || current.qName !== qName) return fail('XML tags are not balanced');
+            restoreNamespaces(current.namespaceChanges);
             if (stack.length === 0) rootClosed = true;
             cursor = close + 1;
             continue;
@@ -547,20 +561,31 @@ function parseXmlElements(value: Buffer): XmlElement[] {
         if (!nameMatch) return fail('XML start tag is malformed');
         if (rootClosed && stack.length === 0) return fail('XML contains multiple root elements');
         const qName = nameMatch[1];
-        let attributeText = token.slice(nameMatch[0].length);
+        const attributeText = token.slice(nameMatch[0].length);
+        const attributePattern = /\s+([A-Za-z_][A-Za-z0-9_.:-]*)\s*=\s*(["'])([\s\S]*?)\2/y;
+        let attributeCursor = 0;
         const rawAttributes = new Map<string, string>();
-        while (attributeText.trim() !== '') {
-            const attributeMatch = /^\s+([A-Za-z_][A-Za-z0-9_.:-]*)\s*=\s*(["'])([\s\S]*?)\2/.exec(attributeText);
-            if (!attributeMatch) return fail('XML attribute syntax is malformed');
+        while (attributeCursor < attributeText.length) {
+            attributePattern.lastIndex = attributeCursor;
+            const attributeMatch = attributePattern.exec(attributeText);
+            if (!attributeMatch) {
+                if (/^\s*$/.test(attributeText.slice(attributeCursor))) break;
+                return fail('XML attribute syntax is malformed');
+            }
             const attributeName = attributeMatch[1];
             if (rawAttributes.has(attributeName)) return fail('XML contains duplicate attributes');
             rawAttributes.set(attributeName, decodeXmlAttribute(attributeMatch[3]));
-            attributeText = attributeText.slice(attributeMatch[0].length);
+            attributeCursor = attributePattern.lastIndex;
         }
-        const namespaces = new Map(stack.at(-1)?.namespaces ?? []);
+        const namespaceChanges: Array<{ prefix: string; previousValue: string | undefined }> = [];
         for (const [attributeName, attributeValue] of rawAttributes) {
-            if (attributeName === 'xmlns') namespaces.set('', attributeValue);
-            else if (attributeName.startsWith('xmlns:')) namespaces.set(attributeName.slice(6), attributeValue);
+            let prefix: string | undefined;
+            if (attributeName === 'xmlns') prefix = '';
+            else if (attributeName.startsWith('xmlns:')) prefix = attributeName.slice(6);
+            if (prefix !== undefined) {
+                namespaceChanges.push({ prefix, previousValue: namespaces.get(prefix) });
+                namespaces.set(prefix, attributeValue);
+            }
         }
         const { prefix, localName } = splitQualifiedName(qName);
         const namespaceUri = namespaces.get(prefix);
@@ -579,8 +604,11 @@ function parseXmlElements(value: Buffer): XmlElement[] {
             attributes.set(attributeQName.localName, attributeValue);
         }
         elements.push({ localName, namespaceUri, attributes, depth: stack.length });
-        if (!selfClosing) stack.push({ qName, namespaces });
-        else if (stack.length === 0) rootClosed = true;
+        if (!selfClosing) stack.push({ qName, namespaceChanges });
+        else {
+            restoreNamespaces(namespaceChanges);
+            if (stack.length === 0) rootClosed = true;
+        }
         cursor = close + 1;
     }
     if (stack.length !== 0 || elements.length === 0 || !rootClosed) {
@@ -929,6 +957,168 @@ export async function hasOoxmlPackageSignatureBytes(
 ): Promise<boolean> {
     if (!isOoxmlPackagePath(fileName)) return false;
     return inspectZipPackageSignature(await openZipPackage(createBufferReader(bytes)));
+}
+
+const PORTABLE_CONTENT_TYPES = new Set([
+    'application/vnd.openxmlformats-package.relationships+xml',
+    'application/xml',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml',
+    'application/vnd.openxmlformats-officedocument.theme+xml',
+    'application/vnd.openxmlformats-package.core-properties+xml',
+    'application/vnd.openxmlformats-officedocument.extended-properties+xml',
+]);
+
+const PORTABLE_RELATIONSHIPS = new Set([
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet',
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles',
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings',
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme',
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain',
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties',
+    'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties',
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
+]);
+
+/** Deliberately excludes opaque objects that the fresh-workbook writer would drop. */
+function isPortablePartName(partName: string): boolean {
+    return /^\/(?:\[content_types\]\.xml|_rels\/\.rels|docprops\/(?:app|core)\.xml|xl\/(?:workbook|styles|sharedstrings|calcchain)\.xml|xl\/theme\/theme\d+\.xml|xl\/worksheets\/sheet\d+\.xml|xl\/_rels\/workbook\.xml\.rels|xl\/worksheets\/_rels\/sheet\d+\.xml\.rels)$/i.test(partName);
+}
+
+/** Inspect XML tokens without constructing a DOM or expanding entities. */
+function portableXmlPreservationIssue(xml: string, workbook: boolean): string | undefined {
+    const blockedElements = new Set([
+        'extLst', 'AlternateContent', 'definedName', 'externalReference', 'pivotCache',
+        'customWorkbookView', 'customSheetView', 'workbookProtection', 'fileSharing',
+        'oleObject', 'control', 'drawing', 'legacyDrawing', 'legacyDrawingHF',
+        'tablePart', 'pivotTablePart', 'webPublishItem', 'smartTag', 'customProperty',
+        'cellWatch', 'scenario', 'sheetCalcPr', 'sheetPr', 'headerFooter',
+        'r', 'rPh', 'phoneticPr', 'rowBreaks', 'colBreaks', 'filterColumn', 'sortState',
+    ]);
+    let cursor = 0;
+    let count = 0;
+    const stack: string[] = [];
+    let roots = 0;
+    while (cursor < xml.length) {
+        const open = xml.indexOf('<', cursor);
+        if (open < 0) break;
+        if (++count > 1_000_000) return 'XML element inspection limit exceeded';
+        if (xml.startsWith('<!--', open)) {
+            const close = xml.indexOf('-->', open + 4);
+            if (close < 0) return 'Malformed XML comment';
+            cursor = close + 3;
+            continue;
+        }
+        if (xml.startsWith('<?', open)) {
+            const close = xml.indexOf('?>', open + 2);
+            if (close < 0) return 'Malformed XML declaration';
+            cursor = close + 2;
+            continue;
+        }
+        if (xml.startsWith('<!', open)) return 'Unsupported XML declaration';
+        let quote = '';
+        let close = open + 1;
+        for (; close < xml.length; close += 1) {
+            const character = xml[close];
+            if (quote) {
+                if (character === quote) quote = '';
+            } else if (character === '"' || character === "'") quote = character;
+            else if (character === '>') break;
+            else if (character === '<') return 'Malformed XML element';
+        }
+        if (close === xml.length) return 'Unterminated XML element';
+        const token = xml.slice(open + 1, close);
+        cursor = close + 1;
+        if (token.startsWith('/')) {
+            if (stack.pop() !== token.slice(1).trim()) return 'Unbalanced XML element';
+            continue;
+        }
+        const name = /^([A-Za-z_][A-Za-z0-9_.:-]*)/.exec(token);
+        if (!name) return 'Malformed XML name';
+        const localName = splitQualifiedName(name[1]).localName;
+        if (blockedElements.has(localName)) return `Requires native preservation: ${localName}`;
+        const selfClosing = /\/\s*$/.test(token);
+        const attributes = selfClosing ? token.replace(/\/\s*$/, '') : token;
+        const pattern = /\s+([A-Za-z_][A-Za-z0-9_.:-]*)\s*=\s*(["'])([\s\S]*?)\2/y;
+        let offset = name[0].length;
+        const seen = new Set<string>();
+        while (offset < attributes.length) {
+            pattern.lastIndex = offset;
+            const match = pattern.exec(attributes);
+            if (!match) {
+                if (attributes.slice(offset).trim()) return 'Malformed XML attributes';
+                break;
+            }
+            offset = pattern.lastIndex;
+            if (seen.has(match[1])) return 'Duplicate XML attribute';
+            seen.add(match[1]);
+            const attribute = splitQualifiedName(match[1]).localName;
+            const value = decodeXmlAttribute(match[3]);
+            if (workbook && localName === 'workbookPr' && attribute === 'date1904' && !['0', 'false'].includes(value)) {
+                return 'The 1904 date system requires native preservation';
+            }
+            if (localName === 'sheet' && attribute === 'state' && value !== 'visible') {
+                return 'Hidden worksheet state requires native preservation';
+            }
+            if (['row', 'col'].includes(localName) && ['hidden', 'collapsed', 'outlineLevel'].includes(attribute) && !['0', 'false'].includes(value)) {
+                return 'Hidden rows/columns or outlines require native preservation';
+            }
+            if (localName === 'f' && attribute === 't' && value !== 'normal') {
+                return 'Array or shared formulas require native preservation';
+            }
+            if (localName === 'c' && ['cm', 'vm'].includes(attribute)) return 'Rich cell metadata requires native preservation';
+        }
+        if (stack.length === 0 && ++roots !== 1) return 'Multiple XML roots';
+        if (!selfClosing) {
+            if (stack.length >= 128) return 'XML nesting inspection limit exceeded';
+            stack.push(name[1]);
+        }
+    }
+    return stack.length || roots !== 1 ? 'Incomplete XML document' : undefined;
+}
+
+/**
+ * Read-only eligibility for the portable, reconstructing XLSX writer.
+ * All parts and relationships are examined, including orphaned/renamed parts.
+ * Unknown features fail closed; this does not run Excel or evaluate formulas.
+ */
+export async function getPortableXlsxPreservationIssue(bytes: Uint8Array): Promise<string | undefined> {
+    const zip = await openZipPackage(createBufferReader(bytes));
+    if (await inspectZipPackageSignature(zip)) return 'Signed Office package';
+    const types = await parseContentTypes(zip);
+    let expandedBytes = 0;
+    let worksheetCount = 0;
+    if (!getEntry(zip, '/xl/workbook.xml')) return 'Unsupported workbook part location';
+    for (const entry of zip.entries.values()) {
+        const name = lowerAscii(entry.partName);
+        if (!isPortablePartName(entry.partName)) return `Requires native preservation: ${entry.partName}`;
+        const contentType = effectiveContentType(types, entry.partName);
+        if (name !== '/[content_types].xml' && (!contentType || !PORTABLE_CONTENT_TYPES.has(contentType))) {
+            return `Unsupported content type: ${entry.partName}`;
+        }
+        expandedBytes += entry.uncompressedSize;
+        if (expandedBytes > 64 * 1024 * 1024) return 'Portable inspection exceeds 64 MiB';
+        if (name.endsWith('.rels')) {
+            for (const relationship of await parseRelationships(zip, entry.partName)) {
+                if (!PORTABLE_RELATIONSHIPS.has(relationship.type)) return 'Relationship requires native preservation';
+                if (!isInternalRelationship(relationship) && !relationship.type.endsWith('/hyperlink')) {
+                    return 'External workbook data requires native preservation';
+                }
+            }
+        }
+        const isWorksheet = /^\/xl\/worksheets\/sheet\d+\.xml$/.test(name);
+        if (name === '/xl/workbook.xml' || name === '/xl/sharedstrings.xml' || isWorksheet) {
+            if (isWorksheet) worksheetCount += 1;
+            const xml = decodeOpcXml(await readEntry(zip, entry, 16 * 1024 * 1024));
+            const issue = portableXmlPreservationIssue(xml, name === '/xl/workbook.xml');
+            if (issue) return issue;
+        }
+    }
+    return worksheetCount > 0 ? undefined : 'No supported worksheet';
 }
 
 export async function hasOoxmlPackageSignature(filePath: string): Promise<boolean> {

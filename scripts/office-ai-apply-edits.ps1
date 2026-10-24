@@ -66,6 +66,7 @@ $script:NativeOverlapChartTypes = @(
 )
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 . (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
+. (Join-Path $PSScriptRoot 'excel-automation-safety.ps1')
 
 function Release-ComObject {
     param([AllowNull()][object]$Value)
@@ -5500,6 +5501,7 @@ $excel = $null
 $workbooks = $null
 $workbook = $null
 $blankWorkbook = $null
+$ownedExcelProcess = $null
 $sourceLock = $null
 $backupPath = $null
 $sourceNamedStreamState = @()
@@ -5570,12 +5572,17 @@ Assert-OoxmlPackageHasNoXlmMacroSheets $workPath
     }
 
     try {
+        $preexistingExcelProcessIds = @(Get-ExcelAutomationProcessIds)
+        $excelCreationStartedUtcTicks = [DateTime]::UtcNow.Ticks
         $excel = New-Object -ComObject Excel.Application
-        $ownedExcelProcess = Get-ExcelProcessIdentity $excel
+        $candidateExcelProcess = Get-ExcelProcessIdentity $excel
+        $ownedExcelProcess = Get-ExcelAutomationProcessIdentity `
+            $candidateExcelProcess.ProcessId $preexistingExcelProcessIds $excelCreationStartedUtcTicks
         [Console]::Out.WriteLine(
             'OWNED_EXCEL_PID|' + $ownedExcelProcess.ProcessId + '|' +
             $ownedExcelProcess.StartTimeUtcTicks
         )
+        [Console]::Out.Flush()
         $excel.Visible = $false
         $excel.DisplayAlerts = $false
         $excel.EnableEvents = $false
@@ -5583,10 +5590,13 @@ Assert-OoxmlPackageHasNoXlmMacroSheets $workPath
         $excel.AskToUpdateLinks = $false
         $excel.AutomationSecurity = 3
         $workbooks = $excel.Workbooks
-        $blankWorkbook = $workbooks.Add()
+        Set-ExcelAutomationSafety $excel -BeforeGuard
+        $blankWorkbook = $workbooks.Add(-4167)
         $excel.Calculation = -4135
         $excel.CalculateBeforeSave = $false
+        Set-ExcelAutomationSafety $excel
         $workbook = $workbooks.Open($workPath, 0, $false)
+        Assert-ExcelAutomationSafety $excel
 
         $targetedWorkbookObjects = $null
         $untargetedWorkbookObjectSnapshot = $null
@@ -5618,7 +5628,9 @@ Assert-OoxmlPackageHasNoXlmMacroSheets $workPath
             $workbook.Close($false)
             Release-ComObject $workbook
             $workbook = $null
+            Set-ExcelAutomationSafety $excel
             $workbook = $workbooks.Open($workPath, 0, $true)
+            Assert-ExcelAutomationSafety $excel
             Assert-NativeWorkbookObjectOperations $workbook $operations
             $reopenedPreservedChartSnapshot = Get-NativePreservedChartSnapshot `
                 $workbook `
@@ -5662,13 +5674,14 @@ Assert-OoxmlPackageHasNoXlmMacroSheets $workPath
         $blankWorkbook = $null
         Release-ComObject $workbooks
         $workbooks = $null
-        if ($null -ne $excel) {
+        if ($null -ne $excel -and $null -ne $ownedExcelProcess) {
             try { $excel.Quit() } catch { }
         }
         Release-ComObject $excel
         $excel = $null
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
+        Stop-ExcelAutomationProcess $ownedExcelProcess
     }
 
     $currentSourceNamedStreamState = @(Get-NamedStreamState $workbookFullPath)
@@ -5965,7 +5978,7 @@ finally {
     }
     Release-ComObject $blankWorkbook
     Release-ComObject $workbooks
-    if ($null -ne $excel) {
+    if ($null -ne $excel -and $null -ne $ownedExcelProcess) {
         try { $excel.Quit() } catch { }
     }
     Release-ComObject $excel
@@ -5979,4 +5992,5 @@ finally {
     }
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
+    Stop-ExcelAutomationProcess $ownedExcelProcess
 }

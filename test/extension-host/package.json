@@ -1,0 +1,8 @@
+{
+  "name": "excel-ai-vba-studio-smoke",
+  "publisher": "local-tests",
+  "version": "0.0.0",
+  "engines": { "vscode": ">=1.95.0" },
+  "main": "./fixture-extension.cjs",
+  "activationEvents": ["*"]
+}

@@ -3,7 +3,10 @@ import type { NativeExcelEditOperation } from '@/common/nativeExcelEdits';
 import {
     OOXML_PACKAGE_SIGNATURE_VERIFICATION_BLOCKED_MESSAGE,
     OOXML_PACKAGE_SIGNATURE_WRITE_BLOCKED_MESSAGE,
+    getPortableXlsxPreservationIssue,
 } from '@/common/ooxmlPackageSignature';
+import { getPlatformCapabilities, NATIVE_EXCEL_UNAVAILABLE_MESSAGE, PORTABLE_PRESERVATION_MESSAGE } from '@/common/platformCapabilities';
+import { createPortableFile, savePortableFile } from '@/provider/portableFileSave';
 import { parseSafeExternalUri } from '@/common/webviewUri';
 import { applyNativeExcelEdits } from '@/provider/nativeExcelBridge';
 import {
@@ -15,6 +18,7 @@ import {
     isVirtualUri,
     requiresNativeExcelForEditing,
     supportsNativeMacroEditing,
+    readUriBytes,
     type EmbeddedSpreadsheetReadOnlyReason,
 } from '@/provider/handlers/officeContent';
 import { createHash, randomUUID } from 'crypto';
@@ -74,16 +78,22 @@ function setDirty(handler: Handler, uri: Uri, dirty: boolean): void {
 
 function toBytes(content: unknown): Uint8Array {
     if (Array.isArray(content)) {
+        if (content.length > 128 * 1024 * 1024 || content.some(value => !Number.isInteger(value) || value < 0 || value > 255)) {
+            throw new Error('Invalid or oversized spreadsheet save payload.');
+        }
         return new Uint8Array(content);
     }
     if (typeof content === 'string') {
-        return new TextEncoder().encode(content);
+        if (content.length > 128 * 1024 * 1024) throw new Error('Oversized spreadsheet save payload.');
+        const bytes = new TextEncoder().encode(content);
+        if (bytes.length > 128 * 1024 * 1024) throw new Error('Oversized spreadsheet save payload.');
+        return bytes;
     }
     throw new Error('Invalid spreadsheet save payload.');
 }
 
 function supportsNativeWorkbookObjectEditing(uri: Uri): boolean {
-    return uri.scheme === 'file' && ['.xlsx', '.xlsm'].includes(
+    return getPlatformCapabilities().nativeExcel && uri.scheme === 'file' && ['.xlsx', '.xlsm'].includes(
         extname(uri.fsPath).toLowerCase()
     );
 }
@@ -130,6 +140,8 @@ export function handleCommonEvent(
     lifecycle?: OfficeDocumentLifecycle
 ): void {
     let nativeLoadGeneration: string | undefined;
+    let loadedSourceSha256: string | undefined;
+    const nativeExcel = getPlatformCapabilities().nativeExcel;
     let sendQueue: Promise<void> = Promise.resolve();
     let restoredSheets = lifecycle?.restoredSheets;
     let restoredSourceSha256 = lifecycle?.restoredSourceSha256;
@@ -174,6 +186,30 @@ export function handleCommonEvent(
         return state;
     };
 
+    const assertPortableSourceUnchanged = async (): Promise<void> => {
+        if (!loadedSourceSha256) {
+            throw new Error('Reopen the workbook before saving: its source snapshot is missing.');
+        }
+        const current = createHash('sha256').update(await readUriBytes(uri)).digest('hex');
+        if (current !== loadedSourceSha256) {
+            throw new Error('The workbook changed on disk. Reopen it before saving to avoid overwriting newer data.');
+        }
+    };
+
+    const assertPortableOutput = async (bytes: Uint8Array, extension: string): Promise<void> => {
+        if (!['.xlsx', '.csv', '.tsv', '.ods'].includes(extension)) {
+            throw new Error('This format cannot be written by the portable editor.');
+        }
+        if (extension === '.xlsx' && await getPortableXlsxPreservationIssue(bytes)) {
+            throw new Error(PORTABLE_PRESERVATION_MESSAGE);
+        }
+    };
+
+    const runNativeCommand = (command: string, argument: unknown = uri) => {
+        if (!nativeExcel) throw new Error(NATIVE_EXCEL_UNAVAILABLE_MESSAGE);
+        return vscode.commands.executeCommand(command, argument);
+    };
+
     const updateDirty = (dirty: boolean): void => {
         hasUnsavedChanges = dirty;
         setDirty(handler, uri, dirty);
@@ -190,7 +226,7 @@ export function handleCommonEvent(
             await refreshReadOnlyState();
             if (isVirtualUri(uri)) {
                 nativeLoadGeneration = undefined;
-                await emitVirtualOfficeOpen(handler, uri, {
+                loadedSourceSha256 = await emitVirtualOfficeOpen(handler, uri, {
                     backupSheets: restoredSheets,
                     backupSourceSha256: restoredSourceSha256,
                 });
@@ -201,7 +237,7 @@ export function handleCommonEvent(
             nativeLoadGeneration = supportsNativeWorkbookObjectEditing(uri)
                 ? randomUUID()
                 : undefined;
-            await emitFileOfficeOpen(handler, uri, {
+            loadedSourceSha256 = await emitFileOfficeOpen(handler, uri, {
                 nativeLoadGeneration,
                 backupSheets: restoredSheets,
                 backupSourceSha256: restoredSourceSha256,
@@ -405,6 +441,10 @@ export function handleCommonEvent(
             return externalChangePrompt;
         })
         .on('change', () => {
+            if (readOnlyReason === 'portable-preservation') {
+                handler.emit('writeBlocked', { message: PORTABLE_PRESERVATION_MESSAGE });
+                return;
+            }
             if (readOnlyReason === 'macro-preservation') {
                 notifyMacroWriteBlocked(handler);
                 return;
@@ -421,6 +461,7 @@ export function handleCommonEvent(
         .on('save', async (content: unknown) => {
             try {
                 const state = await refreshReadOnlyState();
+                if (state.readOnlyReason === 'portable-preservation') throw new Error(PORTABLE_PRESERVATION_MESSAGE);
                 if (state.readOnlyReason === 'macro-preservation') {
                     notifyMacroWriteBlocked(handler);
                     throw new Error(MACRO_WRITE_BLOCKED_MESSAGE);
@@ -446,8 +487,15 @@ export function handleCommonEvent(
                     throw new Error('Read-only spreadsheets must be saved to a new file.');
                 }
                 await assertUriOoxmlPackageUnsignedForMutation(uri);
+                await assertPortableSourceUnchanged();
+                await assertPortableOutput(bytes, extname(uri.fsPath).toLowerCase());
                 fileSaveTimes[uri.toString()] = Date.now();
-                await workspace.fs.writeFile(uri, bytes);
+                if (uri.scheme === 'file' && process.platform !== 'win32') {
+                    loadedSourceSha256 = await savePortableFile(uri.fsPath, bytes, loadedSourceSha256!);
+                } else {
+                    await workspace.fs.writeFile(uri, bytes);
+                    loadedSourceSha256 = createHash('sha256').update(bytes).digest('hex');
+                }
                 fileSaveTimes[uri.toString()] = Date.now();
                 completeSave();
                 handler.emit('saveDone', {
@@ -468,6 +516,7 @@ export function handleCommonEvent(
         .on('saveAs', async (payload: { content: number[]; ext?: string }) => {
             try {
                 const state = await refreshReadOnlyState();
+                if (state.readOnlyReason === 'portable-preservation') throw new Error(PORTABLE_PRESERVATION_MESSAGE);
                 if (state.readOnlyReason === 'macro-preservation') {
                     notifyMacroWriteBlocked(handler);
                     throw new Error(MACRO_WRITE_BLOCKED_MESSAGE);
@@ -494,7 +543,7 @@ export function handleCommonEvent(
                     throw new Error(`Unsupported spreadsheet save format: ${ext}`);
                 }
 
-                const bytes = new Uint8Array(payload.content);
+                const bytes = toBytes(payload.content);
                 const providerSaveAs = Boolean(pendingSaveAs);
                 let target = pendingSaveAs?.destination;
                 if (!target) {
@@ -518,12 +567,26 @@ export function handleCommonEvent(
                 }
 
                 await assertUriOoxmlPackageUnsignedForMutation(uri);
+                await assertPortableSourceUnchanged();
+                if (
+                    extname(target.fsPath).toLowerCase() !== `.${ext}`
+                ) {
+                    throw new Error('Save As requires a file matching the selected format.');
+                }
+                await assertPortableOutput(bytes, extname(target.fsPath).toLowerCase());
                 if (target.toString() !== uri.toString()) {
                     await assertExistingUriOoxmlPackageUnsignedForMutation(target);
                 }
 
                 fileSaveTimes[target.toString()] = Date.now();
-                await workspace.fs.writeFile(target, bytes);
+                if (target.scheme === 'file' && target.toString() !== uri.toString()) {
+                    await createPortableFile(target.fsPath, bytes);
+                } else if (target.scheme === 'file' && process.platform !== 'win32') {
+                    loadedSourceSha256 = await savePortableFile(target.fsPath, bytes, loadedSourceSha256!);
+                } else {
+                    await workspace.fs.writeFile(target, bytes);
+                    if (target.toString() === uri.toString()) loadedSourceSha256 = createHash('sha256').update(bytes).digest('hex');
+                }
                 fileSaveTimes[target.toString()] = Date.now();
                 completeSave();
                 handler.emit('saveDone', {
@@ -554,6 +617,7 @@ export function handleCommonEvent(
             nativeLoadGeneration: string;
         }) => {
             try {
+                if (!nativeExcel) throw new Error(NATIVE_EXCEL_UNAVAILABLE_MESSAGE);
                 const state = await refreshReadOnlyState();
                 if (
                     state.readOnlyReason === 'package-signature' ||
@@ -680,32 +744,33 @@ export function handleCommonEvent(
                 });
             }
         })
+        .on('newWorkbook', () => vscode.commands.executeCommand('excelAiVbaStudio.newWorkbook'))
         .on('openVbaDeveloper', () =>
-            vscode.commands.executeCommand(
+            runNativeCommand(
                 'excelAiVbaStudio.openVbaDeveloper',
                 uri
             )
         )
         .on('openExcel', () =>
-            vscode.commands.executeCommand('excelAiVbaStudio.openExcel', uri)
+            runNativeCommand('excelAiVbaStudio.openExcel', uri)
         )
         .on('openVbe', () =>
-            vscode.commands.executeCommand('excelAiVbaStudio.openVbe', uri)
+            runNativeCommand('excelAiVbaStudio.openVbe', uri)
         )
         .on('exportWorkbookContext', () =>
-            vscode.commands.executeCommand(
+            runNativeCommand(
                 'excelAiVbaStudio.exportWorkbook',
                 uri
             )
         )
         .on('openVbaExplorer', () =>
-            vscode.commands.executeCommand(
+            runNativeCommand(
                 'excelAiVbaStudio.openVbaExplorer',
                 uri
             )
         )
         .on('askCopilotAboutWorkbook', (request?: string) =>
-            vscode.commands.executeCommand(
+            runNativeCommand(
                 'excelAiVbaStudio.askCopilotAboutWorkbook',
                 {
                     resourceUri: uri,

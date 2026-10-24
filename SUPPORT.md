@@ -6,15 +6,17 @@ Excel AI & VBA Studio is currently a Preview release.
 
 Please confirm:
 
-1. Windows is x64 and VS Code is version 1.95 or later.
-2. Microsoft Excel desktop is installed when using native Excel, VBA, or context-export commands.
-3. The workbook opens normally in Microsoft Excel.
+1. The operating system is Linux x64 or Windows x64, and VS Code is version 1.95 or later.
+2. The installed VSIX matches the operating system. Linux uses the portable spreadsheet mode; it does not require Microsoft Excel or PowerShell.
+3. On Windows, Microsoft Excel Desktop is installed when using native Excel, VBA, UserForms, tables/charts or context-export commands.
 4. The latest extension version is installed.
-5. The issue also occurs after running **Excel AI & VBA Studio : Actualiser l’explorateur**.
+5. The issue also occurs after reopening the synthetic test workbook. For Windows native tools, also try **Excel AI & VBA Studio : Actualiser l’explorateur**.
+
+Portable mode intentionally opens macro-enabled, signed and unsupported complex workbooks read-only. Include the displayed preservation reason when reporting an unexpected refusal. The extension supplies an Excel-like grid; it does not implement every Excel function, VBA runtime or Office integration on Linux.
 
 ## Information to include
 
-- Extension, VS Code, Windows, and Microsoft Excel versions.
+- Extension, VS Code, operating system and architecture; Microsoft Excel version when using native Windows features.
 - Workbook extension (`.xlsx`, `.xlsm`, `.xls`, `.xlsb`, `.csv`, or `.tsv`).
 - The exact command used and complete error message.
 - Minimal reproduction steps.

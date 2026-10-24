@@ -9,6 +9,22 @@ Excel AI & VBA Studio est actuellement en Preview. Seule la dernière version pu
 | Dernière version publiée | Oui |
 | Versions antérieures | Non |
 
+## Mode tableur portable
+
+La grille de tableur est disponible sous Linux x64 et Windows x64. Le paquet
+Linux exclut les scripts PowerShell et le helper Windows ; les commandes
+COM/VBA, ActiveX, VBE, export IA et Centre de sécurité Office y sont masquées
+et ne sont pas enregistrées. Les classeurs qui nécessitent le moteur natif ou
+contiennent des structures que le writer portable ne sait pas préserver sont
+ouverts en lecture seule. L’hôte recontrôle cette décision avant chaque
+écriture, indépendamment des messages de la webview, y compris pour
+Enregistrer sous. Les macros et les signatures ne sont pas supprimées pour
+rendre un fichier modifiable.
+
+Les tests du mode portable utilisent des classeurs synthétiques et des profils
+VS Code isolés. Ils ne constituent pas une garantie de parité avec toutes les
+fonctions Excel, ni une validation de COM/VBA sur une machine sans Excel.
+
 ## Centre de sécurité d’entreprise
 
 Le Centre de sécurité de l’extension fournit un diagnostic local en lecture

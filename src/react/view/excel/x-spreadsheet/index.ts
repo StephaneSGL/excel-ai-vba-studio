@@ -103,6 +103,12 @@ export interface ColProperties {
 
 export interface CellData {
     text: string;
+    /** Retain the imported scalar type while its display text is unchanged. */
+    sourceScalar?: {
+        text: string;
+        kind: 'string' | 'number' | 'boolean' | 'date' | 'error';
+        value: string | number | boolean;
+    };
     style?: number;
     merge?: CellMerge;
     /** Cached Excel result used when the embedded formula engine cannot evaluate a formula. */

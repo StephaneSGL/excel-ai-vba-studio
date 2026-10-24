@@ -85,6 +85,7 @@ async function buildWorkbook({ signature = 'none', xmlEncoding = 'utf8' } = {}) 
       '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
       '<Default Extension="xml" ContentType="application/xml"/>' +
       '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
       (hasOrigin
         ? `<Override PartName="${originPart}" ContentType="${originContentType}"/>`
         : '') +
@@ -104,8 +105,10 @@ async function buildWorkbook({ signature = 'none', xmlEncoding = 'utf8' } = {}) 
   );
   zip.file(
     'xl/workbook.xml',
-    '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>',
+    '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Synthetic" sheetId="1" r:id="rId1"/></sheets></workbook>',
   );
+  zip.file('xl/_rels/workbook.xml.rels', `<?xml version="1.0"?><Relationships xmlns="${relationshipsNamespace}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`);
+  zip.file('xl/worksheets/sheet1.xml', '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>');
   if (signed) {
     zip.file(originPart.slice(1), '');
     const originRels = alternative
@@ -574,14 +577,15 @@ try {
     toString: () => 'mem:/virtual/race-source.xlsx',
   };
   runtimeState.files.set(raceSource.toString(), unsignedBytes);
+  const raceHandler = makeHandler();
+  commonRuntime.handleCommonEvent(raceSource, raceHandler);
+  await raceHandler.callbacks.get('init')();
   runtimeState.reads.clear();
   runtimeState.writes = 0;
   runtimeState.readHook = (uri, count) =>
     uri.toString() === raceSource.toString() && count >= 2
       ? alternativeSignedBytes
       : runtimeState.files.get(uri.toString());
-  const raceHandler = makeHandler();
-  commonRuntime.handleCommonEvent(raceSource, raceHandler);
   await assert.rejects(
     raceHandler.callbacks.get('save')(Array.from(unsignedBytes)),
     /signature numérique de package Office/,
@@ -615,8 +619,8 @@ try {
   assert.equal(runtimeState.writes, 1, 'a clean virtual source can be written');
   assert.equal(
     runtimeState.reads.get(raceSource.toString()),
-    2,
-    'a clean virtual save retains the final replacement-race check',
+    3,
+    'a clean virtual save rechecks signatures and the loaded source snapshot',
   );
 
   const saveAsSource = {
@@ -637,6 +641,8 @@ try {
   runtimeState.saveTarget = saveAsTarget;
   const saveAsHandler = makeHandler();
   commonRuntime.handleCommonEvent(saveAsSource, saveAsHandler);
+  await saveAsHandler.callbacks.get('init')();
+  runtimeState.reads.clear();
   await assert.rejects(
     saveAsHandler.callbacks.get('saveAs')({
       content: Array.from(unsignedBytes),
@@ -647,7 +653,7 @@ try {
   assert.equal(runtimeState.writes, 0, 'a signed virtual Save As target is never overwritten');
   assert.equal(
     runtimeState.reads.get(saveAsSource.toString()),
-    2,
+    3,
     'Save As rechecks its virtual source before writing the destination',
   );
   assert.equal(
@@ -667,8 +673,8 @@ try {
   assert.equal(runtimeState.writes, 1, 'a clean virtual Save As can replace itself');
   assert.equal(
     runtimeState.reads.get(saveAsSource.toString()),
-    2,
-    'a same-source virtual Save As avoids a redundant third target inspection',
+    3,
+    'a same-source virtual Save As checks the baseline without a redundant target inspection',
   );
   assert.deepEqual(
     await officeContent.getEmbeddedSpreadsheetReadOnlyState({

@@ -1,5 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { getPlatformCapabilities } from '../common/platformCapabilities';
+import { newWorkbook } from '../provider/newWorkbook';
 import {
 	ExcelAiVbaExplorerProvider,
 	ExcelAiVbaPropertiesProvider
@@ -15,6 +17,17 @@ import { ExcelAiVbaWorkbookService } from './workbookService';
 export function registerExcelAiVbaStudio(
 	context: vscode.ExtensionContext
 ): void {
+	const capabilities = getPlatformCapabilities();
+	void vscode.commands.executeCommand('setContext', 'excelAiVbaStudio.nativeExcel', capabilities.nativeExcel);
+	context.subscriptions.push(vscode.commands.registerCommand(
+		'excelAiVbaStudio.newWorkbook',
+		() => newWorkbook().catch(error => vscode.window.showErrorMessage(
+			error instanceof Error ? error.message : String(error)
+		)),
+	));
+	// The portable editor does not construct services that inspect Windows drives,
+	// start PowerShell, register COM tools, or restore a native VBA workspace.
+	if (!capabilities.nativeExcel) return;
 	const service = new ExcelAiVbaWorkbookService(context);
 	const explorer = new ExcelAiVbaExplorerProvider(service);
 	const properties = new ExcelAiVbaPropertiesProvider();
@@ -124,7 +137,11 @@ export function registerExcelAiVbaStudio(
 			`[config] maxRows=${settings.maxRows}, maxColumns=${settings.maxColumns}, includeVba=${settings.includeVba}`
 		);
 	registerExcelAiVbaLanguageModelTool(context, service);
-	void service.openDeveloperWorkspaceIfPresent();
+	void service.openDeveloperWorkspaceIfPresent().catch(error => {
+		service.getOutputChannel().appendLine(
+			`[startup] ${error instanceof Error ? error.message : String(error)}`
+		);
+	});
 }
 
 export {

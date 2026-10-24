@@ -15,6 +15,7 @@ $source = Join-Path $root 'native\vba-writeback\cli.py'
 $requirements = Join-Path $root 'native\vba-writeback\requirements.lock'
 $outputDirectory = Join-Path $root 'bin\win32-x64'
 $outputPath = Join-Path $outputDirectory 'excel-ai-vba-writeback.exe'
+$provenancePath = Join-Path $outputDirectory 'excel-ai-vba-writeback.provenance.json'
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) (
     'excel-ai-vba-writeback-build-' + [Guid]::NewGuid().ToString('N')
 )
@@ -36,6 +37,24 @@ function Get-Sha256 {
     finally {
         $sha256.Dispose()
         $stream.Dispose()
+    }
+}
+
+function Get-CanonicalTextSha256 {
+    param([string]$Path)
+
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    $text = [IO.File]::ReadAllText($Path, $utf8)
+    $canonicalText = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($canonicalText)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString(
+            $sha256.ComputeHash($bytes)
+        ).Replace('-', '')
+    }
+    finally {
+        $sha256.Dispose()
     }
 }
 
@@ -84,6 +103,21 @@ try {
         throw 'The built VBA write-back executable failed its smoke test.'
     }
     $hash = Get-Sha256 $outputPath
+    # Git may materialize this text file with CRLF on Windows and LF on Linux.
+    # Hash a canonical LF/UTF-8 representation so the same source validates on
+    # every supported checkout while the executable itself remains byte-exact.
+    $sourceHash = Get-CanonicalTextSha256 $source
+    $provenance = [ordered]@{
+        schemaVersion = 1
+        sourceSha256 = $sourceHash.ToLowerInvariant()
+        executableSha256 = $hash.ToLowerInvariant()
+        pythonVersion = '3.11.9'
+    } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText(
+        $provenancePath,
+        $provenance + [Environment]::NewLine,
+        [Text.UTF8Encoding]::new($false)
+    )
     [Console]::Out.WriteLine("VBA_WRITEBACK_EXE|$outputPath")
     [Console]::Out.WriteLine("SHA256|$hash")
 }

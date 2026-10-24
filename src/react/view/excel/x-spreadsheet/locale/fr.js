@@ -1,5 +1,6 @@
 export default {
   viewer: {
+    portableReadonlyBanner: 'Lecture seule : ce classeur contient des éléments que le mode portable ne peut pas préserver. Ouvrez-le avec Excel Desktop sous Windows pour le modifier.',
     readonlyBanner: 'Lecture seule — vous pouvez parcourir et rechercher le classeur.',
     macroReadonlyBanner: 'Protection VBA — les anciens classeurs .xls restent en lecture seule ici afin de préserver leurs macros et leurs données héritées.',
     macroWriteBlocked: 'Ce classeur ne peut pas être modifié ou enregistré dans la visionneuse intégrée, car cela pourrait supprimer ses macros VBA ou des données héritées. Ouvrez-le dans Microsoft Excel pour le modifier.',

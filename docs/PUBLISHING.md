@@ -31,12 +31,14 @@ The workflow uses GitHub Actions OIDC. Do not create a `VSCE_PAT` secret.
    git push origin main v0.1.1
    ```
 
-9. GitHub Actions validates, rebuilds the native helper, packages for `win32-x64`, and uploads the verified VSIX as a 30-day workflow artifact.
-10. After the tagged workflow succeeds, download that exact artifact, verify its SHA-256, and attach the VSIX to a GitHub Release for the same tag.
+9. GitHub Actions validates, rebuilds the native helper, packages separately for `win32-x64` and `linux-x64`, and uploads the platform VSIX files as 30-day workflow artifacts. The Linux package excludes all `scripts/` and `bin/` payloads; its spreadsheet editor does not use Excel COM or PowerShell.
+10. After the tagged workflow succeeds, download those exact artifacts, verify their SHA-256 hashes, and attach both VSIX files to a GitHub Release for the same tag.
 
 If the tag and manifest version differ, packaging stops before the VSIX is created.
 
 Automatic Visual Studio Marketplace publication is intentionally disabled until a Microsoft Entra workload identity and trusted-publishing policy are configured for the publisher. A successful tagged workflow proves the package was built and validated; it does not prove Marketplace publication.
+
+Before release, run the installed-VSIX extension-host tests on Linux and Windows. They use temporary profiles and synthetic workbooks. A passing portable smoke test does not qualify COM/VBA operations: those require a separate controlled Windows machine with Excel Desktop installed and the native integration tests enabled. A skipped Excel integration test is not a successful Excel integration test.
 
 ## Preview channel
 

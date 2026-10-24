@@ -24,6 +24,7 @@ import { cssPrefix } from '../config';
 import { formulaMenuItems } from '../core/formula';
 import { CellRange } from '../core/cell_range';
 import { expr2xy, xy2expr } from '../core/alphabet';
+import { t } from '../locale/locale';
 
 const SCROLL_EXPAND_THRESHOLD = 40;
 const HYPERLINK_CLICK_THRESHOLD = 5;
@@ -540,9 +541,16 @@ function paste(what, evt) {
   if (data.clipboard.isClear()) {
     if (evt) {
       const html = what === 'all' ? evt.clipboardData.getData('text/html') : '';
-      if (html && this.data.pasteFromHtml(html)) {
-        sheetReset.call(this);
-        return;
+      if (html) {
+        const htmlResult = this.data.pasteFromHtml(html);
+        if (htmlResult === 'pasted') {
+          sheetReset.call(this);
+          return;
+        }
+        if (htmlResult === 'rejected') {
+          xtoast('Tip', t('error.pasteTooLarge'));
+          return;
+        }
       }
       const cdata = evt.clipboardData.getData('text/plain');
       this.data.pasteFromText(cdata);
@@ -558,9 +566,16 @@ function paste(what, evt) {
     sheetReset.call(this);
   } else if (evt) {
     const html = what === 'all' ? evt.clipboardData.getData('text/html') : '';
-    if (html && this.data.pasteFromHtml(html)) {
-      sheetReset.call(this);
-      return;
+    if (html) {
+      const htmlResult = this.data.pasteFromHtml(html);
+      if (htmlResult === 'pasted') {
+        sheetReset.call(this);
+        return;
+      }
+      if (htmlResult === 'rejected') {
+        xtoast('Tip', t('error.pasteTooLarge'));
+        return;
+      }
     }
     const cdata = evt.clipboardData.getData('text/plain');
     this.data.pasteFromText(cdata);

@@ -29,7 +29,8 @@ type EmbeddedReadOnlyReason =
     | 'native-excel-editing'
     | 'file-permissions'
     | 'package-signature'
-    | 'package-signature-verification';
+    | 'package-signature-verification'
+    | 'portable-preservation';
 
 function isPackageSignatureReason(
     reason: EmbeddedReadOnlyReason | null
@@ -41,6 +42,7 @@ function isPackageSignatureReason(
 function blocksSaveAs(reason: EmbeddedReadOnlyReason | null): boolean {
     return reason === 'macro-preservation'
         || reason === 'native-excel-editing'
+        || reason === 'portable-preservation'
         || isPackageSignatureReason(reason);
 }
 
@@ -133,6 +135,9 @@ function ExcelViewer() {
     const [vscodeDark, setVscodeDark] = useState(isVscodeEditorDark)
     const [readOnly, setReadOnly] = useState(false)
     const [readOnlyReason, setReadOnlyReason] = useState<EmbeddedReadOnlyReason | null>(null)
+    const [readOnlyMessage, setReadOnlyMessage] = useState<string | null>(null)
+    const [nativeExcel, setNativeExcel] = useState(false)
+    const nativeExcelRef = useRef(false)
     const [findPanel, setFindPanel] = useState<'find' | 'replace' | null>(null)
     const findPanelRef = useRef<'find' | 'replace' | null>(null)
     const findReplacePanelRef = useRef<FindReplacePanelHandle>(null)
@@ -227,6 +232,10 @@ function ExcelViewer() {
     }, [message]);
 
     const handleSaveAs = useCallback(() => {
+        if (readOnlyReasonRef.current === 'portable-preservation') {
+            message.warning(t('viewer.portableReadonlyBanner'));
+            return;
+        }
         if (isPackageSignatureReason(readOnlyReasonRef.current)) {
             notifyPackageSignatureWriteBlocked();
             return;
@@ -236,7 +245,7 @@ function ExcelViewer() {
             return;
         }
         handler.emit('requestHostSaveAs');
-    }, [notifyMacroWriteBlocked, notifyPackageSignatureWriteBlocked]);
+    }, [message, notifyMacroWriteBlocked, notifyPackageSignatureWriteBlocked]);
 
     const handleSave = useCallback(async () => {
         const spreadSheet = spreadSheetRef.current;
@@ -295,6 +304,10 @@ function ExcelViewer() {
             readOnlyReasonRef.current === 'native-excel-editing' ||
             (ext === 'xlsx' && (hasWorkbookObjectChanges || hasExistingNativeObjects))
         ) {
+            if (!nativeExcelRef.current) {
+                handler.emit('saveRejected', { message: t('viewer.portableReadonlyBanner') });
+                return;
+            }
             const snapshot = nativeSnapshotRef.current;
             if (!snapshot) {
                 const reloadMessage = t('viewer.nativeReloadRequired');
@@ -425,6 +438,7 @@ function ExcelViewer() {
             if (
                 (
                     readOnlyReasonRef.current === 'macro-preservation' ||
+                    readOnlyReasonRef.current === 'portable-preservation' ||
                     isPackageSignatureReason(readOnlyReasonRef.current)
                 )
                 && !isFindPanelTarget(e.target)
@@ -453,6 +467,7 @@ function ExcelViewer() {
             if (
                 (
                     readOnlyReasonRef.current !== 'macro-preservation' &&
+                    readOnlyReasonRef.current !== 'portable-preservation' &&
                     !isPackageSignatureReason(readOnlyReasonRef.current)
                 )
                 || isFindPanelTarget(e.target)
@@ -497,6 +512,7 @@ function ExcelViewer() {
                 || payload.readOnlyReason === 'native-excel-editing'
                 || payload.readOnlyReason === 'package-signature'
                 || payload.readOnlyReason === 'package-signature-verification';
+            const preservePortableSource = payload.readOnlyReason === 'portable-preservation';
             if (payload.ext?.match(/csv/i)) {
                 csvEncodingRef.current = detectCsvEncoding(buffer);
             }
@@ -513,7 +529,7 @@ function ExcelViewer() {
             container.innerHTML = '';
             const spreadSheet = new Spreadsheet(container, {
                 mode: fileReadOnly ? 'read' : 'edit',
-                allowSaveAs: !preserveSourceIntegrity,
+                allowSaveAs: !preserveSourceIntegrity && !preservePortableSource,
                 showToolbar: false,
                 showEditInVSCode: isCsvLikeExt(payload.ext ?? ''),
                 row: { len: viewRowLen, height: 30 },
@@ -596,11 +612,15 @@ function ExcelViewer() {
             extRef.current = payload.ext ?? '';
             documentCacheIdRef.current = payload.documentCacheId ?? '';
             const fileReadOnly = payload.readOnly === true;
+            nativeExcelRef.current = payload.nativeExcel === true;
+            setNativeExcel(nativeExcelRef.current);
+            setReadOnlyMessage(typeof payload.readOnlyMessage === 'string' ? payload.readOnlyMessage : null);
             const reason = payload.readOnlyReason === 'macro-preservation'
                 || payload.readOnlyReason === 'native-excel-editing'
                 || payload.readOnlyReason === 'file-permissions'
                 || payload.readOnlyReason === 'package-signature'
                 || payload.readOnlyReason === 'package-signature-verification'
+                || payload.readOnlyReason === 'portable-preservation'
                 ? payload.readOnlyReason as EmbeddedReadOnlyReason
                 : null;
             readOnlyRef.current = fileReadOnly;
@@ -798,6 +818,8 @@ function ExcelViewer() {
                 readOnly={readOnly || editorBusy}
                 allowSaveAs={!blocksSaveAs(readOnlyReason)}
                 showEditInVscode={isCsvLikeExt(extRef.current)}
+                nativeExcel={nativeExcel}
+                onNewWorkbook={() => handler.emit('newWorkbook')}
                 onAutoFitColumns={handleAutoFitColumns}
                 onOpenExcel={() => handler.emit('openExcel')}
                 onOpenVbe={() => handler.emit('openVbe')}
@@ -831,7 +853,9 @@ function ExcelViewer() {
                     aria-live="polite"
                 >
                     <span>
-                        {readOnlyReason === 'macro-preservation'
+                        {readOnlyReason === 'portable-preservation'
+                            ? readOnlyMessage || t('viewer.portableReadonlyBanner')
+                            : readOnlyReason === 'macro-preservation'
                             ? t('viewer.macroReadonlyBanner')
                             : readOnlyReason === 'package-signature'
                               ? t('viewer.packageSignatureReadonlyBanner')
@@ -839,7 +863,7 @@ function ExcelViewer() {
                                 ? t('viewer.packageSignatureVerificationReadonlyBanner')
                             : t('viewer.readonlyBanner')}
                     </span>
-                    {readOnlyReason === 'macro-preservation' && (
+                    {nativeExcel && readOnlyReason === 'macro-preservation' && (
                         <span className="excel-readonly-actions">
                             <Button
                                 size="small"

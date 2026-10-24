@@ -25,7 +25,7 @@ expect(manifest.preview === true, 'initial Marketplace listing must remain marke
 expect(manifest.engines?.vscode === '>=1.95.0', 'engines.vscode must be >=1.95.0');
 expect(JSON.stringify(manifest.extensionKind) === JSON.stringify(['ui']), 'extensionKind must be ["ui"]');
 expect(manifest.main === './out/extension.js', 'desktop entry point must be ./out/extension.js');
-expect(!Object.hasOwn(manifest, 'browser'), 'Windows-only extension must not expose a browser entry point');
+expect(!Object.hasOwn(manifest, 'browser'), 'desktop extension must not advertise an unsupported web entry point');
 expect(
   manifest.license === 'SEE LICENSE IN LICENSE',
   'mixed licensing must be described by the packaged LICENSE file',
@@ -46,6 +46,7 @@ expect(manifest.icon === 'image/marketplace-icon.png', 'use the original Marketp
 expect(existsSync(resolve(root, manifest.icon ?? '')), 'Marketplace icon does not exist');
 
 const expectedCommands = sorted([
+  'excelAiVbaStudio.newWorkbook',
   'excelAiVbaStudio.exportWorkbook',
   'excelAiVbaStudio.copyWorkbookContext',
   'excelAiVbaStudio.openWorkbookContext',
@@ -65,6 +66,28 @@ expect(
   `commands differ from the supported set:\nexpected ${expectedCommands.join(', ')}\nactual   ${actualCommands.join(', ')}`,
 );
 expect(actualCommands.every((command) => command.startsWith('excelAiVbaStudio.')), 'all command IDs must use the new prefix');
+const nativeCapability = 'excelAiVbaStudio.nativeExcel';
+expect(
+  manifest.activationEvents.includes('onStartupFinished'),
+  'startup must establish platform contexts before native menus and tools are shown',
+);
+for (const command of manifest.contributes.commands) {
+  if (command.command === 'excelAiVbaStudio.newWorkbook') {
+    expect(!command.enablement, 'new workbook must be available in portable mode');
+    continue;
+  }
+  expect(command.enablement?.startsWith(nativeCapability), `${command.command} must require the native capability`);
+  expect(
+    manifest.contributes.menus?.commandPalette?.some(item => item.command === command.command && item.when === nativeCapability),
+    `${command.command} must be hidden in portable mode`,
+  );
+}
+for (const item of Object.values(manifest.contributes.menus ?? {}).flat()) {
+  expect(item.when?.startsWith(nativeCapability), `${item.command} menu must require the native capability`);
+}
+for (const view of manifest.contributes.views?.explorer ?? []) {
+  expect(view.when === nativeCapability, `${view.id} must be hidden in portable mode`);
+}
 
 const forbiddenContributions = [
   'authentication',
@@ -98,6 +121,7 @@ expect(
 );
 
 const tools = manifest.contributes?.languageModelTools ?? [];
+expect(tools.every(tool => tool.when === nativeCapability), 'native AI tools must be unavailable in portable mode');
 expect(tools.length === 4, 'exactly four language-model tools must be declared');
 const readTool = tools.find(({ name }) => name === 'excel_ai_vba_readWorkbook');
 const writeTool = tools.find(({ name }) => name === 'excel_ai_vba_writeModule');
@@ -299,4 +323,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`Manifest valid: ${manifest.publisher}.${manifest.name}@${manifest.version} (Preview, win32-x64 release target)`);
+console.log(`Manifest valid: ${manifest.publisher}.${manifest.name}@${manifest.version} (Preview, Linux portable + Windows native)`);

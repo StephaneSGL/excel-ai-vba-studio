@@ -50,7 +50,7 @@ import {
     WindowsOutlined,
 } from '@ant-design/icons';
 import { Button, Input, Modal, Select } from 'antd';
-import { useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { SheetChartData, SheetTableData } from '../../../common/excelWorkbookObjects';
 import type Spreadsheet from './x-spreadsheet/index';
 import type { SheetConditionalFormattingRule } from './x-spreadsheet/index';
@@ -92,6 +92,8 @@ type RibbonButtonProps = {
 
 type ExcelRibbonProps = {
     spreadsheet: Spreadsheet | null;
+    nativeExcel: boolean;
+    onNewWorkbook: () => void;
     readOnly: boolean;
     allowSaveAs: boolean;
     showEditInVscode: boolean;
@@ -122,6 +124,7 @@ type TableSpreadsheet = Spreadsheet & {
 };
 
 const INTEGRATED_FEATURE_EVENT = 'excel-integrated-feature';
+const NativeExcelContext = createContext(false);
 
 function chooseLocalFile(accept: string): Promise<File | null> {
     return new Promise(resolve => {
@@ -232,6 +235,8 @@ function RibbonButton({
     title,
     native = false,
 }: RibbonButtonProps) {
+    const nativeExcel = useContext(NativeExcelContext);
+    if (native && !nativeExcel) return null;
     const isDisabled = disabled || unavailable;
     const tooltip = title
         ?? (unavailable
@@ -356,6 +361,8 @@ function ColorButton({
 
 export default function ExcelRibbon({
     spreadsheet,
+    nativeExcel,
+    onNewWorkbook,
     readOnly,
     allowSaveAs,
     showEditInVscode,
@@ -402,6 +409,7 @@ export default function ExcelRibbon({
 
     useEffect(() => {
         const onIntegratedFeature = (event: Event) => {
+            if (!nativeExcel) return;
             const feature = (event as CustomEvent<string>).detail;
             if (!feature) return;
             setFeatureResult('');
@@ -409,7 +417,7 @@ export default function ExcelRibbon({
         };
         window.addEventListener(INTEGRATED_FEATURE_EVENT, onIntegratedFeature);
         return () => window.removeEventListener(INTEGRATED_FEATURE_EVENT, onIntegratedFeature);
-    }, []);
+    }, [nativeExcel]);
 
     const command = (type: string, value?: unknown) => {
         spreadsheet?.executeCommand(type, value);
@@ -427,7 +435,7 @@ export default function ExcelRibbon({
     };
     const openNativeFeature = () => {};
     const openChartDesigner = (chartType: number) => {
-        if (!chartSpreadsheet) return;
+        if (!nativeExcel || !chartSpreadsheet) return;
         setChartInitialType(chartType);
         setChartDesignerOpen(true);
     };
@@ -784,15 +792,17 @@ export default function ExcelRibbon({
                 <RibbonButton large icon={<PrinterOutlined />} label="Print" onClick={() => command('print')} disabled={!ready} />
             </RibbonGroup>
             <RibbonGroup label="Open">
+                {nativeExcel && <>
                 <RibbonButton large icon={<FileExcelOutlined />} label="Open in Excel" onClick={onOpenExcel} />
                 <RibbonButton large icon={<WindowsOutlined />} label="Open native VBE" onClick={onOpenVbe} />
                 <RibbonButton large icon={<CodeOutlined />} label="VBA Studio" onClick={onOpenVbaDeveloper} />
+                </>}
                 {showEditInVscode && (
                     <RibbonButton large icon={<FileTextOutlined />} label="Edit as Text" onClick={() => command('edit-in-vscode')} disabled={!ready} />
                 )}
             </RibbonGroup>
             <RibbonGroup label="Create">
-                <RibbonButton large icon={<FileAddOutlined />} label="New Workbook" onClick={openNativeFeature} native />
+                <RibbonButton large icon={<FileAddOutlined />} label="New Workbook" onClick={onNewWorkbook} />
                 <RibbonButton large icon={<SettingOutlined />} label="Options" onClick={openNativeFeature} native />
             </RibbonGroup>
         </>
@@ -860,7 +870,7 @@ export default function ExcelRibbon({
             </RibbonGroup>
             <RibbonGroup label="Styles">
                 <RibbonButton icon={<ClearOutlined />} label="Clear Formatting" onClick={() => command('clearformat')} disabled={editingDisabled} />
-                <RibbonButton icon={<TableOutlined />} label="Format as Table" onClick={() => setTableDesignerOpen(true)} disabled={!ready} />
+                {nativeExcel && <RibbonButton icon={<TableOutlined />} label="Format as Table" onClick={() => setTableDesignerOpen(true)} disabled={editingDisabled} />}
                 <RibbonButton icon={<BarChartOutlined />} label="Conditional Formatting" onClick={() => setConditionalOpen(true)} disabled={editingDisabled} />
             </RibbonGroup>
             <RibbonGroup label="Cells">
@@ -882,10 +892,10 @@ export default function ExcelRibbon({
 
     const renderInsertTab = () => (
         <>
-            <RibbonGroup label="Tables">
+            {nativeExcel && <RibbonGroup label="Tables">
                 <RibbonButton large icon={<TableOutlined />} label="PivotTable" onClick={openNativeFeature} native />
                 <RibbonButton large icon={<TableOutlined />} label="Table" onClick={() => setTableDesignerOpen(true)} disabled={!ready} />
-            </RibbonGroup>
+            </RibbonGroup>}
             <RibbonGroup label="Cells">
                 <RibbonButton large icon={<InsertRowAboveOutlined />} label="Insert Row" onClick={() => context('insert-row')} disabled={editingDisabled} />
                 <RibbonButton large icon={<InsertRowLeftOutlined />} label="Insert Column" onClick={() => context('insert-column')} disabled={editingDisabled} />
@@ -896,11 +906,11 @@ export default function ExcelRibbon({
                 <RibbonButton large icon={<LayoutOutlined />} label="Shapes" onClick={openNativeFeature} native />
                 <RibbonButton large icon={<ApartmentOutlined />} label="SmartArt" onClick={openNativeFeature} native />
             </RibbonGroup>
-            <RibbonGroup label="Charts">
+            {nativeExcel && <RibbonGroup label="Charts">
 				<RibbonButton large icon={<BarChartOutlined />} label="All Charts" onClick={() => openChartDesigner(51)} disabled={!ready} />
                 <RibbonButton large icon={<BarChartOutlined />} label="Column Chart" onClick={() => openChartDesigner(51)} disabled={!ready} />
                 <RibbonButton large icon={<BarChartOutlined />} label="Line Chart" onClick={() => openChartDesigner(4)} disabled={!ready} />
-            </RibbonGroup>
+            </RibbonGroup>}
             <RibbonGroup label="Links">
                 <RibbonButton large icon={<LinkOutlined />} label="Link" onClick={() => context('hyperlink')} disabled={editingDisabled} />
             </RibbonGroup>
@@ -1011,7 +1021,7 @@ export default function ExcelRibbon({
                 <RibbonButton large icon={<RobotOutlined />} label="Translate" onClick={openNativeFeature} native />
             </RibbonGroup>
             <RibbonGroup label="Comments">
-                <RibbonButton large icon={<CommentOutlined />} label="New Comment" onClick={addComment} disabled={editingDisabled} />
+                {nativeExcel && <RibbonButton large icon={<CommentOutlined />} label="New Comment" onClick={addComment} disabled={editingDisabled} />}
                 <RibbonButton large icon={<CommentOutlined />} label="Show Comments" onClick={showComments} disabled={!ready} />
             </RibbonGroup>
             <RibbonGroup label="Protect">
@@ -1051,10 +1061,10 @@ export default function ExcelRibbon({
                 <RibbonButton large icon={<LayoutOutlined />} label="Freeze Panes" onClick={() => toggle('freeze')} disabled={editingDisabled} />
                 <RibbonButton large icon={<LayoutOutlined />} label="Split" onClick={openNativeFeature} native />
             </RibbonGroup>
-            <RibbonGroup label="Macros">
+            {nativeExcel && <RibbonGroup label="Macros">
                 <RibbonButton large icon={<WindowsOutlined />} label="Native VBE" onClick={onOpenVbe} />
                 <RibbonButton large icon={<CodeOutlined />} label="VS Code VBA Studio" onClick={onOpenVbaDeveloper} />
-            </RibbonGroup>
+            </RibbonGroup>}
         </>
     );
 
@@ -1103,14 +1113,14 @@ export default function ExcelRibbon({
     };
 
     return (
-        <>
+        <NativeExcelContext.Provider value={nativeExcel}>
         <div className="excel-ribbon" data-readonly={readOnly || undefined}>
             <div className="excel-ribbon-tabs-row">
                 <div className="excel-ribbon-brand" title="Excel AI & VBA Studio">
                     <FileExcelOutlined />
                 </div>
                 <div className="excel-ribbon-tabs" role="tablist" aria-label="Excel ribbon">
-                    {tabs.map((tab) => (
+                    {tabs.filter(tab => nativeExcel || tab.id !== 'ai-vba').map((tab) => (
                         <button
                             key={tab.id}
                             type="button"
@@ -1172,7 +1182,7 @@ export default function ExcelRibbon({
                             { value: 'colorScale', label: 'Échelle de trois couleurs' },
                             { value: 'dataBar', label: 'Barres de données' },
                             { value: 'iconSet', label: 'Jeu de trois icônes' },
-                        ]}
+                        ].filter(option => nativeExcel || option.value !== 'dataBar')}
                     />
                 </label>
                 {!['colorScale', 'dataBar', 'iconSet'].includes(conditionalPreset) && (
@@ -1234,6 +1244,6 @@ export default function ExcelRibbon({
                 )}
             </div>
         </Modal>
-        </>
+        </NativeExcelContext.Provider>
     );
 }

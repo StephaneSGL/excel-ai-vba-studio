@@ -6,9 +6,12 @@ import {
     assertOoxmlPackageUnsignedForMutation,
     hasOoxmlPackageSignature,
     hasOoxmlPackageSignatureBytes,
+    getPortableXlsxPreservationIssue,
     isOoxmlPackagePath,
     MAX_VIRTUAL_OOXML_PACKAGE_BYTES,
 } from '@/common/ooxmlPackageSignature';
+import { getPlatformCapabilities, PORTABLE_PRESERVATION_MESSAGE } from '@/common/platformCapabilities';
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { basename, extname } from 'path';
 import { Uri, workspace } from 'vscode';
@@ -18,7 +21,8 @@ export type EmbeddedSpreadsheetReadOnlyReason =
     | 'native-excel-editing'
     | 'file-permissions'
     | 'package-signature'
-    | 'package-signature-verification';
+    | 'package-signature-verification'
+    | 'portable-preservation';
 
 export interface OfficeOpenSnapshot {
     nativeLoadGeneration?: string;
@@ -109,14 +113,20 @@ export async function assertExistingUriOoxmlPackageUnsignedForMutation(
 }
 
 export async function getEmbeddedSpreadsheetReadOnlyState(
-    uri: Uri
+    uri: Uri,
+    inspectedBytes?: Uint8Array,
 ): Promise<{
     readOnly: boolean;
     readOnlyReason?: EmbeddedSpreadsheetReadOnlyReason;
+    readOnlyMessage?: string;
 }> {
     if (isOoxmlPackagePath(uri.fsPath)) {
         try {
-            if (await hasUriOoxmlPackageSignature(uri)) {
+            // Signature and preservation decisions must describe the same bytes.
+            inspectedBytes ??= await readUriBytes(uri);
+            if (inspectedBytes
+                ? await hasOoxmlPackageSignatureBytes(inspectedBytes, uri.fsPath)
+                : await hasUriOoxmlPackageSignature(uri)) {
                 return {
                     readOnly: true,
                     readOnlyReason: 'package-signature',
@@ -127,6 +137,27 @@ export async function getEmbeddedSpreadsheetReadOnlyState(
                 readOnly: true,
                 readOnlyReason: 'package-signature-verification',
             };
+        }
+    }
+    {
+        const nativeExcel = getPlatformCapabilities().nativeExcel;
+        const extension = extname(uri.fsPath).toLowerCase();
+        if (!nativeExcel && requiresNativeExcelForEditing(uri)) {
+            return { readOnly: true, readOnlyReason: 'portable-preservation', readOnlyMessage: PORTABLE_PRESERVATION_MESSAGE };
+        }
+        if (extension === '.xlsx') {
+            try {
+                const issue = await getPortableXlsxPreservationIssue(inspectedBytes ?? await readUriBytes(uri));
+                if (issue) {
+                    if (nativeExcel) {
+                        if (await isUriReadOnly(uri)) return { readOnly: true, readOnlyReason: 'file-permissions' };
+                        return { readOnly: false, readOnlyReason: 'native-excel-editing' };
+                    }
+                    return { readOnly: true, readOnlyReason: 'portable-preservation', readOnlyMessage: `${PORTABLE_PRESERVATION_MESSAGE} (${issue})` };
+                }
+            } catch {
+                return { readOnly: true, readOnlyReason: 'portable-preservation', readOnlyMessage: PORTABLE_PRESERVATION_MESSAGE };
+            }
         }
     }
     if (await isUriReadOnly(uri)) {
@@ -241,26 +272,28 @@ export async function emitVirtualOfficeOpen(
     handler: Handler,
     uri: Uri,
     snapshot?: OfficeOpenSnapshot
-): Promise<void> {
+): Promise<string | undefined> {
     const ext = extname(uri.fsPath);
-    const readOnlyState = await getEmbeddedSpreadsheetReadOnlyState(uri);
     const basePayload = {
         ext,
         path: uri.toString(),
         fileName: basename(uri.fsPath),
         scheme: uri.scheme,
         documentCacheId: buildDocumentCacheId(uri),
-        ...readOnlyState,
+        nativeExcel: getPlatformCapabilities().nativeExcel,
         nonce: Date.now(),
     };
 
     try {
         const data = await readUriBytes(uri);
+        const readOnlyState = await getEmbeddedSpreadsheetReadOnlyState(uri, data);
         handler.emit('open', {
             ...basePayload,
             ...snapshot,
+            ...readOnlyState,
             bufferBase64: bytesToPayloadBase64(data),
         });
+        return createHash('sha256').update(data).digest('hex');
     } catch (error) {
         handler.emit('open', {
             ...basePayload,
@@ -274,25 +307,27 @@ export async function emitFileOfficeOpen(
     handler: Handler,
     uri: Uri,
     snapshot?: OfficeOpenSnapshot
-): Promise<void> {
-    const readOnlyState = await getEmbeddedSpreadsheetReadOnlyState(uri);
+): Promise<string | undefined> {
     const basePayload = {
         ext: extname(uri.fsPath),
         path: uri.toString(),
         fileName: basename(uri.fsPath),
         scheme: uri.scheme,
         documentCacheId: buildDocumentCacheId(uri),
-        ...readOnlyState,
+        nativeExcel: getPlatformCapabilities().nativeExcel,
         nonce: Date.now(),
     };
 
     try {
         const data = await readUriBytes(uri);
+        const readOnlyState = await getEmbeddedSpreadsheetReadOnlyState(uri, data);
         handler.emit('open', {
             ...basePayload,
             ...snapshot,
+            ...readOnlyState,
             bufferBase64: bytesToPayloadBase64(data),
         });
+        return createHash('sha256').update(data).digest('hex');
     } catch (error) {
         handler.emit('open', {
             ...basePayload,

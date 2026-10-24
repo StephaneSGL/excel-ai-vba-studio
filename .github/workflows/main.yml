@@ -33,6 +33,61 @@ jobs:
       - name: Validate manifest, build, and package contents
         run: npm run validate
 
+  extension-host:
+    name: VSIX smoke (${{ matrix.target }}, VS Code ${{ matrix.vscode }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        vscode: ['1.95.3', 'stable']
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: windows-latest
+            target: win32-x64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify Windows portable creation paths and junction refusals
+        if: runner.os == 'Windows'
+        run: node test/portable-file-save.mjs
+
+      - name: Build the platform VSIX
+        run: npm run package -- --target ${{ matrix.target }}
+
+      - name: Test installed Linux VSIX with a synthetic workbook
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:extension-host
+        env:
+          VSCODE_TEST_VERSION: ${{ matrix.vscode }}
+
+      - name: Test installed Windows VSIX with a synthetic workbook
+        if: runner.os == 'Windows'
+        run: npm run test:extension-host
+        env:
+          VSCODE_TEST_VERSION: ${{ matrix.vscode }}
+
+      - name: Retain synthetic editor screenshots and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: editor-smoke-${{ matrix.target }}-${{ matrix.vscode }}
+          path: output/extension-host/
+          if-no-files-found: warn
+          retention-days: 7
+
   vba-writeback-windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -54,11 +109,21 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Validate and test the bundled VBA helper
-        run: |
-          npm run validate:vba-writeback
-          npm run test:package-signatures
-          npm run test:vba-writeback
+      - name: Validate committed VBA helper provenance
+        id: committed-helper-provenance
+        continue-on-error: true
+        run: npm run validate:vba-writeback
+
+      - name: Verify fail-closed Excel session policy without Office
+        run: npm run test:automation-safety
+
+      - name: Test the committed VBA helper
+        id: committed-helper-tests
+        if: steps.committed-helper-provenance.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          npm run test:package-signatures &&
+          npm run test:vba-writeback &&
           npm run test:vba-atomic
 
       - name: Rebuild the VBA helper from pinned source
@@ -71,16 +136,26 @@ jobs:
           "Source-built helper SHA-256: ``$digest``" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Test the source-built VBA helper
-        run: |
-          npm run validate:vba-writeback
-          npm run test:package-signatures
-          npm run test:vba-writeback
+        run: >-
+          npm run validate:vba-writeback &&
+          npm run test:package-signatures &&
+          npm run test:vba-writeback &&
           npm run test:vba-atomic
 
       - name: Upload tested VBA helper candidate
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: vba-writeback-helper-${{ github.sha }}
-          path: bin/win32-x64/excel-ai-vba-writeback.exe
+          path: |
+            bin/win32-x64/excel-ai-vba-writeback.exe
+            bin/win32-x64/excel-ai-vba-writeback.provenance.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Require the committed helper to match source
+        if: >-
+          always() &&
+          (steps.committed-helper-provenance.outcome != 'success' ||
+          steps.committed-helper-tests.outcome != 'success')
+        shell: pwsh
+        run: throw 'Commit the source-built helper candidate and its provenance file.'

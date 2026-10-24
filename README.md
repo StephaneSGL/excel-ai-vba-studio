@@ -11,11 +11,30 @@
 <p align="center">
   <a href="https://github.com/StephaneSGL/excel-ai-vba-studio/actions/workflows/main.yml"><img src="https://github.com/StephaneSGL/excel-ai-vba-studio/actions/workflows/main.yml/badge.svg?branch=main" alt="Validation"></a>
   <img src="https://img.shields.io/badge/status-Preview-f59e0b" alt="Preview">
-  <img src="https://img.shields.io/badge/platform-Windows%20x64-0078d4" alt="Windows x64">
+  <img src="https://img.shields.io/badge/platform-Linux%20%2B%20Windows%20x64-0078d4" alt="Linux and Windows x64">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-7a2f8f" alt="PolyForm Noncommercial"></a>
 </p>
 
 Excel AI & VBA Studio is a preview VS Code extension for inspecting supported spreadsheet formats, editing safe workbook content, and working with Excel objects, VBA modules, classes, and UserForms without leaving VS Code.
+
+The portable spreadsheet editor runs on **Linux x64 and Windows x64** without Microsoft Excel. It supports creating a blank workbook, editing ordinary `.xlsx` cells, formulas and formatting, and saving the result inside VS Code. Use **Excel AI & VBA Studio : Nouveau classeur** from the Command Palette to begin. This is a spreadsheet editor with a subset of Excel's features and formula functions; it does not reproduce the entire Microsoft Excel calculation engine.
+
+Windows additionally provides the native Excel/VBA tools when Microsoft Excel Desktop is installed and its existing policy permits the operation. The Linux package contains no Windows helper executable or PowerShell scripts.
+
+| Capability | Linux portable | Windows |
+| --- | --- | --- |
+| New workbook and ordinary `.xlsx` editing | Yes, without Excel | Yes, without Excel |
+| CSV/TSV grid | Yes | Yes |
+| `.xls` viewing | Read-only | Read-only |
+| `.xlsm` viewing | Read-only; VBA is preserved | Viewing without Excel; targeted native edits require Excel |
+| Workbooks containing objects the portable writer cannot preserve | Read-only with an explanation | Native paths where supported |
+| Excel tables/charts requiring native preservation | Read-only | Excel Desktop required for editing |
+| VBA extraction/write-back, UserForms, ActiveX, VBE, AI context export | Unavailable | Excel Desktop and applicable policy required |
+| Enterprise Office Security Center | Unavailable | Windows Office policy inspection |
+
+Portable mode checks preservation requirements before enabling edits and again in the extension host before writing. It refuses unsafe whole-workbook rewrites and Save As operations instead of silently dropping VBA, signatures or unsupported objects. Native commands and AI tools are hidden on Linux.
+
+Local Linux saves stage the replacement, preserve the source ownership, permissions, POSIX ACLs and extended attributes, and keep the previous workbook bytes in an adjacent `.excel-ai-vba-backups` directory. This requires GNU coreutils `cp` at `/usr/bin/cp`; if attribute preservation fails, the original file is not replaced. The editor refuses a save if the source contents or filesystem metadata change during saving, and local Save As requires a new filename. Symbolic links and hard-linked source files are refused by the staged writer. Recovery copies protect workbook contents; they do not reproduce the source filesystem metadata. Windows keeps its existing in-place writer to retain NTFS origin streams.
 
 > [!IMPORTANT]
 > The workbook grid and VBA Studio are integrated into VS Code. Microsoft Excel does not open merely because a workbook is viewed or exported. The explicit **Open in Excel** and **Open native VBE** commands launch or reactivate Excel only when requested.
@@ -62,9 +81,15 @@ Excel AI & VBA Studio is a preview VS Code extension for inspecting supported sp
 
 ## Install from a VSIX
 
-Download `excel-ai-vba-studio-win32-x64-<version>.vsix`, then run:
+Download the package matching the computer running VS Code:
+
+```bash
+# Linux x64
+code --install-extension excel-ai-vba-studio-linux-x64-<version>.vsix
+```
 
 ```powershell
+# Windows x64
 code --install-extension .\excel-ai-vba-studio-win32-x64-<version>.vsix
 ```
 
@@ -81,6 +106,10 @@ npm ci
 npm run validate
 npm run package
 ```
+
+`npm run package` produces both platform packages under `output/vsix`. To build one package, use `npm run package -- --target linux-x64` or `npm run package -- --target win32-x64`. Node.js 22 and the locked dependencies build the editor on either system; rebuilding the native helper requires Windows.
+
+`npm run test:portable` exercises synthetic workbook round-trips and platform write guards. `npm run test:extension-host` installs the current platform's VSIX in an isolated VS Code profile and tests its custom editor with a synthetic workbook. Run `npm run package -- --target <platform>` first; on headless Linux use `xvfb-run -a npm run test:extension-host`. The test downloads a pinned VS Code release, requires no user files, and saves a synthetic editor screenshot under `output/extension-host`. CI runs the test on both operating systems, on VS Code 1.95.3 and the current stable release. These tests do not substitute for the separate Windows/Excel COM integration suite.
 
 The Visual Studio Marketplace release is not available yet. This public repository is currently the official source for the preview.
 
@@ -204,7 +233,8 @@ Microsoft references: [Cloud Policy for Microsoft 365 Apps](https://learn.micros
 
 ## Preview limitations
 
-- Windows x64 only.
+- Release packages support Linux x64 (portable spreadsheet mode) and Windows x64. Browser-based VS Code, remote/virtual workspaces, macOS and ARM packages are not qualified by this release.
+- Portable editing is limited to the workbook structures the JavaScript writer can preserve. Unsupported structures are read-only, and native Excel/VBA commands are unavailable on Linux.
 - Microsoft Excel desktop is currently required for COM-based VBA extraction, legacy formats, and targeted `.xlsm` cell editing.
 - Protected, corrupted, or enterprise-restricted workbooks may provide only partial context.
 - VBA source access depends on the Excel Trust Center policy already configured by the user.

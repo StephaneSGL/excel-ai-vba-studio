@@ -153,6 +153,24 @@ function formulaResult(cell: ExcelJS.Cell): CellData['formulaResult'] | undefine
     return undefined;
 }
 
+function sourceScalar(cell: ExcelJS.Cell, text: string): CellData['sourceScalar'] {
+    if (cell.formula) return undefined;
+    const value = cell.value;
+    if (value instanceof Date) return { text, kind: 'date', value: value.toISOString() };
+    if (typeof value === 'string') return { text, kind: 'string', value };
+    if (typeof value === 'number') return { text, kind: 'number', value };
+    if (typeof value === 'boolean') return { text, kind: 'boolean', value };
+    if (value && typeof value === 'object' && 'error' in value) {
+        return { text, kind: 'error', value: value.error };
+    }
+    // Formatting objects still contain literal text. Never infer a formula from
+    // an untouched rich-text or hyperlink label, even in standalone exports.
+    if (value && typeof value === 'object' && ('richText' in value || 'hyperlink' in value)) {
+        return { text, kind: 'string', value: text };
+    }
+    return undefined;
+}
+
 export interface ExcelData {
     sheets: SheetData[];
     maxCols: number;
@@ -442,6 +460,8 @@ const convertExcelJsWorksheet = (
 
             const styleIndex = styleRegistry.add(cellStyle);
             const cellData: CellData = { text };
+            const originalScalar = sourceScalar(cell, text);
+            if (originalScalar) cellData.sourceScalar = originalScalar;
             if (styleIndex != null) cellData.style = styleIndex;
             if (editable !== undefined) cellData.editable = editable;
             const cachedResult = formulaResult(cell);

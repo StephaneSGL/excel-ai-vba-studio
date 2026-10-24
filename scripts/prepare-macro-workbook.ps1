@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 . (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
+. (Join-Path $PSScriptRoot 'excel-automation-safety.ps1')
 
 function Decode-Base64Utf8 {
     param([string]$Value)
@@ -318,6 +319,8 @@ $sourceSha256Before = Get-Sha256 $sourcePath
 $excel = $null
 $workbooks = $null
 $workbook = $null
+$calculationGuardWorkbook = $null
+$ownedExcelProcessIdentity = $null
 $vbaProject = $null
 $components = $null
 $existingComponent = $null
@@ -327,14 +330,9 @@ $stagingCreated = $false
 $operationError = $null
 
 try {
+    $preexistingExcelProcessIds = @(Get-ExcelAutomationProcessIds)
+    $excelCreationStartedUtcTicks = [DateTime]::UtcNow.Ticks
     $excel = New-Object -ComObject Excel.Application
-    $excel.AutomationSecurity = 3
-    $excel.DisplayAlerts = $false
-    $excel.EnableEvents = $false
-    $excel.AskToUpdateLinks = $false
-    $excel.ScreenUpdating = $false
-    $excel.Visible = $false
-
     $windowHandle = [IntPtr]([int64]$excel.Hwnd)
     [uint32]$ownedProcessId = 0
     [void][ExcelAiVbaStudio.NativeProcess]::GetWindowThreadProcessId(
@@ -344,10 +342,26 @@ try {
     if ($ownedProcessId -eq 0) {
         throw 'Impossible de determiner le processus Excel controle.'
     }
-    Write-Output "OWNED_EXCEL_PID|$ownedProcessId"
+    $ownedExcelProcessIdentity = Get-ExcelAutomationProcessIdentity `
+        $ownedProcessId $preexistingExcelProcessIds $excelCreationStartedUtcTicks
+    [Console]::Out.WriteLine(
+        'OWNED_EXCEL_PID|' + $ownedExcelProcessIdentity.ProcessId + '|' +
+        $ownedExcelProcessIdentity.StartTimeUtcTicks
+    )
+    [Console]::Out.Flush()
+    $excel.AutomationSecurity = 3
+    $excel.DisplayAlerts = $false
+    $excel.EnableEvents = $false
+    $excel.AskToUpdateLinks = $false
+    $excel.ScreenUpdating = $false
+    $excel.Visible = $false
 
     $workbooks = $excel.Workbooks
+    Set-ExcelAutomationSafety $excel -BeforeGuard
+    $calculationGuardWorkbook = $workbooks.Add(-4167)
+    Set-ExcelAutomationSafety $excel
     $workbook = $workbooks.Open($sourcePath, 0, $true)
+    Assert-ExcelAutomationSafety $excel
     $workbook.SaveAs($stagingPath, 52)
     $stagingCreated = $true
 
@@ -400,7 +414,10 @@ finally {
             }
         }
     }
-    if ($null -ne $excel) {
+    if ($null -ne $calculationGuardWorkbook) {
+        try { $calculationGuardWorkbook.Close($false) } catch { }
+    }
+    if ($null -ne $excel -and $null -ne $ownedExcelProcessIdentity) {
         try {
             $excel.Quit()
         }
@@ -417,10 +434,12 @@ finally {
     Release-ComObject $components
     Release-ComObject $vbaProject
     Release-ComObject $workbook
+    Release-ComObject $calculationGuardWorkbook
     Release-ComObject $workbooks
     Release-ComObject $excel
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
+    Stop-ExcelAutomationProcess $ownedExcelProcessIdentity
 }
 
 if ($null -ne $operationError) {

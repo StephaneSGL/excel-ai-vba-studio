@@ -238,7 +238,23 @@ function setCellValue(
     cell: ExcelJS.Cell,
     text: string,
     cachedResult?: CellData['formulaResult'],
+    scalar?: CellData['sourceScalar'],
 ) {
+    if (scalar && scalar.text === text) {
+        if (scalar.kind === 'date' && typeof scalar.value === 'string') {
+            const date = new Date(scalar.value);
+            if (Number.isFinite(date.getTime())) { cell.value = date; return; }
+        } else if (scalar.kind === 'error' && typeof scalar.value === 'string'
+            && ['#N/A', '#REF!', '#NAME?', '#DIV/0!', '#NULL!', '#VALUE!', '#NUM!'].includes(scalar.value)) {
+            cell.value = { error: scalar.value as ExcelJS.CellErrorValue['error'] };
+            return;
+        } else if ((scalar.kind === 'string' && typeof scalar.value === 'string')
+            || (scalar.kind === 'number' && typeof scalar.value === 'number' && Number.isFinite(scalar.value))
+            || (scalar.kind === 'boolean' && typeof scalar.value === 'boolean')) {
+            cell.value = scalar.value;
+            return;
+        }
+    }
     if (!text) {
         cell.value = null;
         return;
@@ -346,7 +362,7 @@ async function writeSheetToExcelJs(worksheet: ExcelJS.Worksheet, workbook: Excel
                 if (hl?.link) {
                     writeCellHyperlink(excelCell, cellData.text ?? '', hl);
                 } else {
-                    setCellValue(excelCell, cellData.text ?? '', cellData.formulaResult);
+                    setCellValue(excelCell, cellData.text ?? '', cellData.formulaResult, cellData.sourceScalar);
                 }
                 if (cellData.style != null && styles[cellData.style]) {
                     applySpreadsheetStyle(excelCell, styles[cellData.style]);

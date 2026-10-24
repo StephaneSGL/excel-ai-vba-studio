@@ -31,6 +31,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName Microsoft.VisualBasic
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 . (Join-Path $PSScriptRoot 'ooxml-package-signature.ps1')
+. (Join-Path $PSScriptRoot 'excel-automation-safety.ps1')
 
 $includeVbaNormalized = $IncludeVba.Trim().ToLowerInvariant()
 switch ($includeVbaNormalized) {
@@ -2883,6 +2884,7 @@ $formulaTotal = 0
 $remainingCellBudget = $MaxTotalCells
 $ownsExcelInstance = $false
 $ownedExcelProcessId = 0
+$ownedExcelProcessIdentity = $null
 
 try {
     $prevalidatedWorkbookPath = Assert-LocalFileSystemPath `
@@ -3008,20 +3010,17 @@ try {
     $queries = @()
 
     try {
-        $preexistingExcelProcessIds = @(
-            Get-Process -Name 'EXCEL' -ErrorAction SilentlyContinue |
-                ForEach-Object { [int]$_.Id }
-        )
+        $preexistingExcelProcessIds = @(Get-ExcelAutomationProcessIds)
+        $excelCreationStartedUtcTicks = [DateTime]::UtcNow.Ticks
         $excel = New-Object -ComObject Excel.Application
         $ownedExcelProcessId = Get-ExcelProcessId $excel
-        if ($preexistingExcelProcessIds -contains $ownedExcelProcessId) {
-            throw (
-                'Excel COM attached to a pre-existing process. The export was refused before opening the workbook ' +
-                'because that process is not owned by the extension.'
-            )
-        }
+        $ownedExcelProcessIdentity = Get-ExcelAutomationProcessIdentity `
+            $ownedExcelProcessId $preexistingExcelProcessIds $excelCreationStartedUtcTicks
         $ownsExcelInstance = $true
-        [Console]::Out.WriteLine("OWNED_EXCEL_PID|$ownedExcelProcessId")
+        [Console]::Out.WriteLine(
+            'OWNED_EXCEL_PID|' + $ownedExcelProcessIdentity.ProcessId + '|' +
+            $ownedExcelProcessIdentity.StartTimeUtcTicks
+        )
         [Console]::Out.Flush()
 
         # This property is the hard precondition: if it cannot be imposed and
@@ -3055,9 +3054,10 @@ try {
             # Excel refuses Application.Calculation while it has no workbook.
             # Keep a private blank guard workbook open so manual calculation is
             # active before the untrusted target is opened.
+            Set-ExcelAutomationSafety $excel -BeforeGuard
             $calculationGuardWorkbook = $workbooks.Add(-4167) # xlWBATWorksheet
             $excel.Calculation = -4135 # xlCalculationManual
-            try { $excel.CalculateBeforeSave = $false } catch { }
+            $excel.CalculateBeforeSave = $false
             if ([int]$excel.Calculation -ne -4135) {
                 throw 'Excel calculation mode is not manual.'
             }
@@ -3078,16 +3078,9 @@ try {
 
         # UpdateLinks=0, ReadOnly=true. Events, macros and automatic calculation
         # were disabled and verified before this call.
+        Set-ExcelAutomationSafety $excel
         $workbook = $workbooks.Open($sourceFullPath, 0, $true)
-        if ([int]$excel.AutomationSecurity -ne 3) {
-            throw 'Excel changed AutomationSecurity while opening the target workbook.'
-        }
-        if ([int]$excel.Calculation -ne -4135) {
-            $excel.Calculation = -4135
-        }
-        if ([int]$excel.Calculation -ne -4135) {
-            throw 'Excel changed calculation mode while opening the target workbook.'
-        }
+        Assert-ExcelAutomationSafety $excel
         if ($null -ne $calculationGuardWorkbook) {
             $calculationGuardWorkbook.Close($false)
             Release-ComObject $calculationGuardWorkbook
@@ -3550,6 +3543,7 @@ try {
         [GC]::WaitForPendingFinalizers()
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
+        Stop-ExcelAutomationProcess $ownedExcelProcessIdentity
     }
 
     if ($includeVbaEnabled) {

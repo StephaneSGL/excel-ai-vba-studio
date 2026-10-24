@@ -40,4 +40,14 @@ for (const workflowName of workflowNames) {
   }
 }
 
+const main = await readFile(path.join(workflowDirectory, 'main.yml'), 'utf8');
+assert.match(main, /extension-host:/, 'installed-VSIX integration must be a required validation job');
+assert.match(main, /target: linux-x64/, 'VSIX smoke matrix must cover Linux');
+assert.match(main, /target: win32-x64/, 'VSIX smoke matrix must cover Windows');
+assert.match(main, /xvfb-run -a npm run test:extension-host/, 'Linux must render the custom editor under Xvfb');
+assert.match(main, /run: npm run test:automation-safety/, 'Windows must execute the COM policy tests');
+const publishing = await readFile(path.join(workflowDirectory, 'publish.yml'), 'utf8');
+assert.match(publishing, /target: \[win32-x64, linux-x64\]/, 'release must build both qualified platform targets');
+assert.match(publishing, /npm run package -- --target \$\{\{ matrix\.target \}\}/, 'release packaging must bind the artifact target');
+
 console.log(`GitHub Actions workflow validation passed: ${workflowNames.length} file(s).`);
