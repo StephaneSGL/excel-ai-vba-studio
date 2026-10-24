@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as XLSX from 'xlsx';
+import { isExcelRegistered } from './helpers/native-prerequisite.mjs';
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, '..');
@@ -503,6 +504,12 @@ try {
     /Native updateChart preserveAnchor must be a boolean/,
   );
 
+  if (!isExcelRegistered()) {
+    if (process.env.EXCEL_AI_REQUIRE_NATIVE_TESTS === '1') {
+      throw new Error('Native security transaction acceptance requires Microsoft Excel COM.');
+    }
+    console.log('Native security pre-COM refusal checks passed. SKIPPED native acceptance: successful transaction/ADS preservation requires Excel COM.');
+  } else {
   const trustedZone = Buffer.from('[ZoneTransfer]\r\nZoneId=2\r\n', 'utf8');
   const customStream = Buffer.from('preserve-this-stream', 'utf8');
   await writeFile(`${workbookPath}:Zone.Identifier`, trustedZone);
@@ -535,6 +542,7 @@ try {
   assert.equal(reopened.Sheets.Resume.A1.v, 'new');
 
   console.log('Native security preflight passed: MOTW, ADS, range budgets and PID identity are enforced.');
+  }
 } finally {
   await rm(testRoot, { recursive: true, force: true });
 }

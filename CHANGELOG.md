@@ -6,6 +6,39 @@ The project uses semantic versions. Marketplace Preview status is represented by
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-21
+
+### Added
+
+- French, theme-aware start page with guided workbook opening, capability explanations, installation help and a copyable local diagnostic report.
+- Read-only prerequisite checks for Windows x64, workspace trust, PowerShell, Excel registration in both registry views, the bundled VBA helper and all four AI tools. Registration is explicitly not treated as native Excel acceptance; no workbook, COM instance, account or Office security setting is touched.
+- Start/open actions in the Explorer, including its previously non-interactive empty state. The picker opens supported local workbooks directly in the integrated editor without changing editor associations.
+- Regression coverage for diagnostic states, privacy, webview CSP/escaping, action allowlists, picker cancellation, workspace trust and panel lifecycle. Real Extension Host smoke tests now exercise the start page and guided opening.
+- Optional packaged host testing installs the real VSIX in an isolated profile and asserts that the loaded extension is that package. Windows CI exercises this on VS Code 1.95.0 and stable without touching the user's installed extensions.
+
+### Release status
+
+- This is an installable Preview candidate, not a native Excel certification. Excel/COM acceptance on a Windows machine equipped with Excel remains required before final promotion.
+
+## [0.6.1] - 2026-09-15
+
+### Fixed
+
+- Removed four Unicode-property regex patterns from AI tool JSON schemas for validator compatibility. Table-name validation, Unicode NFC normalization and duplicate checks remain enforced in extension/native code.
+- Required an explicit absolute workbook path for every mutating AI tool; VBA tools now show the full canonical target in their confirmation and never fall back to a changed active editor.
+- Fixed Find/Replace indexing; replacement text is literal, empty searches and stale whole-cell matches do not write, and locked cells are preserved.
+- Restored native Ctrl/Cmd+V paste events by removing global keydown cancellation; the focused grid keeps its own paste handling.
+- Enabled webview TypeScript validation, corrected ExcelJS and spreadsheet model types, and validated incoming open-message fields.
+- Fixed Windows 8.3/long-path comparison in security tests and prevented release preparation from half-bumping the manifest on a stale lockfile.
+- Updated fast-uri, js-yaml, nanoid and qs; pinned VS Code API types to the declared 1.95.0 baseline and Node types to the Node 20 runtime target.
+
+### Maintenance and verification
+
+- Removed 100 unreachable legacy viewer/Git-history files (23,459 lines), retaining attribution and security-tested legacy components; shared duplicate image types and icon-URL sanitization.
+- Added real VS Code host smoke tests for 1.95.0 and stable, manifest schema compilation, mutation-target, Find/Replace, image round-trip and release-preparation regressions.
+- Added a strict native acceptance command which fails instead of silently skipping when Excel is unavailable. Native Excel/COM acceptance remains required before promoting this candidate as fully validated. Preview status is retained.
+- Corrected the advertised tool scope: XLAM remains a low-level writer capability, not a supported end-to-end extension workflow.
+
 ## [0.6.0] - 2026-08-02
 
 ### Added

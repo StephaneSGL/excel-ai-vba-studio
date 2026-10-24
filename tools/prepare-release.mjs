@@ -34,7 +34,7 @@ const updatedManifestSource = replaceFirstVersion(
   version,
   'package.json',
 );
-writeFileSync(manifestPath, updatedManifestSource, 'utf8');
+let updatedLockSource;
 
 if (existsSync(lockPath)) {
   const lockSource = readFileSync(lockPath, 'utf8');
@@ -43,7 +43,7 @@ if (existsSync(lockPath)) {
     throw new Error('package-lock.json root versions do not match package.json.');
   }
 
-  let updatedLockSource = replaceFirstVersion(
+  updatedLockSource = replaceFirstVersion(
     lockSource,
     manifest.version,
     version,
@@ -55,8 +55,12 @@ if (existsSync(lockPath)) {
     version,
     'package-lock.json root package',
   );
-  writeFileSync(lockPath, updatedLockSource, 'utf8');
 }
+
+// Validate both inputs before changing either version. A stale lockfile must
+// not leave the manifest half-bumped when release preparation is refused.
+writeFileSync(manifestPath, updatedManifestSource, 'utf8');
+if (updatedLockSource !== undefined) writeFileSync(lockPath, updatedLockSource, 'utf8');
 
 console.log(`Prepared version ${version}.`);
 console.log('Next: update CHANGELOG.md, run npm run validate, commit, then create tag v' + version + '.');

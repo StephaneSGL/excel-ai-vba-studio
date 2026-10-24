@@ -44,15 +44,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     return btoa(binary);
 }
 
-function base64ToBytes(base64: string): Uint8Array {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-}
-
 export function mediaToSheetImageData(media: ImageMedia): { extension: 'jpeg' | 'png' | 'gif'; base64: string } | null {
     if (media.base64) {
         const dataUrl = media.base64.match(/^data:image\/(\w+);base64,(.+)$/i);
@@ -177,9 +168,8 @@ export function writeWorksheetImages(
     backgroundImage?: SheetBackgroundImage,
 ) {
     if (backgroundImage) {
-        const bgBuffer = base64ToBytes(backgroundImage.base64);
         const bgId = workbook.addImage({
-            buffer: bgBuffer,
+            base64: sheetImageDataUrl(backgroundImage),
             extension: backgroundImage.extension,
         });
         worksheet.addBackgroundImage(bgId);
@@ -187,12 +177,13 @@ export function writeWorksheetImages(
     if (!images?.length) return;
     for (let i = 0; i < images.length; i += 1) {
         const img = images[i];
-        const buffer = base64ToBytes(img.base64);
         const imageId = workbook.addImage({
-            buffer,
+            base64: sheetImageDataUrl(img),
             extension: img.extension,
         });
-        worksheet.addImage(imageId, buildExcelJsImageRange(img.anchor));
+        // ExcelJS constructs Anchor instances from col/row coordinates itself.
+        // Its declaration incorrectly requires the already-constructed Anchor.
+        worksheet.addImage(imageId, buildExcelJsImageRange(img.anchor) as Parameters<ExcelJS.Worksheet['addImage']>[1]);
     }
 }
 

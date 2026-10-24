@@ -185,7 +185,7 @@ assert.ok(
 const inputSchema = designTool.inputSchema;
 assert.equal(inputSchema.type, 'object');
 assert.equal(inputSchema.additionalProperties, false);
-assert.deepEqual(inputSchema.required, ['operations']);
+assert.deepEqual(inputSchema.required, ['workbookPath', 'operations']);
 const operationsSchema = inputSchema.properties.operations;
 assert.equal(operationsSchema.type, 'array');
 assert.equal(operationsSchema.minItems, 1);

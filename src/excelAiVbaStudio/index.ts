@@ -11,6 +11,7 @@ import {
 	EXCEL_AI_PROPERTIES_VIEW
 } from './types';
 import { ExcelAiVbaWorkbookService } from './workbookService';
+import { ExcelStartPage, openWorkbookInGrid } from './startPage';
 
 export function registerExcelAiVbaStudio(
 	context: vscode.ExtensionContext
@@ -18,11 +19,21 @@ export function registerExcelAiVbaStudio(
 	const service = new ExcelAiVbaWorkbookService(context);
 	const explorer = new ExcelAiVbaExplorerProvider(service);
 	const properties = new ExcelAiVbaPropertiesProvider();
+	const startPage = new ExcelStartPage(context);
 	const explorerTree = vscode.window.createTreeView(EXCEL_AI_EXPLORER_VIEW, {
 		treeDataProvider: explorer,
 		showCollapseAll: true
 	});
 	context.subscriptions.push(
+		startPage,
+		vscode.commands.registerCommand(EXCEL_AI_COMMANDS.openStart, async () => {
+			try { await startPage.show(); }
+			catch (error) { await vscode.window.showErrorMessage(`Accueil Excel : ${error instanceof Error ? error.message : 'Action impossible.'}`); }
+		}),
+		vscode.commands.registerCommand(EXCEL_AI_COMMANDS.openWorkbook, async (candidate?: unknown) => {
+			try { await openWorkbookInGrid(candidate); }
+			catch (error) { await vscode.window.showErrorMessage(`Ouverture du classeur : ${error instanceof Error ? error.message : 'Action impossible.'}`); }
+		}),
 		service,
 		explorer,
 		properties,

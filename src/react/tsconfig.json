@@ -1,15 +1,17 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": [
-      "ES2020",
+      "ES2022",
       "DOM",
       "DOM.Iterable"
     ],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
+    "baseUrl": "../..",
+    "paths": { "@/*": ["src/*"] },
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
@@ -22,5 +24,6 @@
     "types": [
       "vite/client"
     ]
-  }
+  },
+  "include": ["main.tsx", "shims/**/*.ts"]
 }

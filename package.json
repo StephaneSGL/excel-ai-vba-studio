@@ -2,7 +2,7 @@
   "name": "excel-ai-vba-studio",
   "displayName": "Excel AI & VBA Studio",
   "description": "View spreadsheets and work with Excel data, VBA projects, UserForms, and GitHub Copilot directly in VS Code.",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "publisher": "steph-tools",
   "preview": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -71,6 +71,16 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "excelAiVbaStudio.openStart",
+        "title": "Excel AI & VBA Studio : Accueil et diagnostic",
+        "icon": "$(home)"
+      },
+      {
+        "command": "excelAiVbaStudio.openWorkbook",
+        "title": "Excel AI & VBA Studio : Ouvrir un classeur dans VS Code",
+        "icon": "$(folder-opened)"
+      },
       {
         "command": "excelAiVbaStudio.exportWorkbook",
         "title": "Excel AI & VBA Studio : Exporter le contexte du classeur",
@@ -177,14 +187,16 @@
         "toolReferenceName": "excelVbaWriteModule",
         "canBeReferencedInPrompt": true,
         "icon": "$(save)",
-        "userDescription": "Réinjecte transactionnellement un composant VBA. Une première écriture .bas/.cls dans un XLSX crée une copie XLSM voisine ; XLSM/XLAM conservent sauvegarde et validation.",
-        "modelDescription": "Utilise cet outil pour toute écriture réelle de code VBA. Il refuse toujours un chemin contenant le composant exact .excel-ai-vba-backups. Pour un .xlsx, la première écriture d’un .bas ou .cls crée une copie .xlsm voisine sans modifier la source : toutes les écritures suivantes doivent utiliser le targetWorkbookPath renvoyé. Pour un .xlsm/.xlam, il met à jour un composant existant ou ajoute un .bas/.cls avec sauvegarde transactionnelle. Il ne lance aucune macro et ne modifie jamais AccessVBOM. Un .frm est accepté uniquement pour le code d’un UserForm déjà présent dans un .xlsm/.xlam ; la création d’un UserForm, de son designer, de ses contrôles ou de son .frx est refusée.",
+        "userDescription": "Réinjecte transactionnellement un composant VBA. Une première écriture .bas/.cls dans un XLSX crée une copie XLSM voisine ; XLSM conservent sauvegarde et validation.",
+        "modelDescription": "Utilise cet outil pour toute écriture réelle de code VBA. Il refuse toujours un chemin contenant le composant exact .excel-ai-vba-backups. Pour un .xlsx, la première écriture d’un .bas ou .cls crée une copie .xlsm voisine sans modifier la source : toutes les écritures suivantes doivent utiliser le targetWorkbookPath renvoyé. Pour un .xlsm, il met à jour un composant existant ou ajoute un .bas/.cls avec sauvegarde transactionnelle. Il ne lance aucune macro et ne modifie jamais AccessVBOM. Un .frm est accepté uniquement pour le code d’un UserForm déjà présent dans un .xlsm ; la création d’un UserForm, de son designer, de ses contrôles ou de son .frx est refusée.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "workbookPath": {
               "type": "string",
-              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code. Un .xlsx produit une copie .xlsm voisine et l’outil renvoie son targetWorkbookPath. Omettre pour utiliser le classeur actif."
+              "minLength": 3,
+              "maxLength": 32767,
+              "description": "Chemin absolu explicite ou URI file:// local du classeur à modifier. Obligatoire : aucun repli sur le classeur actif. Pour une écriture VBA dans XLSX, utiliser ensuite le targetWorkbookPath XLSM renvoyé."
             },
             "componentFile": {
               "type": "string",
@@ -196,6 +208,7 @@
             }
           },
           "required": [
+            "workbookPath",
             "componentFile",
             "source"
           ],
@@ -215,7 +228,9 @@
           "properties": {
             "workbookPath": {
               "type": "string",
-              "description": "Chemin absolu, URI file:// ou chemin relatif au dossier VS Code vers un classeur .xlsm existant. Omettre pour utiliser le classeur actif."
+              "minLength": 3,
+              "maxLength": 32767,
+              "description": "Chemin absolu explicite ou URI file:// local vers un classeur .xlsm existant. Obligatoire : aucun repli sur le classeur actif."
             },
             "operations": {
               "type": "array",
@@ -755,6 +770,7 @@
             }
           },
           "required": [
+            "workbookPath",
             "operations"
           ],
           "additionalProperties": false
@@ -767,7 +783,7 @@
         "canBeReferencedInPrompt": true,
         "icon": "$(graph)",
         "userDescription": "Crée, modifie ou supprime transactionnellement de vrais tableaux et graphiques Excel éditables dans un classeur XLSX ou XLSM.",
-		"modelDescription": "Utilise cet outil pour créer, modifier ou supprimer de vrais ListObject et ChartObject Excel dans un classeur .xlsx ou .xlsm local. Plusieurs tableaux disjoints peuvent occuper les mêmes colonnes. Une table native doit être créée avec une ligne d’en-tête et sans ligne de totaux; les transitions d’en-tête et de totaux sont refusées. L’état des totaux existants est préservé et une table qui possède des totaux ne peut pas être redimensionnée car Excel déplacerait les cellules et réécrirait les références de formules. Les graphiques acceptent tous les codes XlChartType publiés, une plage source ou des séries explicites, les axes primaire/secondaire, couleurs, lignes, marqueurs, titres, légende, étiquettes, dimensions et styles. Les plages doivent être des références A1 locales simples sans feuille, fichier externe, formule ou DDE. Chaque transaction vérifie le hash source, crée une sauvegarde, travaille sur une copie, rouvre et valide les objets, puis remplace atomiquement le fichier ou effectue un rollback. Aucune macro n’est exécutée.",
+        "modelDescription": "Utilise cet outil pour créer, modifier ou supprimer de vrais ListObject et ChartObject Excel dans un classeur .xlsx ou .xlsm local. Plusieurs tableaux disjoints peuvent occuper les mêmes colonnes. Une table native doit être créée avec une ligne d’en-tête et sans ligne de totaux; les transitions d’en-tête et de totaux sont refusées. L’état des totaux existants est préservé et une table qui possède des totaux ne peut pas être redimensionnée car Excel déplacerait les cellules et réécrirait les références de formules. Les graphiques acceptent tous les codes XlChartType publiés, une plage source ou des séries explicites, les axes primaire/secondaire, couleurs, lignes, marqueurs, titres, légende, étiquettes, dimensions et styles. Les plages doivent être des références A1 locales simples sans feuille, fichier externe, formule ou DDE. Chaque transaction vérifie le hash source, crée une sauvegarde, travaille sur une copie, rouvre et valide les objets, puis remplace atomiquement le fichier ou effectue un rollback. Aucune macro n’est exécutée.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -800,7 +816,8 @@
                       "name": {
                         "type": "string",
                         "description": "Nom actuel obligatoire pour updateWorksheetTable ; interdit pour createWorksheetTable.",
-                        "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                        "minLength": 1,
+                        "maxLength": 255
                       },
                       "table": {
                         "type": "object",
@@ -811,11 +828,13 @@
                           },
                           "name": {
                             "type": "string",
-                            "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                            "minLength": 1,
+                            "maxLength": 255
                           },
                           "displayName": {
                             "type": "string",
-                            "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                            "minLength": 1,
+                            "maxLength": 255
                           },
                           "rangeRef": {
                             "type": "string",
@@ -827,8 +846,8 @@
                           },
                           "totalsRow": {
                             "type": "boolean",
-							"default": false,
-							"description": "Doit rester false à la création. Pour une table existante, conserver exactement l’état inventorié; une table avec totaux ne peut pas être redimensionnée."
+                            "default": false,
+                            "description": "Doit rester false à la création. Pour une table existante, conserver exactement l’état inventorié; une table avec totaux ne peut pas être redimensionnée."
                           },
                           "style": {
                             "type": "object",
@@ -920,7 +939,8 @@
                       },
                       "name": {
                         "type": "string",
-                        "pattern": "^[\\p{L}_\\\\][\\p{L}\\p{N}._]{0,254}$"
+                        "minLength": 1,
+                        "maxLength": 255
                       }
                     },
                     "required": [
@@ -965,7 +985,109 @@
                           },
                           "chartType": {
                             "type": "integer",
-                            "enum": [1, 76, 77, -4098, 78, 79, 135, 136, 137, 57, 58, 59, 60, 61, 62, 132, 133, 134, 51, 52, 53, -4100, 54, 55, 56, 124, 125, 126, 4, 65, 63, 66, 64, 67, -4101, 127, 128, 129, 5, 69, -4102, 70, 68, 71, 130, -4120, 80, 131, -4169, 74, 75, 72, 73, 138, 15, 87, 139, -4151, 81, 82, 88, 89, 90, 91, 83, 84, 85, 86, -4152, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 102, 103, 104, 105, 99, 100, 101, 95, 96, 97, 98, 92, 93, 94, 109, 110, 111, 112, 106, 107, 108],
+                            "enum": [
+                              1,
+                              76,
+                              77,
+                              -4098,
+                              78,
+                              79,
+                              135,
+                              136,
+                              137,
+                              57,
+                              58,
+                              59,
+                              60,
+                              61,
+                              62,
+                              132,
+                              133,
+                              134,
+                              51,
+                              52,
+                              53,
+                              -4100,
+                              54,
+                              55,
+                              56,
+                              124,
+                              125,
+                              126,
+                              4,
+                              65,
+                              63,
+                              66,
+                              64,
+                              67,
+                              -4101,
+                              127,
+                              128,
+                              129,
+                              5,
+                              69,
+                              -4102,
+                              70,
+                              68,
+                              71,
+                              130,
+                              -4120,
+                              80,
+                              131,
+                              -4169,
+                              74,
+                              75,
+                              72,
+                              73,
+                              138,
+                              15,
+                              87,
+                              139,
+                              -4151,
+                              81,
+                              82,
+                              88,
+                              89,
+                              90,
+                              91,
+                              83,
+                              84,
+                              85,
+                              86,
+                              -4152,
+                              113,
+                              114,
+                              115,
+                              116,
+                              117,
+                              118,
+                              119,
+                              120,
+                              121,
+                              122,
+                              123,
+                              102,
+                              103,
+                              104,
+                              105,
+                              99,
+                              100,
+                              101,
+                              95,
+                              96,
+                              97,
+                              98,
+                              92,
+                              93,
+                              94,
+                              109,
+                              110,
+                              111,
+                              112,
+                              106,
+                              107,
+                              108
+                            ],
                             "description": "Valeur numérique officielle XlChartType, par exemple 51 colonne groupée, 4 courbe, -4169 nuage XY, -4152 combiné."
                           },
                           "sourceRangeRef": {
@@ -1089,7 +1211,7 @@
                               },
                               "numberFormat": {
                                 "type": "string",
-								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
                                 "maxLength": 255
                               },
                               "majorGridlines": {
@@ -1145,7 +1267,7 @@
                               },
                               "numberFormat": {
                                 "type": "string",
-								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
                                 "maxLength": 255
                               },
                               "majorGridlines": {
@@ -1201,7 +1323,7 @@
                               },
                               "numberFormat": {
                                 "type": "string",
-								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
                                 "maxLength": 255
                               },
                               "majorGridlines": {
@@ -1257,7 +1379,7 @@
                               },
                               "numberFormat": {
                                 "type": "string",
-								"description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
+                                "description": "Format Excel explicite, ou chaîne vide pour restaurer le format automatique lié à la source.",
                                 "maxLength": 255
                               },
                               "majorGridlines": {
@@ -1306,7 +1428,109 @@
                                 },
                                 "chartType": {
                                   "type": "integer",
-                                  "enum": [1, 76, 77, -4098, 78, 79, 135, 136, 137, 57, 58, 59, 60, 61, 62, 132, 133, 134, 51, 52, 53, -4100, 54, 55, 56, 124, 125, 126, 4, 65, 63, 66, 64, 67, -4101, 127, 128, 129, 5, 69, -4102, 70, 68, 71, 130, -4120, 80, 131, -4169, 74, 75, 72, 73, 138, 15, 87, 139, -4151, 81, 82, 88, 89, 90, 91, 83, 84, 85, 86, -4152, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 102, 103, 104, 105, 99, 100, 101, 95, 96, 97, 98, 92, 93, 94, 109, 110, 111, 112, 106, 107, 108]
+                                  "enum": [
+                                    1,
+                                    76,
+                                    77,
+                                    -4098,
+                                    78,
+                                    79,
+                                    135,
+                                    136,
+                                    137,
+                                    57,
+                                    58,
+                                    59,
+                                    60,
+                                    61,
+                                    62,
+                                    132,
+                                    133,
+                                    134,
+                                    51,
+                                    52,
+                                    53,
+                                    -4100,
+                                    54,
+                                    55,
+                                    56,
+                                    124,
+                                    125,
+                                    126,
+                                    4,
+                                    65,
+                                    63,
+                                    66,
+                                    64,
+                                    67,
+                                    -4101,
+                                    127,
+                                    128,
+                                    129,
+                                    5,
+                                    69,
+                                    -4102,
+                                    70,
+                                    68,
+                                    71,
+                                    130,
+                                    -4120,
+                                    80,
+                                    131,
+                                    -4169,
+                                    74,
+                                    75,
+                                    72,
+                                    73,
+                                    138,
+                                    15,
+                                    87,
+                                    139,
+                                    -4151,
+                                    81,
+                                    82,
+                                    88,
+                                    89,
+                                    90,
+                                    91,
+                                    83,
+                                    84,
+                                    85,
+                                    86,
+                                    -4152,
+                                    113,
+                                    114,
+                                    115,
+                                    116,
+                                    117,
+                                    118,
+                                    119,
+                                    120,
+                                    121,
+                                    122,
+                                    123,
+                                    102,
+                                    103,
+                                    104,
+                                    105,
+                                    99,
+                                    100,
+                                    101,
+                                    95,
+                                    96,
+                                    97,
+                                    98,
+                                    92,
+                                    93,
+                                    94,
+                                    109,
+                                    110,
+                                    111,
+                                    112,
+                                    106,
+                                    107,
+                                    108
+                                  ]
                                 },
                                 "axisGroup": {
                                   "type": "string",
@@ -1367,29 +1591,98 @@
                                 },
                                 "dataLabels": {
                                   "type": "object",
-								  "description": "Doit définir explicitement au moins un booléen show*. Si tous valent false, les étiquettes sont supprimées et position doit être omise. Sinon, les options show* compatibles omises sont enregistrées à false.",
+                                  "description": "Doit définir explicitement au moins un booléen show*. Si tous valent false, les étiquettes sont supprimées et position doit être omise. Sinon, les options show* compatibles omises sont enregistrées à false.",
                                   "minProperties": 1,
-								  "anyOf": [
-									{ "required": ["showValue"] },
-									{ "required": ["showCategoryName"] },
-									{ "required": ["showSeriesName"] },
-									{ "required": ["showPercentage"] },
-									{ "required": ["showBubbleSize"] }
-								  ],
-								  "allOf": [
-									{
-									  "if": { "required": ["position"] },
-									  "then": {
-										"anyOf": [
-										  { "required": ["showValue"], "properties": { "showValue": { "const": true } } },
-										  { "required": ["showCategoryName"], "properties": { "showCategoryName": { "const": true } } },
-										  { "required": ["showSeriesName"], "properties": { "showSeriesName": { "const": true } } },
-										  { "required": ["showPercentage"], "properties": { "showPercentage": { "const": true } } },
-										  { "required": ["showBubbleSize"], "properties": { "showBubbleSize": { "const": true } } }
-										]
-									  }
-									}
-								  ],
+                                  "anyOf": [
+                                    {
+                                      "required": [
+                                        "showValue"
+                                      ]
+                                    },
+                                    {
+                                      "required": [
+                                        "showCategoryName"
+                                      ]
+                                    },
+                                    {
+                                      "required": [
+                                        "showSeriesName"
+                                      ]
+                                    },
+                                    {
+                                      "required": [
+                                        "showPercentage"
+                                      ]
+                                    },
+                                    {
+                                      "required": [
+                                        "showBubbleSize"
+                                      ]
+                                    }
+                                  ],
+                                  "allOf": [
+                                    {
+                                      "if": {
+                                        "required": [
+                                          "position"
+                                        ]
+                                      },
+                                      "then": {
+                                        "anyOf": [
+                                          {
+                                            "required": [
+                                              "showValue"
+                                            ],
+                                            "properties": {
+                                              "showValue": {
+                                                "const": true
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "required": [
+                                              "showCategoryName"
+                                            ],
+                                            "properties": {
+                                              "showCategoryName": {
+                                                "const": true
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "required": [
+                                              "showSeriesName"
+                                            ],
+                                            "properties": {
+                                              "showSeriesName": {
+                                                "const": true
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "required": [
+                                              "showPercentage"
+                                            ],
+                                            "properties": {
+                                              "showPercentage": {
+                                                "const": true
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "required": [
+                                              "showBubbleSize"
+                                            ],
+                                            "properties": {
+                                              "showBubbleSize": {
+                                                "const": true
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ],
                                   "properties": {
                                     "showValue": {
                                       "type": "boolean"
@@ -1623,6 +1916,16 @@
     "menus": {
       "view/title": [
         {
+          "command": "excelAiVbaStudio.openStart",
+          "group": "navigation@0",
+          "when": "view == excelAiVbaExplorer"
+        },
+        {
+          "command": "excelAiVbaStudio.openWorkbook",
+          "group": "navigation@1",
+          "when": "view == excelAiVbaExplorer"
+        },
+        {
           "command": "excelAiVbaStudio.exportWorkbook",
           "group": "navigation@1",
           "when": "view == excelAiVbaExplorer"
@@ -1773,7 +2076,7 @@
   },
   "scripts": {
     "dev": "vite --mode=development",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm run typecheck:host && npm run typecheck:webview",
     "build": "vite build --mode=production",
     "vscode:prepublish": "npm run build",
     "validate:manifest": "node tools/validate-manifest.mjs",
@@ -1804,21 +2107,29 @@
     "validate:licenses": "node tools/generate-third-party-licenses.mjs --check",
     "validate:performance": "node tools/validate-performance.mjs",
     "validate:package": "node tools/validate-package.mjs",
-    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:package-signatures && npm run test:xlm-preflight && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:workbook-objects && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
+    "validate": "npm run validate:manifest && npm run validate:workflows && npm run validate:workbook-access && npm run validate:macro-readonly && npm run validate:native-xlsm && npm run validate:vba-studio && npm run validate:vba-bootstrap && npm run validate:vba-writeback && npm run validate:vba-designer && npm run validate:enterprise-security && npm run test:package-signatures && npm run test:xlm-preflight && npm run test:codeql-security && npm run test:vba-bootstrap && npm run test:vba-writeback && npm run test:vba-designer && npm run test:vba-inventory && npm run test:vba-interactions && npm run test:vba-atomic && npm run test:xlsx-prefixes && npm run test:native-diff && npm run test:workbook-objects && npm run test:native-xlsm && npm run validate:theme-sync && npm run validate:integrated-features && npm run validate:licenses && npm run test:release-regressions && npm run typecheck && npm run build && npm run validate:performance && npm run validate:package",
     "package": "node tools/package-extension.mjs",
     "release:check": "node tools/release-check.mjs",
-    "release:prepare": "node tools/prepare-release.mjs"
+    "release:prepare": "node tools/prepare-release.mjs",
+    "typecheck:host": "tsc --noEmit",
+    "typecheck:webview": "tsc -p src/react/tsconfig.json",
+    "test:release-regressions": "node test/find-replace-regression.mjs && node test/vba-tool-target-regression.mjs && node test/image-roundtrip-regression.mjs && node test/release-preparation-regression.mjs && node test/setup-start-page-regression.mjs",
+    "test:extension-host": "node test/run-extension-host.mjs",
+    "audit:source": "node tools/source-inventory.mjs",
+    "validate:native-release": "node tools/validate-native-release.mjs"
   },
   "devDependencies": {
     "@ant-design/icons": "^5.3.5",
     "@cweijan/exceljs": "^5.0.2",
-    "@types/node": "^26.1.2",
+    "@types/node": "20.19.43",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "@types/vscode": "^1.95.0",
+    "@types/vscode": "1.95.0",
     "@vitejs/plugin-react": "^6.0.5",
     "@vscode/codicons": "^0.0.45",
+    "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "^3.9.1",
+    "ajv": "8.20.0",
     "antd": "^5.15.4",
     "buffer": "^6.0.3",
     "esbuild": "^0.28.1",

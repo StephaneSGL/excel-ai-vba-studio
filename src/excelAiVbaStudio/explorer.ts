@@ -587,6 +587,8 @@ export class ExcelAiVbaExplorerProvider
 
 		const workbookUri = await this.service.resolveWorkbookUri();
 		const actions = [
+			actionItem('Accueil et diagnostic', EXCEL_AI_COMMANDS.openStart, 'home'),
+			actionItem('Ouvrir un classeur…', EXCEL_AI_COMMANDS.openWorkbook, 'folder-opened'),
 			actionItem(
 				'Ouvrir le studio VBA dans VS Code',
 				EXCEL_AI_COMMANDS.openVbaExplorer,
@@ -615,6 +617,8 @@ export class ExcelAiVbaExplorerProvider
 
 		if (!workbookUri) {
 			rootItems.push(
+				actionItem('Ouvrir un classeur…', EXCEL_AI_COMMANDS.openWorkbook, 'folder-opened'),
+				actionItem('Accueil et diagnostic', EXCEL_AI_COMMANDS.openStart, 'home'),
 				createTreeItem('Ouvrez un classeur Excel pour l’inspecter', {
 					icon: 'info',
 					contextValue: 'excelAiVbaInfo'

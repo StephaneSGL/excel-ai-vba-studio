@@ -13,8 +13,12 @@ function isRowData(row: unknown): row is { cells: Record<number, CellData> } {
 }
 
 export function readWorksheetProtection(worksheet: ExcelJS.Worksheet): StoredSheetProtection | undefined {
-    const ws = worksheet as ExcelJS.Worksheet & { sheetProtection?: StoredSheetProtection };
-    const sp = ws.sheetProtection ?? worksheet.model?.sheetProtection;
+    // ExcelJS exposes this on both the worksheet and its serialized model.
+    const ws = worksheet as ExcelJS.Worksheet & {
+        sheetProtection?: StoredSheetProtection;
+        model: ExcelJS.WorksheetModel & { sheetProtection?: StoredSheetProtection };
+    };
+    const sp = ws.sheetProtection ?? ws.model?.sheetProtection;
     if (!sp || typeof sp !== 'object') return undefined;
     return { ...sp };
 }

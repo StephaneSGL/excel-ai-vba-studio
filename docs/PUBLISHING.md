@@ -12,7 +12,7 @@ This repository is prepared for trusted publishing to the Visual Studio Marketpl
 6. In the Marketplace publisher management portal, create a trusted-publishing policy for the exact GitHub owner, repository, and workflow `.github/workflows/publish.yml`.
 7. Protect release tags and require review for workflow changes.
 
-The workflow uses GitHub Actions OIDC. Do not create a `VSCE_PAT` secret.
+The current workflow builds verified artifacts only. Marketplace OIDC publication is not wired up yet. Do not create a `VSCE_PAT` secret as a workaround.
 
 ## Release
 
@@ -22,7 +22,8 @@ The workflow uses GitHub Actions OIDC. Do not create a `VSCE_PAT` secret.
 4. Update `CHANGELOG.md` and review privacy/notices.
 5. Confirm that `LICENSE`, `LICENSING.md`, the `LICENSES` directory, and all
    third-party notices match the files included in the VSIX.
-6. Run `npm run validate`.
+6. Run `npm run validate`, then `npm run test:extension-host -- 1.95.0` and `npm run test:extension-host -- stable`.
+   Before calling a release fully validated, run `npm run validate:native-release` on a dedicated Windows/Excel test machine with the required user-approved VBA access. This strict gate fails when native tests would otherwise skip. Never change Office security settings automatically to make a test pass.
 7. Commit the version and lockfile.
 8. Create an annotated tag whose value exactly matches `v` plus `package.json` version:
 
@@ -37,6 +38,8 @@ The workflow uses GitHub Actions OIDC. Do not create a `VSCE_PAT` secret.
 If the tag and manifest version differ, packaging stops before the VSIX is created.
 
 Automatic Visual Studio Marketplace publication is intentionally disabled until a Microsoft Entra workload identity and trusted-publishing policy are configured for the publisher. A successful tagged workflow proves the package was built and validated; it does not prove Marketplace publication.
+
+A candidate VSIX may be prepared for review without native acceptance, but must be labelled as such. Do not promote it as fully validated or remove the Preview flag while the native gate remains blocked. The 0.6.1 audit and remaining acceptance checklist are in `docs/RELEASE_AUDIT_0.6.1.md`.
 
 ## Preview channel
 

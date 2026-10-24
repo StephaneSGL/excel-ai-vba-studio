@@ -7,30 +7,8 @@ interface FileTypeIconProps {
     className?: string;
 }
 
-const VSCODE_RESOURCE_HOST_SUFFIX = '.vscode-resource.vscode-cdn.net';
-
-export function sanitizeFileIconUrl(iconUrl: string | null): string | null {
-    if (!iconUrl) return null;
-    try {
-        const parsed = new URL(iconUrl);
-        const trustedHost = parsed.hostname.endsWith(VSCODE_RESOURCE_HOST_SUFFIX);
-        if (
-            parsed.protocol !== 'https:'
-            || !trustedHost
-            || parsed.username
-            || parsed.password
-            || parsed.port
-            || parsed.search
-            || parsed.hash
-            || !parsed.pathname.toLowerCase().endsWith('.svg')
-        ) {
-            return null;
-        }
-        return parsed.href;
-    } catch {
-        return null;
-    }
-}
+import { sanitizeFileIconUrl } from '../../util/sanitizeFileIconUrl';
+export { sanitizeFileIconUrl } from '../../util/sanitizeFileIconUrl';
 
 export function FileTypeIcon({ name, isDirectory, className }: FileTypeIconProps) {
     const [failed, setFailed] = useState(false);

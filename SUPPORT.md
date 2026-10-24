@@ -4,6 +4,17 @@ Excel AI & VBA Studio is currently a Preview release.
 
 ## Before reporting a problem
 
+Open **Excel AI & VBA Studio : Accueil et diagnostic** from the command palette
+(Ctrl+Shift+P), then choose **Copier le diagnostic**. This local report contains
+versions and prerequisite states, not workbook contents, file paths or account
+identifiers. An Excel registration signal is not proof that native automation or
+VBA permissions work.
+
+If a manifest error still mentions `\p{L}` or `\p{N}`, install the current VSIX in
+the affected VS Code profile and reload the window. Version 0.6.1 and later remove
+those schema patterns while retaining runtime business validation. Capture the
+exact error and installed version if it persists.
+
 Please confirm:
 
 1. Windows is x64 and VS Code is version 1.95 or later.

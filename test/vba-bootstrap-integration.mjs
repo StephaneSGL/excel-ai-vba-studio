@@ -12,10 +12,10 @@ import {
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { skipNativeTest } from './helpers/native-prerequisite.mjs';
 
 if (process.platform !== 'win32') {
-  console.log('XLSX VBA bootstrap integration skipped: Windows and Excel are required.');
-  process.exit(0);
+  skipNativeTest('XLSX VBA bootstrap requires Windows and Excel.');
 }
 
 const root = resolve(import.meta.dirname, '..');
@@ -162,11 +162,8 @@ assert.ok(existsSync(fixture), `Fixture missing: ${fixture}`);
 
 const excelBefore = excelProcessIds();
 if (!excelAutomationReady()) {
-  console.log(
-    'XLSX VBA bootstrap integration skipped: Excel COM or user-enabled AccessVBOM is unavailable.',
-  );
   rmSync(temp, { recursive: true, force: true });
-  process.exit(0);
+  skipNativeTest('XLSX VBA bootstrap: Excel COM or user-enabled AccessVBOM is unavailable.');
 }
 
 try {
